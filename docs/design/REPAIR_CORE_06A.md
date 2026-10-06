@@ -118,3 +118,17 @@ the work budget, not parallelism, is the product's bound. Recorded as debt for a
 - Limits are calibrated on 19 models; a model with expensive per-site cost can reach the primary
   limit with little repaired. That is the intended behaviour, and the plan's `limitLikely` is
   advisory only.
+
+## Verification record
+
+* `npm run verify` (format, lint, typecheck, 164 test files / 3,548 tests, build): green on a quiet
+  run. Under heavy host load (load average 90–180) several unrelated timing-sensitive unit tests
+  (3MF streaming, XML retention, `App.test.tsx`) hit their 5 s timeouts; they pass alone and on the
+  re-run, so those are load failures, not regressions.
+* HV-C01 and HV-C06 were failing only because `artifacts/release/` held an artifact built from an
+  older commit. They are no longer waived: rebuilt at the clean HEAD (`npm run build`,
+  `npm run release:build`), `npm run release:verify` passes 28/28.
+* **Not run: the Playwright suites** (`test:e2e`, `test:e2e:harness`, `test:e2e:timing`). The host
+  has no Chromium (`npx playwright install` was never run here), so every browser test fails at
+  launch. That is an environment gap and says nothing about the code; it is an open item for the
+  next session with a browser.
