@@ -307,6 +307,32 @@ describe('runLocalRepair cancellation', () => {
     expect(result.counts.repaired).toBeLessThan(10);
   });
 
+  it('stops inside the RESIDUAL phase too, reports cancelled and skips nothing it already did', () => {
+    const mesh = pairs(4);
+    const probe = { polls: 0 };
+    const full = runLocalRepair({
+      mesh,
+      makeNarrowphase: standIn('rejectNewVertices', mesh),
+      limits: UNMETERED,
+      cancelled: () => {
+        probe.polls += 1;
+        return false;
+      },
+    });
+    expect(full.residual.ran).toBe(true);
+    // Cancel on the very last poll: the primary phase has finished, the residual has not.
+    let polls = 0;
+    const cancelled = runLocalRepair({
+      mesh,
+      makeNarrowphase: standIn('rejectNewVertices', mesh),
+      limits: UNMETERED,
+      cancelled: () => ++polls >= probe.polls,
+    });
+    expect(cancelled.cancelled).toBe(true);
+    expect(cancelled.residual.ran).toBe(true);
+    expect(cancelled.kind).not.toBe(LocalRepairKind.Complete);
+  });
+
   it('a later run is unaffected by a cancelled one', () => {
     const mesh = pairs(6);
     let polls = 0;
