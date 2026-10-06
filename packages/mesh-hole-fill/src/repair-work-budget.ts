@@ -29,11 +29,30 @@ export const RepairWorkPhase = {
 } as const;
 export type RepairWorkPhase = (typeof RepairWorkPhase)[keyof typeof RepairWorkPhase];
 
+/**
+ * The two deterministic work ceilings of a local repair. Declared HERE, in the leaf the planner may
+ * import, so the production constants do not have to reach the orchestrator (and through it the
+ * search, the gate and the BVH) from the authoritative worker.
+ */
+export interface LocalRepairLimits {
+  /** Work units for the primary search; undefined = unmetered (measurement runs only). */
+  readonly primary: number | undefined;
+  /** Work units for the residual phase; undefined = unmetered (measurement runs only). */
+  readonly residual: number | undefined;
+}
+
 export const REPAIR_WORK_UNITS = Object.freeze({
   /** One candidate construction (dry run, or the install half of an exact attempt). */
   candidate: 1,
-  /** One exact-gate test: about eight candidate constructions at the measured rates. */
+  /** The fixed cost of one exact-gate test, before the pairs it tests are counted. */
   exactTest: 8,
+  /**
+   * Narrowphase pairs per unit. The exact test's cost is dominated by the pairs it classifies, not
+   * by how many tests there are: X11's tests cost the same ~13 ms as X12's while testing 4,000
+   * pairs against 6,000, so a flat per-test charge let X11 run ~30x longer per unit than X12.
+   * One unit is one candidate construction (~15-40 us); one pair is ~3 us.
+   */
+  pairsPerUnit: 10,
 });
 
 /** Faces the winding traversal visits per unit of work. */
@@ -44,6 +63,8 @@ export interface RepairWorkCounters {
   readonly exactTests: number;
   readonly windingFaces: number;
   readonly retryAttempts: number;
+  /** Narrowphase pairs the exact gate classified for this phase. */
+  readonly testedPairs: number;
 }
 
 export interface RepairWorkMeter {
@@ -56,6 +77,8 @@ export interface RepairWorkMeter {
   /** Adds work. Never throws. */
   readonly chargeCandidate: () => void;
   readonly chargeExactTest: () => void;
+  /** Adds the narrowphase pairs one exact test classified. Never throws. */
+  readonly chargePairs: (pairs: number) => void;
   readonly chargeWindingFaces: (faces: number) => void;
   /** Notes a retry attempt for reporting; it costs nothing beyond the work it triggers. */
   readonly noteRetry: () => void;
@@ -81,22 +104,27 @@ export function createWorkMeter(
   let exactTests = 0;
   let windingFaces = 0;
   let retryAttempts = 0;
+  let testedPairs = 0;
   const used = (): number =>
     candidates * REPAIR_WORK_UNITS.candidate +
     exactTests * REPAIR_WORK_UNITS.exactTest +
+    Math.ceil(testedPairs / REPAIR_WORK_UNITS.pairsPerUnit) +
     Math.ceil(windingFaces / WINDING_FACES_PER_UNIT);
   const exhausted = (): boolean => limit !== undefined && used() >= limit;
   return {
     phase,
     limit,
     used,
-    counters: () => ({ candidates, exactTests, windingFaces, retryAttempts }),
+    counters: () => ({ candidates, exactTests, windingFaces, retryAttempts, testedPairs }),
     exhausted,
     chargeCandidate: (): void => {
       candidates += 1;
     },
     chargeExactTest: (): void => {
       exactTests += 1;
+    },
+    chargePairs: (pairs: number): void => {
+      testedPairs += Math.max(0, Math.floor(pairs));
     },
     chargeWindingFaces: (faces: number): void => {
       windingFaces += Math.max(0, Math.floor(faces));

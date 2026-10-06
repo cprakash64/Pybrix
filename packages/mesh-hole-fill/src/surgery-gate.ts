@@ -1,6 +1,7 @@
 import { AppendedFaceIndex } from './appended-face-index';
 import { createCounters, FaceBvh, type BroadphaseBudget } from './bvh';
 import type { PatchNarrowphase } from './contract';
+import type { RepairWorkMeter } from './repair-work-budget';
 import type { SurgeryAccept, SurgeryMesh } from './surgery-mesh';
 
 /**
@@ -311,6 +312,8 @@ export interface GateStats {
 export interface SurgeryGate {
   readonly accept: SurgeryAccept;
   readonly stats: GateStats;
+  /** Selects the meter the exact tests' pairs are charged to (the running phase's). */
+  readonly useMeter: (meter: RepairWorkMeter | undefined) => void;
   /** The union of every box this gate queried since `reset`. */
   readonly reads: {
     readonly reset: () => void;
@@ -342,6 +345,8 @@ export function createSurgeryGate(
   options: SurgeryGateOptions = {},
 ): SurgeryGate {
   const audit = options.audit ?? false;
+  // The meter the exact tests are charged to: the phase that is currently running.
+  let currentMeter: RepairWorkMeter | undefined;
   const sourcePos = source.pos.slice(0, source.sourceVertexCount * 3);
   const sourceTri = Uint32Array.from(source.tri.subarray(0, source.sourceFaceCount * 3));
   const bvh = FaceBvh.build(sourcePos, sourceTri, 0, source.sourceFaceCount);
@@ -497,6 +502,7 @@ export function createSurgeryGate(
     if (key !== undefined && reuse === undefined) cachedBaseline = { key, baseline, before };
     const after = classify(candidate, addedFaces);
     stats.testedPairs += before.tested + after.tested;
+    currentMeter?.chargePairs(before.tested + after.tested);
     if (!before.complete || !after.complete) {
       stats.rejectedIncomplete += 1;
       return finish('intersection-test-incomplete');
@@ -515,6 +521,9 @@ export function createSurgeryGate(
   return {
     accept,
     stats,
+    useMeter: (meter: RepairWorkMeter | undefined): void => {
+      currentMeter = meter;
+    },
     reads: {
       reset: (): void => {
         readBox = undefined;

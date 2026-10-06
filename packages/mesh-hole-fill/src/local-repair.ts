@@ -10,6 +10,7 @@ import {
 import {
   createWorkMeter,
   RepairWorkPhase,
+  type LocalRepairLimits,
   type RepairWorkCounters,
   type RepairWorkMeter,
 } from './repair-work-budget';
@@ -53,12 +54,7 @@ export const LocalRepairKind = {
 } as const;
 export type LocalRepairKind = (typeof LocalRepairKind)[keyof typeof LocalRepairKind];
 
-export interface LocalRepairLimits {
-  /** Work units for the primary search; undefined = unmetered (measurement runs only). */
-  readonly primary: number | undefined;
-  /** Work units for the residual phase; undefined = unmetered (measurement runs only). */
-  readonly residual: number | undefined;
-}
+export type { LocalRepairLimits };
 
 export interface LocalRepairInput {
   readonly mesh: CanonicalMesh;
@@ -210,6 +206,7 @@ export function runLocalRepair(input: LocalRepairInput): LocalRepairResult {
     };
 
   // PRIMARY.
+  gate.useMeter(primaryMeter);
   const primary = runPinchSearch(live, targets, {
     ...search,
     meter: primaryMeter,
@@ -236,6 +233,7 @@ export function runLocalRepair(input: LocalRepairInput): LocalRepairResult {
     skippedBecause = 'nothing-refused';
   } else {
     residualRan = true;
+    gate.useMeter(residualMeter);
     const residual = runResidualRepair(live, primary.refusals, {
       search,
       accept: gate.accept,

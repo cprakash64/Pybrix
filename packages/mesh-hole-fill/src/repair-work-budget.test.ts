@@ -19,14 +19,29 @@ describe('RepairWorkMeter', () => {
     meter.chargeCandidate();
     meter.chargeExactTest();
     meter.chargeWindingFaces(WINDING_FACES_PER_UNIT * 2 + 1);
-    expect(meter.used()).toBe(2 * REPAIR_WORK_UNITS.candidate + REPAIR_WORK_UNITS.exactTest + 3);
+    meter.chargePairs(REPAIR_WORK_UNITS.pairsPerUnit * 5 + 1);
+    expect(meter.used()).toBe(
+      2 * REPAIR_WORK_UNITS.candidate + REPAIR_WORK_UNITS.exactTest + 3 + 6,
+    );
     expect(Number.isInteger(meter.used())).toBe(true);
     expect(meter.counters()).toEqual({
       candidates: 2,
       exactTests: 1,
       windingFaces: WINDING_FACES_PER_UNIT * 2 + 1,
       retryAttempts: 0,
+      testedPairs: REPAIR_WORK_UNITS.pairsPerUnit * 5 + 1,
     });
+  });
+
+  it('prices an exact test by the pairs it classified, not by how many tests ran', () => {
+    // The X11 finding: tests of equal wall cost differ 30x in count, so a flat charge misprices.
+    const cheap = createWorkMeter(RepairWorkPhase.Primary, undefined);
+    const dear = createWorkMeter(RepairWorkPhase.Primary, undefined);
+    cheap.chargeExactTest();
+    cheap.chargePairs(100);
+    dear.chargeExactTest();
+    dear.chargePairs(10_000);
+    expect(dear.used()).toBeGreaterThan(cheap.used() * 10);
   });
 
   it('never refuses an unmetered run', () => {
