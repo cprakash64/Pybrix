@@ -19,6 +19,7 @@ import {
   VolumeComparison,
 } from '@cadfixer/mesh-repair';
 import {
+  LocalRepairNotRun,
   NO_BOUNDARY_FILL_PLAN,
   UndoableChangeKind,
   documentByteLength,
@@ -60,6 +61,13 @@ import {
   runFillStage,
   verifyFillPlan,
 } from './boundary-fill';
+import {
+  NOT_REQUESTED_LOCAL_REPAIR_PLAN,
+  planLocalRepairFor,
+  releaseLocalRepairPlans,
+  runLocalRepairStage,
+  type LocalRepairStageResult,
+} from './local-repair-stage';
 
 /**
  * WORKER HANDLERS FOR CONSERVATIVE REPAIR.
@@ -250,6 +258,7 @@ function combineWithFill(
   sourceReport: TopologyReport,
   candidate: CanonicalMesh,
   after: TopologyReport,
+  survivorMap: Uint32Array | undefined,
 ): ReturnType<typeof executeConservativeRepair> {
   const base = conservative.validation;
   const before = sourceReport;
@@ -289,8 +298,9 @@ function combineWithFill(
       ...conservative.counts,
       candidateFaceCount: triangleCount(candidate),
     },
-    // Patch faces have no source face; the map keeps describing the prefix.
-    candidateToSourceFace: conservative.candidateToSourceFace,
+    // Patch faces have no source face; the map describes the prefix. A local repair changes which
+    // source faces survive, so it supplies the map; otherwise conservative's still holds.
+    candidateToSourceFace: survivorMap ?? conservative.candidateToSourceFace,
   };
 }
 
@@ -357,9 +367,31 @@ const runRepairPlan: OperationHandler<'repair/plan'> = async (payload, context) 
     }
     boundaryFill = record.plan;
   }
+  /*
+   * REPAIR-CORE-06A: what the local pinch repair would attempt, from topology alone and cached
+   * per revision. It decides nothing about success: the meter that runs during the repair does.
+   */
+  const localRepair =
+    payload.localRepair === true
+      ? planLocalRepairFor(
+          fillPlanKey(payload.handle.documentId, payload.handle.revision, part.id),
+          resolved,
+          () => {
+            context.throwIfCancelled();
+          },
+        )
+      : undefined;
   context.reportProgress(1, 'planned');
 
-  return { value: { handle: payload.handle, partId: part.id, plan, boundaryFill } };
+  return {
+    value: {
+      handle: payload.handle,
+      partId: part.id,
+      plan,
+      boundaryFill,
+      ...(localRepair === undefined ? {} : { localRepair }),
+    },
+  };
 };
 
 /**
@@ -472,6 +504,23 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
     });
   }
 
+  /*
+   * LOCAL REPAIR WHAT WAS PREVIEWED — REPAIR-CORE-06A. Bound by hash exactly like the fill plan.
+   */
+  const localRequested = payload.localRepair === true;
+  if (localRequested) {
+    const computed = planLocalRepairFor(fillKey, resolved, () => {
+      context.throwIfCancelled();
+    }).planHash;
+    const expected = payload.localRepairPlanHash ?? NOT_REQUESTED_LOCAL_REPAIR_PLAN.planHash;
+    if (computed !== expected) {
+      throw invalidState('The model changed since this repair was planned.', {
+        expected,
+        computed,
+      });
+    }
+  }
+
   // Cancellation thrown from here — or from the preparation above — is converted
   // at the handler boundary by `rethrowAsProtocolError`. M0 is untouched either
   // way: the pipeline only ever wrote to a candidate.
@@ -506,12 +555,60 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
     : conservativeRan
       ? undefined
       : resolved;
-  const fill =
-    fillRequested && fillBase !== undefined
-      ? await runFillStage({
+  /*
+   * THE LOCAL PINCH REPAIR — REPAIR-CORE-06A. On what conservative repair produced (or the
+   * source), and only when that was not rejected. Its candidate, if any, is the base the fill
+   * stage then works on, so the result is still ONE candidate, applied atomically, undone as one.
+   */
+  const baseReport: TopologyReport | undefined =
+    fillBase === undefined
+      ? undefined
+      : fillBase === resolved
+        ? report
+        : conservative.validation.after;
+  const local: LocalRepairStageResult | undefined =
+    localRequested && fillBase !== undefined && baseReport !== undefined
+      ? await runLocalRepairStage({
           mesh: fillBase,
-          report: fillBase === resolved ? report : conservative.validation.after,
-          record: fillBase === resolved ? sourceFill : undefined,
+          report: baseReport,
+          verifierPort: payload.verifierPort,
+          operationId: `${payload.handle.documentId}@${String(payload.handle.revision)}/${part.id}/local`,
+          documentId: payload.handle.documentId,
+          partId: part.id,
+          revision: payload.handle.revision,
+          cancellation: context.cancellation,
+          throwIfCancelled: () => {
+            context.throwIfCancelled();
+          },
+          onProgress: (fraction, note) => {
+            context.reportProgress(fraction, note);
+          },
+        })
+      : undefined;
+  const localNotRun: LocalRepairNotRun | undefined = !localRequested
+    ? undefined
+    : fillBase === undefined
+      ? LocalRepairNotRun.ConservativeRejected
+      : payload.verifierPort === undefined
+        ? LocalRepairNotRun.NoVerifier
+        : undefined;
+  const afterLocal: CanonicalMesh | undefined = local?.candidate ?? fillBase;
+  const afterLocalReport: TopologyReport | undefined =
+    local?.candidate === undefined ? baseReport : local.after;
+  // Faces of the source that survive into `afterLocal`, in its order, when it is not the source.
+  const conservativeMap = conservative.candidateToSourceFace;
+  const localMap: Uint32Array | undefined =
+    local?.candidateToInputFace === undefined
+      ? undefined
+      : fillBase === resolved || conservativeMap === undefined
+        ? local.candidateToInputFace
+        : local.candidateToInputFace.map((inputFace) => conservativeMap[inputFace] ?? 0);
+  const fill =
+    fillRequested && afterLocal !== undefined && afterLocalReport !== undefined
+      ? await runFillStage({
+          mesh: afterLocal,
+          report: afterLocalReport,
+          record: afterLocal === resolved ? sourceFill : undefined,
           verifierPort: payload.verifierPort,
           operationId: `${payload.handle.documentId}@${String(payload.handle.revision)}/${part.id}`,
           documentId: payload.handle.documentId,
@@ -527,9 +624,11 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
         })
       : undefined;
   const outcome =
-    fill?.candidate === undefined || fill.after === undefined
-      ? conservative
-      : combineWithFill(conservative, report, fill.candidate, fill.after);
+    fill?.candidate !== undefined && fill.after !== undefined
+      ? combineWithFill(conservative, report, fill.candidate, fill.after, localMap)
+      : local?.candidate !== undefined && local.after !== undefined
+        ? combineWithFill(conservative, report, local.candidate, local.after, localMap)
+        : conservative;
 
   /*
    * THE SECOND CANCELLATION WINDOW, and the load-bearing one. It sits BEFORE the
@@ -559,7 +658,7 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
   const fillOnly =
     outcome.candidate !== undefined &&
     fill?.candidate === outcome.candidate &&
-    fillBase === resolved;
+    afterLocal === resolved;
   const render: RenderSnapshot | undefined =
     outcome.candidate === undefined || fillOnly
       ? undefined
@@ -589,6 +688,8 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
         outcome.candidate === undefined ? undefined : computeBounds(outcome.candidate),
       render,
       boundaryFill: fill?.outcome,
+      ...(local === undefined ? {} : { localRepair: local.outcome }),
+      ...(localNotRun === undefined ? {} : { localRepairNotRun: localNotRun }),
       patchRender,
     },
     transfer: [render, patchRender].flatMap((snapshot) =>
@@ -759,6 +860,7 @@ export function createRepairCommitHandler(
     holeFillCandidates.releaseDocument(next.documentId);
     geometryEdits.releaseDocument(next.documentId);
     releaseFillPlans(next.documentId);
+    releaseLocalRepairPlans(next.documentId);
 
     return Promise.resolve({
       value: {

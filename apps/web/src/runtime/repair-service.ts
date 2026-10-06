@@ -2,6 +2,7 @@ import { internalError, operationCancelled } from '@cadfixer/shared';
 import {
   DEFAULT_SESSION_MEMORY_BUDGET,
   type BoundaryFillPlan,
+  type LocalRepairPlan,
   type ConservativeRepairPlan,
   type DocumentHandle,
   type OperationHandle,
@@ -85,6 +86,7 @@ export interface RepairCapableClient {
     memoryBudgetBytes?: number,
     fillOpenings?: boolean,
     verifierPort?: MessagePort,
+    localRepair?: boolean,
   ): OperationHandle<RepairPlanOperationResult>;
   createRepairCandidate(
     handle: DocumentHandle,
@@ -132,6 +134,8 @@ export interface RepairPlanOutcome {
   readonly plan: ConservativeRepairPlan;
   /** What automatic filling would attempt — REPAIR-CORE-02. */
   readonly boundaryFill: BoundaryFillPlan;
+  /** What the local pinch repair would attempt — REPAIR-CORE-06A. Absent when not requested. */
+  readonly localRepair?: LocalRepairPlan;
   readonly durationMs: number;
 }
 
@@ -197,6 +201,8 @@ export interface RepairPlanRequest {
   readonly memoryBudgetBytes?: number;
   /** Also plan automatic filling of eligible openings. */
   readonly fillOpenings?: boolean;
+  /** Also plan the local pinch repair — REPAIR-CORE-06A. Counts only; opens no worker. */
+  readonly localRepair?: boolean;
   /** Injectable for tests; the application uses the real verifier. */
   readonly openVerifier?: (onFailure: () => void) => FillVerifier;
   /**
@@ -219,6 +225,8 @@ export function planConservativeRepair(
       report,
       request.memoryBudgetBytes,
       request.fillOpenings === true,
+      undefined,
+      request.localRepair === true,
     );
     register(operation);
 
@@ -255,6 +263,7 @@ export function planConservativeRepair(
           request.memoryBudgetBytes,
           true,
           verifier.port,
+          request.localRepair === true,
         );
         cancelVerify = (): void => {
           verify.cancel();
@@ -286,6 +295,7 @@ export function planConservativeRepair(
       partId: result.partId,
       plan: result.plan,
       boundaryFill: result.boundaryFill,
+      ...(result.localRepair === undefined ? {} : { localRepair: result.localRepair }),
       durationMs: Date.now() - startedAt,
     };
   });
@@ -309,6 +319,11 @@ export interface RepairCandidateRequest {
    * when it settles or is cancelled.
    */
   readonly fill?: { readonly planHash: string };
+  /**
+   * Run the local pinch repair — REPAIR-CORE-06A. The same disposable kernel worker is opened for
+   * this preview only; without it nothing could be verified and nothing would be repaired.
+   */
+  readonly localRepair?: { readonly planHash: string };
   /** Injectable for tests; the application uses the real verifier. */
   readonly openVerifier?: (onFailure: () => void) => FillVerifier;
   /**
@@ -329,7 +344,7 @@ export function createRepairCandidate(
     const verifierState = { failed: false };
     let cancelOperation: (() => void) | undefined;
     const verifier =
-      request.fill === undefined
+      request.fill === undefined && request.localRepair === undefined
         ? undefined
         : (request.openVerifier ?? openFillVerifier)(() => {
             // The verifier died: stop the repair rather than wait for an
@@ -349,13 +364,13 @@ export function createRepairCandidate(
             ? {}
             : { memoryBudgetBytes: request.memoryBudgetBytes }),
           ...(request.sampleLimit === undefined ? {} : { sampleLimit: request.sampleLimit }),
-          ...(request.fill === undefined || verifier === undefined
+          ...(request.fill === undefined
             ? {}
-            : {
-                fillOpenings: true,
-                fillPlanHash: request.fill.planHash,
-                verifierPort: verifier.port,
-              }),
+            : { fillOpenings: true, fillPlanHash: request.fill.planHash }),
+          ...(request.localRepair === undefined
+            ? {}
+            : { localRepair: true, localRepairPlanHash: request.localRepair.planHash }),
+          ...(verifier === undefined ? {} : { verifierPort: verifier.port }),
         },
       );
       cancelOperation = (): void => {

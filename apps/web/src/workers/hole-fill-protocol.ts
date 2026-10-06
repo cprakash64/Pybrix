@@ -124,3 +124,83 @@ export type LocalVerifyReply =
       readonly verdicts: readonly LocalVerdictWire[];
     }
   | { readonly kind: 'failed'; readonly operationId: string; readonly reason: string };
+
+/* ----------------------------------------- REPAIR-CORE-06A: local repair -- */
+
+/**
+ * Sent by the AUTHORITATIVE worker: a DISPOSABLE COPY of the mesh the local repair is to work on.
+ *
+ * The same arrangement as `HoleFillGeometryMessage` and for the same reasons: positions are
+ * canonical Float32 so the engine judges the representation that would become authoritative, the
+ * buffers are a copy so transferring them detaches nothing, and the kernel lives only here, where
+ * termination is the cancel. The limits are the product's deterministic work ceilings (a caller
+ * may only narrow them for a test).
+ */
+export interface LocalRepairMessage {
+  readonly kind: 'local-repair';
+  readonly operationId: string;
+  readonly positions: Float32Array;
+  readonly indices: Uint32Array;
+  readonly limits: {
+    readonly primary: number | undefined;
+    readonly residual: number | undefined;
+  };
+}
+
+/** Bounded progress, so a long repair is visibly alive. Scalars only. */
+export interface LocalRepairProgressWire {
+  readonly kind: 'local-repair-progress';
+  readonly operationId: string;
+  readonly phase: 'topology' | 'primary' | 'residual';
+  readonly attempted: number;
+  readonly total: number;
+  readonly repaired: number;
+  readonly primaryWorkUnits: number;
+  readonly residualWorkUnits: number;
+}
+
+/**
+ * The engine's answer: scalars and bounded tables, plus the PATCH — what changed, in the source
+ * mesh's own slot space. Not a mesh: the authoritative worker builds the candidate with the same
+ * rebuild every repair uses, and validates it itself. `patch` is absent when nothing changed.
+ */
+export interface LocalRepairResultWire {
+  readonly kind: 'local-repair-result';
+  readonly operationId: string;
+  readonly outcome: {
+    readonly kind: string;
+    readonly cancelled: boolean;
+    readonly counts: {
+      readonly eligible: number;
+      readonly unsupportedNonManifoldEdge: number;
+      readonly repaired: number;
+      readonly remaining: number;
+      readonly unattempted: number;
+      readonly remainingByReason: Readonly<Record<string, number>>;
+    };
+    readonly limitReached: 'primary' | 'residual' | undefined;
+    readonly work: {
+      readonly primary: { readonly used: number; readonly limit: number | undefined };
+      readonly residual: { readonly used: number; readonly limit: number | undefined };
+    };
+    readonly residual: {
+      readonly ran: boolean;
+      readonly skippedBecause: 'nothing-refused' | 'primary-limit' | 'cancelled' | undefined;
+      readonly linkRetriangulations: number;
+      readonly primaryAfterResidual: number;
+      readonly windingComponentsResolved: number;
+      readonly windingFacesReversed: number;
+    };
+  };
+  readonly patch?: {
+    readonly removedSourceFaces: Uint32Array;
+    readonly flippedSourceFaces: Uint32Array;
+    readonly appendedPositions: Float32Array;
+    readonly appendedFaces: Uint32Array;
+  };
+}
+
+export type LocalRepairReply =
+  | LocalRepairProgressWire
+  | LocalRepairResultWire
+  | { readonly kind: 'failed'; readonly operationId: string; readonly reason: string };

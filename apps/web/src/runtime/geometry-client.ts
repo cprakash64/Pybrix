@@ -114,6 +114,10 @@ export interface RepairCandidateOptions {
   readonly sampleLimit?: number;
   readonly fillOpenings?: boolean;
   readonly fillPlanHash?: string;
+  /** Run the local pinch repair — REPAIR-CORE-06A. Needs `verifierPort`: nothing runs unverified. */
+  readonly localRepair?: boolean;
+  /** `LocalRepairPlan.planHash` the caller saw. */
+  readonly localRepairPlanHash?: string;
   readonly verifierPort?: MessagePort;
 }
 
@@ -577,6 +581,7 @@ export class GeometryClient {
     memoryBudgetBytes?: number,
     fillOpenings = false,
     verifierPort?: MessagePort,
+    localRepair = false,
   ): OperationHandle<RepairPlanOperationResult> {
     return this.coordinator.dispatch(
       'repair/plan',
@@ -585,6 +590,7 @@ export class GeometryClient {
         partId,
         requested,
         fillOpenings,
+        ...(localRepair ? { localRepair: true } : {}),
         ...(memoryBudgetBytes === undefined ? {} : { memoryBudgetBytes }),
         ...(verifierPort === undefined ? {} : { verifierPort }),
       },
@@ -630,9 +636,17 @@ export class GeometryClient {
           ? {
               fillOpenings: true,
               ...(options.fillPlanHash === undefined ? {} : { fillPlanHash: options.fillPlanHash }),
-              ...(options.verifierPort === undefined ? {} : { verifierPort: options.verifierPort }),
             }
           : {}),
+        ...(options.localRepair === true
+          ? {
+              localRepair: true,
+              ...(options.localRepairPlanHash === undefined
+                ? {}
+                : { localRepairPlanHash: options.localRepairPlanHash }),
+            }
+          : {}),
+        ...(options.verifierPort === undefined ? {} : { verifierPort: options.verifierPort }),
       },
       // THE OPERATION THIS STAGE EXISTS FOR. The repair pipeline is one long
       // synchronous pass; without a shared signal its Cancel could only discard

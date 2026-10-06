@@ -294,3 +294,12 @@ export type {
   BoundaryFillOutcome,
   BoundaryFillPlan,
 } from './boundary-fill';
+
+export {
+  LOCAL_REPAIR_CONTRACT_CHECKED,
+  LOCAL_REPAIR_REASON_LIMIT,
+  LocalRepairNotRun,
+  LocalRepairOutcomeKind,
+  LocalRepairWorkPhase,
+} from './local-repair';
+export type { LocalRepairOutcome, LocalRepairPlan, LocalRepairWorkFigure } from './local-repair';

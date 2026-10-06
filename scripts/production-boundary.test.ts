@@ -748,6 +748,15 @@ describe('the hole-fill engine stays where Stage 4B-1B1 put it', () => {
          */
         join('apps', 'web', 'src', 'workers', 'boundary-fill.ts'),
         /*
+         * REPAIR-CORE-06A, with the same restriction: the authoritative side of the local pinch
+         * repair imports ONLY `/admission` (asserted below) — fan topology and the work-limit
+         * constants. The search, the exact gate and the residual phase run in the disposable
+         * kernel worker (`hole-fill.worker.ts`, already listed). The geometry-runtime file is the
+         * wire restatement, which holds type-level mirrors of the engine's enumerations.
+         */
+        join('apps', 'web', 'src', 'workers', 'local-repair-stage.ts'),
+        join('packages', 'geometry-runtime', 'src', 'local-repair.ts'),
+        /*
          * THE HARNESS, and it is named rather than excluded so its access is
          * visible in review. It imports the TEST-ONLY fixture corpus in order to
          * build documents the shipped importers cannot — a 512-vertex rim, and
@@ -760,14 +769,13 @@ describe('the hole-fill engine stays where Stage 4B-1B1 put it', () => {
   });
 
   it('reaches the geometry worker only through the bounded admission subpath (REPAIR-CORE-02)', () => {
-    const worker = readFileSync(
-      join(REPO_ROOT, 'apps', 'web', 'src', 'workers', 'boundary-fill.ts'),
-      'utf8',
-    );
-    const specifiers = [
-      ...worker.matchAll(/from\s+['"](@cadfixer\/mesh-hole-fill[^'"]*)['"]/g),
-    ].map((match) => match[1]);
-    expect(specifiers).toEqual(['@cadfixer/mesh-hole-fill/admission']);
+    for (const name of ['boundary-fill.ts', 'local-repair-stage.ts']) {
+      const worker = readFileSync(join(REPO_ROOT, 'apps', 'web', 'src', 'workers', name), 'utf8');
+      const specifiers = [
+        ...worker.matchAll(/from\s+['"](@cadfixer\/mesh-hole-fill[^'"]*)['"]/g),
+      ].map((match) => match[1]);
+      expect(specifiers, name).toEqual(['@cadfixer/mesh-hole-fill/admission']);
+    }
 
     // Everything the subpath reaches, transitively, inside the package.
     const packageSource = join(REPO_ROOT, 'packages', 'mesh-hole-fill', 'src');

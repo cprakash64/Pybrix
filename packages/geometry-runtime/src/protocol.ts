@@ -29,6 +29,7 @@ import type { UndoableChangeKind } from './repair-history';
 // against are restated in `hole-fill.ts`.
 import type { BoundaryLoopRefusal, HoleFillStatus, HoleFillValidationSummary } from './hole-fill';
 import type { BoundaryFillOutcome, BoundaryFillPlan } from './boundary-fill';
+import type { LocalRepairNotRun, LocalRepairOutcome, LocalRepairPlan } from './local-repair';
 
 /**
  * Wire protocol between the main thread and geometry workers.
@@ -570,6 +571,11 @@ export interface RepairPlanPayload {
    */
   readonly fillOpenings?: boolean;
   /**
+   * Also plan the LOCAL PINCH REPAIR — REPAIR-CORE-06A: the primary pinch search and the bounded
+   * residual phase. Absent or false: no pinch is counted and the plan says it was not requested.
+   */
+  readonly localRepair?: boolean;
+  /**
    * A channel to a disposable verifier — REPAIR-RC-03. When present and the
    * plan admits openings, the exact intersection check runs NOW, so the plan
    * the user sees counts only openings that passed it. Absent: the plan is
@@ -584,6 +590,8 @@ export interface RepairPlanOperationResult {
   readonly plan: ConservativeRepairPlan;
   /** What automatic filling would attempt. `NOT_REQUESTED` when not asked for. */
   readonly boundaryFill: BoundaryFillPlan;
+  /** What the local pinch repair would attempt, from topology alone. Absent when not asked for. */
+  readonly localRepair?: LocalRepairPlan;
 }
 
 export interface RepairCandidatePayload {
@@ -604,6 +612,10 @@ export interface RepairCandidatePayload {
   readonly fillOpenings?: boolean;
   /** `BoundaryFillPlan.planHash` the caller saw. Re-checked against the source. */
   readonly fillPlanHash?: string;
+  /** Run the local pinch repair as part of this candidate — REPAIR-CORE-06A. */
+  readonly localRepair?: boolean;
+  /** `LocalRepairPlan.planHash` the caller saw. Re-checked against the conservative candidate's source. */
+  readonly localRepairPlanHash?: string;
   /**
    * A channel to a disposable worker that runs the exact intersection check on
    * the LOCAL region of the patches. Without it no opening can be verified, and
@@ -641,6 +653,12 @@ export interface RepairCandidateResult {
   readonly render: RenderSnapshot | undefined;
   /** What the fill stage did. Undefined when filling was not requested. */
   readonly boundaryFill: BoundaryFillOutcome | undefined;
+  /**
+   * What the local pinch repair did — REPAIR-CORE-06A. Undefined when it was not requested or
+   * could not run (see `localRepairNotRun`). A LIMIT is in here as a typed outcome, never an error.
+   */
+  readonly localRepair?: LocalRepairOutcome;
+  readonly localRepairNotRun?: LocalRepairNotRun;
   /**
    * THE PATCH ONLY, when filling is the only change — REPAIR-CORE-02. Every
    * existing triangle is untouched, so the preview draws these beside the model

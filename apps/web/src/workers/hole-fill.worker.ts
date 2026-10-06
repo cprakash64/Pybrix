@@ -1,6 +1,11 @@
 /// <reference lib="webworker" />
 
-import { classifyLocalPatches, runHoleFill, HoleFillStatus } from '@cadfixer/mesh-hole-fill';
+import {
+  classifyLocalPatches,
+  runHoleFill,
+  runLocalRepair,
+  HoleFillStatus,
+} from '@cadfixer/mesh-hole-fill';
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
 import { createKernelNarrowphase, loadHoleFillKernel } from './hole-fill-narrowphase';
 import type {
@@ -8,6 +13,8 @@ import type {
   HoleFillPortMessage,
   HoleFillWorkerOutbound,
   HoleFillWorkerReply,
+  LocalRepairMessage,
+  LocalRepairResultWire,
   LocalVerifyMessage,
   LocalVerifyReply,
 } from './hole-fill-protocol';
@@ -138,9 +145,103 @@ async function runLocalVerify(port: MessagePort, message: LocalVerifyMessage): P
   port.postMessage(reply);
 }
 
+/**
+ * REPAIR-CORE-06A: the whole local pinch repair — the primary search and the bounded residual
+ * phase — on a disposable COPY of the part, with the exact kernel in this worker.
+ *
+ * Only a PATCH comes back: which faces went, which were reversed, and what was appended, in the
+ * source's own slot space. The authoritative worker builds and validates the candidate itself.
+ * Cancellation is `terminate()` from the controller; the engine also polls between sites for the
+ * cooperative case, and its deterministic work meter stops it at a safe point.
+ */
+async function runLocalRepairMessage(
+  port: MessagePort,
+  message: LocalRepairMessage,
+): Promise<void> {
+  const module = await loadHoleFillKernel();
+  const result = runLocalRepair({
+    mesh: { positions: message.positions, indices: message.indices, metadata: {} },
+    makeNarrowphase: () => createKernelNarrowphase(module),
+    limits: message.limits,
+    onProgress: (progress) => {
+      port.postMessage({
+        kind: 'local-repair-progress',
+        operationId: message.operationId,
+        phase: progress.phase,
+        attempted: progress.attempted,
+        total: progress.total,
+        repaired: progress.repaired,
+        primaryWorkUnits: progress.primaryWorkUnits,
+        residualWorkUnits: progress.residualWorkUnits,
+      });
+    },
+  });
+  const patch = result.patch;
+  const reply: LocalRepairResultWire = {
+    kind: 'local-repair-result',
+    operationId: message.operationId,
+    outcome: {
+      kind: result.kind,
+      cancelled: result.cancelled,
+      counts: {
+        eligible: result.counts.eligible,
+        unsupportedNonManifoldEdge: result.counts.unsupportedNonManifoldEdge,
+        repaired: result.counts.repaired,
+        remaining: result.counts.remaining,
+        unattempted: result.counts.unattempted,
+        remainingByReason: result.counts.remainingByReason,
+      },
+      limitReached: result.limitReached,
+      work: {
+        primary: { used: result.work.primary.used, limit: result.work.primary.limit },
+        residual: { used: result.work.residual.used, limit: result.work.residual.limit },
+      },
+      residual: {
+        ran: result.residual.ran,
+        skippedBecause: result.residual.skippedBecause,
+        linkRetriangulations: result.residual.linkRetriangulations,
+        primaryAfterResidual: result.residual.primaryAfterResidual,
+        windingComponentsResolved: result.residual.windingResolutions.filter(
+          (w) => w.outcome === 'resolved',
+        ).length,
+        windingFacesReversed: result.residual.windingResolutions.reduce(
+          (sum, w) => sum + (w.outcome === 'resolved' ? w.flips : 0),
+          0,
+        ),
+      },
+    },
+    ...(patch === undefined ? {} : { patch }),
+  };
+  port.postMessage(
+    reply,
+    patch === undefined
+      ? []
+      : [
+          patch.removedSourceFaces.buffer,
+          patch.flippedSourceFaces.buffer,
+          patch.appendedPositions.buffer,
+          patch.appendedFaces.buffer,
+        ],
+  );
+}
+
 self.addEventListener('message', (event: MessageEvent<HoleFillPortMessage>) => {
   const port = event.data.port;
-  port.onmessage = (geometry: MessageEvent<HoleFillGeometryMessage | LocalVerifyMessage>): void => {
+  port.onmessage = (
+    geometry: MessageEvent<HoleFillGeometryMessage | LocalVerifyMessage | LocalRepairMessage>,
+  ): void => {
+    if (geometry.data.kind === 'local-repair') {
+      const request = geometry.data;
+      void runLocalRepairMessage(port, request).catch((cause: unknown) => {
+        // A failure is still an answer; the authoritative side is awaiting it.
+        port.postMessage({
+          kind: 'failed',
+          operationId: request.operationId,
+          reason: cause instanceof Error ? cause.message : 'the local repair failed',
+        });
+      });
+      return;
+    }
     if (geometry.data.kind === 'verify-local') {
       const request = geometry.data;
       void runLocalVerify(port, request).catch((cause: unknown) => {
