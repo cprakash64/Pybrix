@@ -106,3 +106,43 @@ export {
   judgeFilledCandidate,
   sourcePreserved,
 } from './fill-candidate';
+
+/*
+ * LOCAL PINCH REPAIR — REPAIR-CORE-06A. The primary pinch search, the bounded residual phase, the
+ * exact gate and the deterministic work budget. Kernel-free: the exact narrowphase is injected by
+ * the disposable worker that owns the Geogram instance.
+ */
+export { LocalRepairKind, runLocalRepair } from './local-repair';
+export type {
+  LocalRepairCounts,
+  LocalRepairInput,
+  LocalRepairLimits,
+  LocalRepairProgress,
+  LocalRepairResidualReport,
+  LocalRepairResult,
+  WindingResolutionSummary,
+  WorkReport,
+} from './local-repair';
+export { PINCH_SEARCH_DEFAULTS } from './pinch-search';
+export { buildFanTopology, classifyPinch, planLocalRepair, PinchClass } from './pinch-topology';
+export type {
+  FanTopology,
+  FanTopologyOptions,
+  LocalRepairPlanFacts,
+  PinchedVertex,
+  VertexFan,
+} from './pinch-topology';
+export {
+  createWorkMeter,
+  REPAIR_WORK_UNITS,
+  RepairWorkPhase,
+  WINDING_FACES_PER_UNIT,
+  WorkLimitReached,
+} from './repair-work-budget';
+export type { RepairWorkCounters, RepairWorkMeter } from './repair-work-budget';
+export { createSurgeryGate } from './surgery-gate';
+export type { GateStats, SurgeryGate, SurgeryGateOptions } from './surgery-gate';
+export { SurgeryMesh } from './surgery-mesh';
+export type { SurgeryPatch } from './surgery-mesh';
+export { MAX_RETRIANGULATION_EXACT, MAX_RETRIANGULATION_LINK } from './link-retriangulation';
+export { DEFAULT_MAX_WINDING_FLIPS } from './winding-resolution';

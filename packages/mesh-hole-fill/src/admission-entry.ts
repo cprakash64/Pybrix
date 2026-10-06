@@ -30,3 +30,19 @@ export {
   judgeFilledCandidate,
   sourcePreserved,
 } from './fill-candidate';
+
+/*
+ * REPAIR-CORE-06A. What the planner needs from the local repair WITHOUT any engine: the read-only
+ * fan topology and the deterministic work-budget constants. The search, the exact gate and the
+ * residual phase are not reachable from here; they run in the disposable kernel worker.
+ */
+export { buildFanTopology, classifyPinch, planLocalRepair, PinchClass } from './pinch-topology';
+export type { FanTopology, LocalRepairPlanFacts, PinchedVertex } from './pinch-topology';
+export {
+  createWorkMeter,
+  REPAIR_WORK_UNITS,
+  RepairWorkPhase,
+  WINDING_FACES_PER_UNIT,
+} from './repair-work-budget';
+export type { RepairWorkCounters, RepairWorkMeter } from './repair-work-budget';
+export { PRODUCTION_REPAIR_WORK_LIMITS } from './repair-work-limits';

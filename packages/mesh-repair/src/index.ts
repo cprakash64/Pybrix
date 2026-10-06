@@ -53,6 +53,9 @@ export {
 } from './operations';
 export type { DegenerateSelection, DuplicateSelection, WindingSolution } from './operations';
 
+export { applyLocalRepairPatch } from './local-patch';
+export type { LocalPatchCandidate, LocalRepairPatchInput } from './local-patch';
+
 export { rebuildCandidate } from './rebuild';
 export type { RebuiltCandidate } from './rebuild';
 
