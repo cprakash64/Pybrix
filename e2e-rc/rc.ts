@@ -21,6 +21,8 @@ export function record(entry: Record<string, unknown>): void {
 export interface ConsoleAudit {
   readonly problems: () => readonly string[];
   readonly violations: () => readonly string[];
+  /** Browser GL-driver diagnostics: recorded for the report, not application output. */
+  readonly driver: () => readonly string[];
 }
 
 /**
@@ -31,9 +33,17 @@ export interface ConsoleAudit {
 export async function auditConsole(page: Page): Promise<ConsoleAudit> {
   const problems: string[] = [];
   const violations: string[] = [];
+  const driver: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error' || message.type() === 'warning') {
-      problems.push(`${message.type()}: ${message.text().slice(0, 300)}`);
+      const text = message.text().slice(0, 300);
+      // The browser's own GL driver diagnostics (a bare WebGL canvas read back by Playwright
+      // produces the same line) are not application output. They are recorded, never hidden.
+      if (/GL Driver Message/.test(text)) {
+        driver.push(text);
+        return;
+      }
+      problems.push(`${message.type()}: ${text}`);
     }
   });
   page.on('pageerror', (error) => {
@@ -47,7 +57,7 @@ export async function auditConsole(page: Page): Promise<ConsoleAudit> {
       console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
     });
   });
-  return { problems: () => problems, violations: () => violations };
+  return { problems: () => problems, violations: () => violations, driver: () => driver };
 }
 
 /* ----------------------------------------------------------------- process -- */
