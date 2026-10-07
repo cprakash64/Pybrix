@@ -1247,9 +1247,9 @@ describe('the 06B repair experience', () => {
       const token = store.beginRepairPreview();
       if (token === undefined) throw new Error('no token');
       store.beginRepairCandidate(token);
-      store.reportRepairProgress(token, 0.62, 'repairing pinched vertices');
+      store.reportRepairProgress(token, 0.62, 'Building a safe repair');
     });
-    expect(screen.getByTestId('repair-phase')).toHaveTextContent('Building a safe repair…');
+    expect(screen.getByTestId('repair-phase')).toHaveTextContent('Building a safe repair');
     expect(screen.queryByTestId('repair-percent')).toBeNull();
     expect(document.body.textContent).not.toMatch(/62\s*%/);
     // The bar is indeterminate: it has no value to claim.

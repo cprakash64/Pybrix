@@ -38,7 +38,6 @@ import {
   REPAIR_APPLYING_LINE,
   REPAIR_CHECKING_MODEL_LINE,
   describeLimitLikely,
-  describeRepairPhase,
 } from '../state/repair-preview-summary';
 import { useWorkspaceState } from '../state/store-context';
 import { totalDefectCount } from '../state/topology-presentation';
@@ -423,7 +422,7 @@ function RepairFooter({
             {/* HONEST STAGES, NO PERCENTAGE: the engine does not know how much work remains,
                 so an indeterminate bar and the stage in words say exactly what is known. */}
             <div className="convert-footer__progress-row">
-              <span data-testid="repair-phase">{describeRepairPhase(repair.phase)}</span>
+              <span data-testid="repair-phase">{repair.phase ?? 'Building a safe repair'}</span>
             </div>
             <progress className="import__bar" aria-label="Repair in progress" />
           </div>

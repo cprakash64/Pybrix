@@ -53,6 +53,9 @@ const PHASE_LABELS: Readonly<Record<string, string>> = {
   'building candidate': 'Building the proposed result',
   'validating candidate': 'Revalidating the proposed result',
   'checking openings': 'Checking the openings to fill',
+  // REPAIR-CORE-06B: stages, never a percentage — the engine does not know what remains.
+  'repairing pinched vertices': 'Building a safe repair',
+  'judging candidate': 'Revalidating the proposed result',
   applied: 'Applying',
   'restoring previous version': 'Restoring the previous version',
   restored: 'Restored',

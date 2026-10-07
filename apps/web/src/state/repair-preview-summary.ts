@@ -177,28 +177,11 @@ export function describeLimitLikely(plan: LocalRepairPlan | undefined): string |
 
 /* ------------------------------------------------------------- progress -- */
 
-/**
- * Honest stage text. The engine does not know how much work remains, so there is no percentage:
- * the worker's own stage note is mapped to a plain sentence, and anything unrecognised falls back
- * to the broadest true description rather than to a number.
+/*
+ * Stage text comes from `runtime/repair-service.ts` (`describeRepairPhase`), the ONE place worker
+ * stage notes become words. It is stage text and never a percentage: the engine does not know
+ * how much work remains, so the panel shows an indeterminate bar and the stage.
  */
-export function describeRepairPhase(phase: string | undefined): string {
-  switch (phase) {
-    case 'analysing':
-    case 'planning repair':
-    case 'planned':
-      return 'Analyzing model…';
-    case 'validating candidate':
-    case 'building candidate':
-    case 'checking openings':
-      return 'Checking repaired geometry…';
-    case 'preview':
-    case 'complete':
-      return 'Preparing preview…';
-    default:
-      return 'Building a safe repair…';
-  }
-}
 
 export const REPAIR_APPLYING_LINE = 'Applying repairs…';
 export const REPAIR_CHECKING_MODEL_LINE = 'Checking repaired model…';

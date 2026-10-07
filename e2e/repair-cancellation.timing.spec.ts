@@ -89,20 +89,18 @@ async function importHeavy(page: Page, side: number): Promise<string> {
  * the suite becomes unusable. A MutationObserver reacts in the same task the
  * panel changes, which makes "cancel during THIS phase" deterministic.
  */
-async function armCancelWhen(
-  page: Page,
-  match: { phase?: string; minPercent?: number },
-): Promise<void> {
+async function armCancelWhen(page: Page, match: { phase?: string }): Promise<void> {
   await page.evaluate(
-    ({ phase, minPercent }) => {
+    ({ phase }) => {
       const w = window as unknown as { __armed?: { phase: string; percent: number } };
       const read = (id: string): string =>
         document.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
       const tryCancel = (): boolean => {
         const phaseText = read('repair-phase');
-        const percent = Number.parseInt(read('repair-percent').replace(/[^0-9]/g, ''), 10) || 0;
+        // REPAIR-CORE-06B: stages, not percentages — the engine does not know how much work
+        // remains, so the panel no longer invents a number. `percent` is kept (0) for the shape.
+        const percent = 0;
         if (phase !== undefined && !new RegExp(phase, 'i').test(phaseText)) return false;
-        if (minPercent !== undefined && percent < minPercent) return false;
         const button = document.querySelector<HTMLButtonElement>('[data-testid="cancel-repair"]');
         if (button === null || button.disabled) return false;
         w.__armed = { phase: phaseText, percent };
@@ -120,7 +118,7 @@ async function armCancelWhen(
         attributes: true,
       });
     },
-    { phase: match.phase, minPercent: match.minPercent },
+    { phase: match.phase },
   );
 }
 
@@ -149,7 +147,8 @@ test('cancelling a heavy repair stops the work early and leaves the model untouc
   /* ---- run 2: the same cold work, cancelled as soon as it is under way ---- */
 
   await importHeavy(page, HEAVY_SIDE);
-  await armCancelWhen(page, { minPercent: 1 });
+  // Under way: the stage text is the engine's own, shown once the build has begun.
+  await armCancelWhen(page, { phase: 'Selecting|Solving|Building' });
 
   const startCancel = Date.now();
   await page.getByTestId('preview-repair').click();
@@ -187,9 +186,9 @@ test('cancelling a heavy repair stops the work early and leaves the model untouc
 
   // WORK PROGRESS: the pipeline had started and had NOT finished. This is
   // `processed < total` in the engine's own published progress.
-  expect(armed).toBeDefined();
-  expect(armed?.percent ?? 0).toBeGreaterThan(0);
-  expect(armed?.percent ?? 100).toBeLessThan(100);
+  // Cancel was pressed while the build stage was showing, and what it left is a cancelled
+  // repair with nothing published (asserted below): the work had started and not finished.
+  expect(armed?.phase ?? '').toMatch(/Selecting|Solving|Building/);
 
   // NOTHING WAS PUBLISHED.
   await expect(page.getByTestId('repair-candidate')).toHaveCount(0);
@@ -255,9 +254,6 @@ test('cancelling DURING candidate validation unwinds it and publishes nothing', 
   // rather than the engine's internal phase name keeps this test honest about
   // what the user was actually looking at when they pressed Cancel.
   expect(armed?.phase ?? '').toMatch(/revalidating/i);
-  // Validation had begun and had not completed.
-  expect(armed?.percent ?? 0).toBeGreaterThanOrEqual(75);
-  expect(armed?.percent ?? 100).toBeLessThan(100);
 
   // The worker unwound rather than completing and discarding: nothing resident.
   await expect(page.getByTestId('repair-candidate')).toHaveCount(0);

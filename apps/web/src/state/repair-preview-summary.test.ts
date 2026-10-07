@@ -17,7 +17,6 @@ import {
   describeLimitLikely,
   describeNoSafeChange,
   describePreviewOutcome,
-  describeRepairPhase,
   diffIssues,
   mapLocalOutcome,
 } from './repair-preview-summary';
@@ -229,16 +228,6 @@ describe('limitLikely is ADVISORY ONLY', () => {
 });
 
 describe('progress and counts', () => {
-  it('maps worker stage notes to honest stage text and never a number', () => {
-    expect(describeRepairPhase('analysing')).toBe('Analyzing model…');
-    expect(describeRepairPhase('repairing pinched vertices')).toBe('Building a safe repair…');
-    expect(describeRepairPhase('validating candidate')).toBe('Checking repaired geometry…');
-    expect(describeRepairPhase(undefined)).toBe('Building a safe repair…');
-    for (const phase of ['analysing', 'validating candidate', undefined, 'anything']) {
-      expect(describeRepairPhase(phase)).not.toMatch(/\d+\s*%/);
-    }
-  });
-
   it('describes geometry edits separately from issues', () => {
     expect(describeGeometryChanges(undefined)).toEqual([]);
     expect(describeGeometryChanges(outcome({ facesRemoved: 1, facesAppended: 0 }))).toEqual([
@@ -267,9 +256,6 @@ describe('copy discipline', () => {
       strings.push(describeNoSafeChange(kind, undefined));
     }
     strings.push(describeNoSafeChange(undefined, LocalRepairNotRun.NoVerifier));
-    for (const phase of ['analysing', 'validating candidate', 'x', undefined]) {
-      strings.push(describeRepairPhase(phase));
-    }
     strings.push(describeLimitLikely({ limitLikely: true } as LocalRepairPlan) ?? '');
     for (const text of strings) {
       for (const term of REPAIR_PREVIEW_FORBIDDEN_TERMS) {

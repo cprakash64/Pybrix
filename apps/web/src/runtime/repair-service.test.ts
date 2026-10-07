@@ -174,6 +174,12 @@ describe('phase labels', () => {
 
   it('passes an unmapped phase through rather than hiding it', () => {
     // A new engine phase should show up as itself instead of silently vanishing.
+    // 06B: the local repair's stages read as stages, with no number in them.
+    expect(describeRepairPhase('repairing pinched vertices')).toBe('Building a safe repair');
+    expect(describeRepairPhase('judging candidate')).toBe('Revalidating the proposed result');
+    for (const note of ['analysing', 'validating candidate', 'repairing pinched vertices']) {
+      expect(describeRepairPhase(note)).not.toMatch(/\d+\s*%/);
+    }
     expect(describeRepairPhase('some future phase')).toBe('some future phase');
     expect(describeRepairPhase(undefined)).toBe('Working');
   });
