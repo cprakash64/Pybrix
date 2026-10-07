@@ -10,7 +10,10 @@ import { useGeometryClient } from '../runtime/client-context';
 import { deriveSplitPartExportName, downloadBytes } from '../runtime/download';
 import {
   clampOffset,
+  clampRoll,
+  type SplitPieceView,
   clampTilt,
+  resetPlaneSettings,
   connectorsAvailable,
   isValidDimension,
   offsetAfterNormalDrag,
@@ -74,7 +77,7 @@ export const DEFAULT_CONNECTOR: ConnectorSettings = Object.freeze({
   dovetailAngle: 0,
 });
 
-const DEFAULT_PLANE: SplitPlaneSettings = Object.freeze({ axis: 'Z', offset: undefined, tilt: 0 });
+const DEFAULT_PLANE: SplitPlaneSettings = Object.freeze(resetPlaneSettings('Z'));
 
 export interface AppliedSplit {
   readonly pieceA: string;
@@ -117,6 +120,10 @@ export interface SplitControls {
   readonly setAxis: (axis: SplitAxis) => void;
   readonly setOffset: (value: number) => void;
   readonly setTilt: (value: number) => void;
+  readonly setRoll: (value: number) => void;
+  readonly flipPlane: () => void;
+  readonly pieceView: SplitPieceView;
+  readonly setPieceView: (view: SplitPieceView) => void;
   readonly resetPlane: () => void;
   readonly beginPlaneDrag: () => void;
   readonly dragPlane: (distanceAlongNormal: number) => void;
@@ -280,6 +287,19 @@ export function useSplitWorkflow(): SplitControls {
       ? exportRecord.message
       : undefined;
 
+  /* Which piece of a preview is drawn: presentation, scoped to the session like a preview. */
+  const [pieceViewState, setPieceViewState] = useState<{
+    readonly key: string;
+    readonly view: SplitPieceView;
+  }>({ key: '', view: 'both' });
+  const pieceView: SplitPieceView = pieceViewState.key === session ? pieceViewState.view : 'both';
+  const setPieceView = useCallback(
+    (view: SplitPieceView): void => {
+      setPieceViewState({ key: session, view });
+    },
+    [session],
+  );
+
   const bounds = part?.bounds;
   const range = useMemo(() => splitRange(plane.axis, bounds), [bounds, plane.axis]);
   const offset = plane.offset ?? range.center;
@@ -378,7 +398,7 @@ export function useSplitWorkflow(): SplitControls {
 
   const setAxis = useCallback(
     (axis: SplitAxis) => {
-      edit(() => ({ axis, offset: undefined, tilt: 0 }));
+      edit(() => resetPlaneSettings(axis));
     },
     [edit],
   );
@@ -397,8 +417,17 @@ export function useSplitWorkflow(): SplitControls {
     },
     [edit],
   );
+  const setRoll = useCallback(
+    (value: number) => {
+      edit((current) => ({ ...current, roll: clampRoll(value, current.roll) }));
+    },
+    [edit],
+  );
+  const flipPlane = useCallback(() => {
+    edit((current) => ({ ...current, flipped: !current.flipped }));
+  }, [edit]);
   const resetPlane = useCallback(() => {
-    edit((current) => ({ axis: current.axis, offset: undefined, tilt: 0 }));
+    edit((current) => resetPlaneSettings(current.axis));
   }, [edit]);
 
   const beginPlaneDrag = useCallback(() => {
@@ -614,6 +643,10 @@ export function useSplitWorkflow(): SplitControls {
     setAxis,
     setOffset,
     setTilt,
+    setRoll,
+    flipPlane,
+    pieceView,
+    setPieceView,
     resetPlane,
     beginPlaneDrag,
     dragPlane,

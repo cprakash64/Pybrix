@@ -145,7 +145,7 @@ describe('the request sent to the worker', () => {
       SELECTION,
       {
         pattern: 'lines',
-        mode: 'raised',
+        mode: 'emboss',
         featureSize: 2.54,
         spacing: 25.4,
         heightOrDepth: 0.254,

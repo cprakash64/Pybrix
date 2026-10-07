@@ -86,7 +86,10 @@ export interface ShellLayout {
 const ShellLayoutContext = createContext<ShellLayout | undefined>(undefined);
 
 export function ShellLayoutProvider({ children }: { readonly children: ReactNode }): ReactNode {
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  // COLLAPSED BY DEFAULT: a fresh session gives the viewport the width. The flag is
+  // session state only — nothing is persisted, so an old stored preference can
+  // never force the panel open or shut.
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [inspectorDrawerOpen, setInspectorDrawerOpen] = useState(false);
   const [toolDrawerOpen, setToolDrawerOpen] = useState(false);
   const toolIsDrawer = useMediaQuery(TOOL_DRAWER_QUERY);

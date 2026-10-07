@@ -234,6 +234,12 @@ export interface ViewportHandle {
   ): void;
   /** Colours the pieces of a split as Piece A and Piece B. `undefined` restores one colour. */
   setPartTints(tints: ReadonlyMap<string, ViewportPartTint> | undefined): void;
+  /**
+   * Hides the named parts (the other piece of a split preview). Presentation
+   * only: no geometry is touched, uploaded or disposed, and the camera does not
+   * move. `undefined` or an empty set shows every part again.
+   */
+  setHiddenParts(ids: ReadonlySet<string> | undefined): void;
   /** Replaces the diagnostic overlays. `undefined` clears them. */
   setOverlays(data: ViewportOverlayData | undefined): void;
   /**
@@ -554,6 +560,7 @@ export function createViewport(
     }),
   };
   let partTints: ReadonlyMap<string, ViewportPartTint> | undefined;
+  let hiddenParts: ReadonlySet<string> = new Set();
   /*
    * The selected surface: a muted rose over the model's grey, translucent
    * enough to keep its shading readable. Presentation only — no material of
@@ -1109,6 +1116,7 @@ export function createViewport(
     // A preview may have hidden the previously active part. Every part is drawn
     // once no candidate is on screen.
     for (const mesh of partMeshes.values()) mesh.visible = true;
+    applyHiddenParts();
 
     placeActivePartGroup();
     render();
@@ -1145,6 +1153,19 @@ export function createViewport(
     }
     splitGizmo.setOutline(data.segments);
     sectionRevision = data.revision;
+    scheduleRender();
+  };
+
+  /** Hidden parts stay hidden across a model install or a preview clearing. */
+  const applyHiddenParts = (): void => {
+    for (const [id, mesh] of partMeshes) if (hiddenParts.has(id)) mesh.visible = false;
+  };
+
+  const setHiddenParts = (ids: ReadonlySet<string> | undefined): void => {
+    const next: ReadonlySet<string> = ids ?? new Set();
+    if (next.size === hiddenParts.size && [...next].every((id) => hiddenParts.has(id))) return;
+    hiddenParts = next;
+    for (const [id, mesh] of partMeshes) mesh.visible = !hiddenParts.has(id);
     scheduleRender();
   };
 
@@ -1350,6 +1371,7 @@ export function createViewport(
     setTextureSelection,
     setSectionOutline,
     setPartTints,
+    setHiddenParts,
     setTextureFootprint,
     setOverlays,
     setPreview,

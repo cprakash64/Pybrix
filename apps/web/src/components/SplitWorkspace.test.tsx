@@ -145,6 +145,46 @@ describe('the cut plane', () => {
     expect(store.getSnapshot().splitPlane?.origin[2]).toBe(60);
   });
 
+  it('rolls the plane about the second axis, and the published plane follows', () => {
+    const store = mount((s) => {
+      load(s, 'millimeter');
+    });
+    expect(screen.getByTestId('split-roll')).toHaveValue(0);
+    fireEvent.change(screen.getByTestId('split-roll'), { target: { value: '30' } });
+    fireEvent.blur(screen.getByTestId('split-roll'));
+    const normal = store.getSnapshot().splitPlane?.normal;
+    expect(normal?.[1]).toBeCloseTo(-Math.sin(Math.PI / 6), 9);
+    expect(normal?.[2]).toBeCloseTo(Math.cos(Math.PI / 6), 9);
+    expect(screen.getByTestId('split-hud-cut')).toHaveTextContent('rolled 30.0°');
+  });
+
+  it('swaps sides without moving the plane, and says it is pressed', () => {
+    const store = mount((s) => {
+      load(s, 'millimeter');
+    });
+    const flip = screen.getByTestId('split-flip-plane');
+    expect(flip).toHaveAttribute('aria-pressed', 'false');
+    const before = store.getSnapshot().splitPlane;
+    fireEvent.click(flip);
+    const after = store.getSnapshot().splitPlane;
+    expect(flip).toHaveAttribute('aria-pressed', 'true');
+    expect(after?.origin).toEqual(before?.origin);
+    expect(after?.normal.map((c) => c + 0)).toEqual(before?.normal.map((c) => -c + 0));
+  });
+
+  it('reset restores a level, unflipped plane at the centre', () => {
+    const store = mount((s) => {
+      load(s, 'millimeter');
+    });
+    fireEvent.change(screen.getByTestId('split-roll'), { target: { value: '30' } });
+    fireEvent.blur(screen.getByTestId('split-roll'));
+    fireEvent.click(screen.getByTestId('split-flip-plane'));
+    fireEvent.click(screen.getByTestId('split-reset-plane'));
+    expect(screen.getByTestId('split-roll')).toHaveValue(0);
+    expect(screen.getByTestId('split-flip-plane')).toHaveAttribute('aria-pressed', 'false');
+    expect(store.getSnapshot().splitPlane?.normal).toEqual([0, 0, 1]);
+  });
+
   it('clamps a typed position to the part', () => {
     const store = mount((s) => {
       load(s, 'millimeter');

@@ -48,7 +48,7 @@ function modelNamed(fileName: string, unit: string | undefined): Omit<LoadedMode
       externalReferences: [],
       importedAt: 0,
     },
-  } as unknown as Omit<LoadedModel, 'revision'>;
+  };
 }
 
 function loaded(fileName: string, unit?: string): WorkspaceStore {

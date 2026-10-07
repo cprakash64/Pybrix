@@ -10,6 +10,7 @@ import {
   describeExportParts,
   describePlaneName,
   describePositionLabel,
+  describeRollLabel,
   describeTiltLabel,
   dovetailSlot,
   formatLength,
@@ -17,6 +18,7 @@ import {
   socketDiameter,
   type ConnectorKind,
   type SplitAxis,
+  type SplitPieceView,
 } from '../state/split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
 import { useSplitControls } from '../state/workflow-controllers';
@@ -93,6 +95,7 @@ const busy = (split: SplitControls): boolean =>
 function CutPlaneSection({ split }: { readonly split: SplitControls }): ReactNode {
   const positionId = useId();
   const tiltId = useId();
+  const rollId = useId();
   const part = split.part;
   if (part === undefined) return null;
   const axis = split.plane.axis;
@@ -181,20 +184,57 @@ function CutPlaneSection({ split }: { readonly split: SplitControls }): ReactNod
         />
       </div>
 
-      <button
-        type="button"
-        className="secondary-action split-workspace__reset"
-        onClick={split.resetPlane}
-        disabled={disabled}
-        data-testid="split-reset-plane"
-      >
-        <Icon name="home" size={14} />
-        {SPLIT_COPY.resetPlane}
-      </button>
+      <div className="split-field split-field--inline">
+        <label className="format-options__label" htmlFor={rollId}>
+          {describeRollLabel(axis)}
+        </label>
+        <NumberField
+          id={rollId}
+          label={`${describeRollLabel(axis)}, degrees`}
+          value={split.plane.roll}
+          min={-MAX_SPLIT_TILT_DEGREES}
+          max={MAX_SPLIT_TILT_DEGREES}
+          step={1}
+          suffix="°"
+          disabled={disabled}
+          onCommit={split.setRoll}
+          testId="split-roll"
+        />
+      </div>
+
+      <div className="split-workspace__plane-actions">
+        <button
+          type="button"
+          className="secondary-action split-workspace__reset"
+          onClick={split.resetPlane}
+          disabled={disabled}
+          data-testid="split-reset-plane"
+        >
+          <Icon name="home" size={14} />
+          {SPLIT_COPY.resetPlane}
+        </button>
+        <button
+          type="button"
+          className="secondary-action split-workspace__flip"
+          onClick={split.flipPlane}
+          disabled={disabled}
+          aria-pressed={split.plane.flipped}
+          title={SPLIT_COPY.flipHint}
+          data-testid="split-flip-plane"
+        >
+          {SPLIT_COPY.flipPlane}
+        </button>
+      </div>
       <p className="convert-workspace__note">{SPLIT_COPY.oneCut}</p>
     </PanelSection>
   );
 }
+
+const PIECE_VIEW_OPTIONS: readonly SegmentedOption<SplitPieceView>[] = [
+  { value: 'both', label: 'Both', testId: 'split-view-both' },
+  { value: 'a', label: 'Piece A', testId: 'split-view-a' },
+  { value: 'b', label: 'Piece B', testId: 'split-view-b' },
+];
 
 /* ------------------------------------------------------------ connectors -- */
 
@@ -508,9 +548,17 @@ function ResultSection({ split }: { readonly split: SplitControls }): ReactNode 
       testId="split-result"
     >
       {preview === undefined ? null : (
-        <p className="split-result__badge" data-testid="split-preview-label">
-          {SPLIT_COPY.previewLabel}
-        </p>
+        <>
+          <p className="split-result__badge" data-testid="split-preview-label">
+            {SPLIT_COPY.previewLabel}
+          </p>
+          <SegmentedControl
+            label={SPLIT_COPY.viewGroup}
+            options={PIECE_VIEW_OPTIONS}
+            value={split.pieceView}
+            onChange={split.setPieceView}
+          />
+        </>
       )}
       <dl className="property-grid">
         <div className="property-row">
@@ -543,6 +591,12 @@ function ResultSection({ split }: { readonly split: SplitControls }): ReactNode 
               <dt className="property-row__label">Connector</dt>
               <dd className="property-row__value" data-testid="split-result-connector">
                 {describeConnectorResult(preview.connector.kind)}
+              </dd>
+            </div>
+            <div className="property-row">
+              <dt className="property-row__label">Checks</dt>
+              <dd className="property-row__value" data-testid="split-result-validation">
+                {SPLIT_COPY.piecesValidated}
               </dd>
             </div>
             <div className="property-row">

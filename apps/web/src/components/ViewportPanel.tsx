@@ -273,6 +273,24 @@ export function ViewportPanel(): ReactNode {
     );
   }, [model, splitPreview, tintA, tintB]);
 
+  /*
+   * Which piece of a split PREVIEW is drawn. Only a preview hides a piece, and
+   * only inside the Split workspace; applied pieces are ordinary parts. The
+   * other piece is hidden, not removed, so nothing is re-uploaded.
+   */
+  const pieceView = splitWorkspace && split.preview !== undefined ? split.pieceView : 'both';
+  const hiddenPieceId =
+    pieceView === 'a'
+      ? split.preview?.pieceBId
+      : pieceView === 'b'
+        ? split.preview?.pieceAId
+        : undefined;
+  useEffect(() => {
+    viewportRef.current?.setHiddenParts(
+      hiddenPieceId === undefined ? undefined : new Set([hiddenPieceId]),
+    );
+  }, [model, splitPreview, hiddenPieceId]);
+
   useEffect(() => {
     viewportRef.current?.setNavigationMode(navigationMode);
   }, [navigationMode]);

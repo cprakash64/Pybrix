@@ -19,6 +19,9 @@ import { isLengthUnit } from '@cadfixer/shared';
  * magnets, manual placement, a margin control, bed fitting or orientation.
  */
 
+/** Which piece(s) of a preview are drawn. Presentation only; nothing about the split changes. */
+export type SplitPieceView = 'both' | 'a' | 'b';
+
 /* ------------------------------------------------------------- plane -- */
 
 /** The axis the plane's NORMAL starts along. The plane is named by the other two. */
@@ -32,6 +35,22 @@ export interface SplitPlaneSettings {
   readonly offset: number | undefined;
   /** Degrees, within ±`MAX_SPLIT_TILT_DEGREES`. */
   readonly tilt: number;
+  /**
+   * A second rotation, about the remaining axis (PYBRIX-08A), so the plane's
+   * orientation is not limited to leaning in one direction. Degrees, within the
+   * same bound. Zero leaves the plane exactly as the single tilt made it.
+   */
+  readonly roll: number;
+  /**
+   * Reverses the plane's normal, which swaps Piece A and Piece B. The plane in
+   * space is the same; only which side is called A changes.
+   */
+  readonly flipped: boolean;
+}
+
+/** The plane exactly as a fresh cut starts: along the axis, level, unflipped. */
+export function resetPlaneSettings(axis: SplitAxis): SplitPlaneSettings {
+  return { axis, offset: undefined, tilt: 0, roll: 0, flipped: false };
 }
 
 /** The engine's own bound on the rotation control (Stage 7B). */
@@ -61,6 +80,15 @@ export function tiltAxisOf(axis: SplitAxis): SplitAxis {
   return axis === 'X' ? 'Z' : axis === 'Y' ? 'X' : 'Y';
 }
 
+/**
+ * The axis the ROLL turns the normal about: the one axis neither the plane's
+ * own axis nor its tilt axis. X plane: tilt about Z, roll about Y. Y plane: tilt
+ * about X, roll about Z. Z plane: tilt about Y, roll about X.
+ */
+export function rollAxisOf(axis: SplitAxis): SplitAxis {
+  return axis === 'X' ? 'Y' : axis === 'Y' ? 'Z' : 'X';
+}
+
 export interface SplitRange {
   readonly min: number;
   readonly max: number;
@@ -87,6 +115,25 @@ export function clampTilt(value: number, previous: number): number {
   return Math.min(MAX_SPLIT_TILT_DEGREES, Math.max(-MAX_SPLIT_TILT_DEGREES, value));
 }
 
+/** The roll shares the tilt's bound; a plane never becomes parallel to its axis. */
+export const clampRoll = clampTilt;
+
+/** `normal` turned by `radians` about the world axis `about`. */
+function rotateAbout(
+  normal: readonly [number, number, number],
+  about: SplitAxis,
+  radians: number,
+): [number, number, number] {
+  const c = Math.cos(radians),
+    s = Math.sin(radians),
+    [x, y, z] = normal;
+  return about === 'X'
+    ? [x, y * c - z * s, y * s + z * c]
+    : about === 'Y'
+      ? [x * c + z * s, y, -x * s + z * c]
+      : [x * c - y * s, x * s + y * c, z];
+}
+
 /**
  * THE plane. The only function that turns settings into a normal and an
  * origin; the worker request, the viewport overlay and the HUD all read it.
@@ -98,12 +145,21 @@ export function splitPlaneFor(
   bounds: PartBoundsLike | undefined,
 ): SplitPlane {
   const radians = (settings.tilt * Math.PI) / 180;
-  const normal: readonly [number, number, number] =
+  const tilted: readonly [number, number, number] =
     settings.axis === 'X'
       ? [Math.cos(radians), Math.sin(radians), 0]
       : settings.axis === 'Y'
         ? [0, Math.cos(radians), Math.sin(radians)]
         : [Math.sin(radians), 0, Math.cos(radians)];
+  // A roll of zero is skipped, not applied as an identity rotation: the plane a
+  // user never rolled is byte-for-byte the one the engine was qualified on.
+  const rolled: readonly [number, number, number] =
+    settings.roll === 0
+      ? tilted
+      : rotateAbout(tilted, rollAxisOf(settings.axis), (settings.roll * Math.PI) / 180);
+  const normal: readonly [number, number, number] = settings.flipped
+    ? [-rolled[0], -rolled[1], -rolled[2]]
+    : rolled;
   const center = bounds?.center ?? [0, 0, 0];
   const origin: [number, number, number] = [center[0], center[1], center[2]];
   origin[axisIndex(settings.axis)] = settings.offset ?? splitRange(settings.axis, bounds).center;
@@ -249,6 +305,10 @@ export const SPLIT_COPY = Object.freeze({
   oneCut:
     'One flat cut per split. To cut further, select a piece after applying and split it again.',
   resetPlane: 'Reset plane',
+  viewGroup: 'Show',
+  piecesValidated: 'Both pieces closed and consistently wound; the cut faces are capped',
+  flipPlane: 'Swap sides',
+  flipHint: 'Swaps Piece A and Piece B. The cut itself does not move.',
   connectorsSection: 'Connectors',
   connectorsMeta: 'Placed automatically',
   connectorsGroup: 'Connector type',
@@ -293,6 +353,11 @@ export function describeTiltLabel(axis: SplitAxis): string {
   return `Tilt about ${tiltAxisOf(axis)}`;
 }
 
+/** "Roll about X". */
+export function describeRollLabel(axis: SplitAxis): string {
+  return `Roll about ${rollAxisOf(axis)}`;
+}
+
 /** "XY · Z = 54.0 mm", plus the tilt when there is one. */
 export function describeCut(
   settings: SplitPlaneSettings,
@@ -300,7 +365,9 @@ export function describeCut(
   unit: string | undefined,
 ): string {
   const tilt = settings.tilt === 0 ? '' : ` · tilted ${formatNumber(settings.tilt)}°`;
-  return `${describePlaneName(settings.axis)} · ${settings.axis} = ${formatLength(offset, unit)}${tilt}`;
+  const roll = settings.roll === 0 ? '' : ` · rolled ${formatNumber(settings.roll)}°`;
+  const flipped = settings.flipped ? ' · sides swapped' : '';
+  return `${describePlaneName(settings.axis)} · ${settings.axis} = ${formatLength(offset, unit)}${tilt}${roll}${flipped}`;
 }
 
 /** "1 outline" / "2 outlines". A loop is an outline, not a separate piece. */

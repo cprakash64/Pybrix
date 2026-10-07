@@ -6,6 +6,7 @@ import {
   MAX_SPLIT_TILT_DEGREES,
   SPLIT_COPY,
   clampOffset,
+  clampRoll,
   clampTilt,
   connectorsAvailable,
   describeCut,
@@ -18,6 +19,8 @@ import {
   formatLength,
   isValidDimension,
   offsetAfterNormalDrag,
+  resetPlaneSettings,
+  rollAxisOf,
   socketDiameter,
   splitPlaneFor,
   splitRange,
@@ -58,21 +61,101 @@ describe('the plane', () => {
   });
 
   it('starts at the centre, and places the origin on the axis at the offset', () => {
-    const centred = splitPlaneFor({ axis: 'Z', offset: undefined, tilt: 0 }, BOUNDS);
+    const centred = splitPlaneFor(
+      { axis: 'Z', offset: undefined, tilt: 0, roll: 0, flipped: false },
+      BOUNDS,
+    );
     expect(centred.origin).toEqual([10, 0, 52]);
     expect(centred.normal).toEqual([0, 0, 1]);
-    const moved = splitPlaneFor({ axis: 'Z', offset: 54, tilt: 0 }, BOUNDS);
+    const moved = splitPlaneFor(
+      { axis: 'Z', offset: 54, tilt: 0, roll: 0, flipped: false },
+      BOUNDS,
+    );
     expect(moved.origin).toEqual([10, 0, 54]);
   });
 
   it('tilts about the axis the Stage 7B plane tilts about, keeping a unit normal', () => {
     for (const axis of ['X', 'Y', 'Z'] as const) {
-      const { normal } = splitPlaneFor({ axis, offset: undefined, tilt: 30 }, BOUNDS);
+      const { normal } = splitPlaneFor(
+        { axis, offset: undefined, tilt: 30, roll: 0, flipped: false },
+        BOUNDS,
+      );
       expect(Math.hypot(...normal)).toBeCloseTo(1, 12);
       // The tilt axis itself is untouched by the rotation.
       const tiltIndex = { X: 0, Y: 1, Z: 2 }[tiltAxisOf(axis)];
       expect(normal[tiltIndex]).toBeCloseTo(0, 12);
     }
+  });
+
+  it('with no roll and no flip the plane is exactly the single-tilt plane', () => {
+    for (const axis of ['X', 'Y', 'Z'] as const) {
+      const plain = splitPlaneFor(
+        { axis, offset: undefined, tilt: 20, roll: 0, flipped: false },
+        BOUNDS,
+      );
+      const radians = (20 * Math.PI) / 180;
+      const expected =
+        axis === 'X'
+          ? [Math.cos(radians), Math.sin(radians), 0]
+          : axis === 'Y'
+            ? [0, Math.cos(radians), Math.sin(radians)]
+            : [Math.sin(radians), 0, Math.cos(radians)];
+      expect([...plain.normal]).toEqual(expected);
+    }
+  });
+
+  it('rolls about the remaining axis, keeping a unit normal and the roll axis component', () => {
+    for (const axis of ['X', 'Y', 'Z'] as const) {
+      const base = splitPlaneFor(
+        { axis, offset: undefined, tilt: 0, roll: 0, flipped: false },
+        BOUNDS,
+      );
+      const rolled = splitPlaneFor(
+        { axis, offset: undefined, tilt: 0, roll: 30, flipped: false },
+        BOUNDS,
+      );
+      expect(Math.hypot(...rolled.normal)).toBeCloseTo(1, 12);
+      // Rolling a level plane about the roll axis leaves that axis's component alone.
+      const rollIndex = { X: 0, Y: 1, Z: 2 }[rollAxisOf(axis)];
+      expect(rolled.normal[rollIndex]).toBeCloseTo(base.normal[rollIndex] ?? 0, 12);
+      expect(rolled.normal).not.toEqual(base.normal);
+    }
+  });
+
+  it('tilt and roll together still give a unit normal for every combination', () => {
+    for (const axis of ['X', 'Y', 'Z'] as const)
+      for (const tilt of [-80, -30, 0, 45, 89])
+        for (const roll of [-89, -10, 0, 60]) {
+          const { normal } = splitPlaneFor(
+            { axis, offset: undefined, tilt, roll, flipped: false },
+            BOUNDS,
+          );
+          expect(Math.hypot(...normal)).toBeCloseTo(1, 12);
+        }
+  });
+
+  it('flipping reverses the normal and nothing else — the plane in space is the same', () => {
+    const plane = { axis: 'Y', offset: 3, tilt: 25, roll: -15, flipped: false } as const;
+    const a = splitPlaneFor(plane, BOUNDS);
+    const b = splitPlaneFor({ ...plane, flipped: true }, BOUNDS);
+    expect(b.origin).toEqual(a.origin);
+    expect([...b.normal]).toEqual(a.normal.map((component) => -component));
+  });
+
+  it('holds the roll to the same bound as the tilt and ignores a non-number', () => {
+    expect(clampRoll(200, 0)).toBe(MAX_SPLIT_TILT_DEGREES);
+    expect(clampRoll(-200, 0)).toBe(-MAX_SPLIT_TILT_DEGREES);
+    expect(clampRoll(Number.NaN, 7)).toBe(7);
+  });
+
+  it('a reset restores a level, unflipped plane at the centre', () => {
+    expect(resetPlaneSettings('X')).toEqual({
+      axis: 'X',
+      offset: undefined,
+      tilt: 0,
+      roll: 0,
+      flipped: false,
+    });
   });
 
   it('holds a typed position inside the part and ignores a non-number', () => {
@@ -86,23 +169,26 @@ describe('the plane', () => {
 
   it('turns a drag along the normal into the same position the slider would set', () => {
     const range = splitRange('Z', BOUNDS);
-    const flat = splitPlaneFor({ axis: 'Z', offset: 52, tilt: 0 }, BOUNDS);
+    const flat = splitPlaneFor({ axis: 'Z', offset: 52, tilt: 0, roll: 0, flipped: false }, BOUNDS);
     expect(offsetAfterNormalDrag(52, 10, flat, 'Z', range)).toBeCloseTo(62, 12);
     // Tilted by 60°, moving the plane 10 along its normal moves its crossing
     // with the Z axis by 10 / cos 60° = 20.
-    const tilted = splitPlaneFor({ axis: 'Z', offset: 52, tilt: 60 }, BOUNDS);
+    const tilted = splitPlaneFor(
+      { axis: 'Z', offset: 52, tilt: 60, roll: 0, flipped: false },
+      BOUNDS,
+    );
     expect(offsetAfterNormalDrag(52, 10, tilted, 'Z', range)).toBeCloseTo(72, 9);
     // And it is held inside the part like a typed value.
     expect(offsetAfterNormalDrag(52, 1000, flat, 'Z', range)).toBe(104);
   });
 
   it('describes the cut in the document’s own unit, and invents none', () => {
-    expect(describeCut({ axis: 'Z', offset: 54, tilt: 0 }, 54, 'millimeter')).toBe(
-      'XY · Z = 54.0 mm',
-    );
-    expect(describeCut({ axis: 'Z', offset: 54, tilt: 15 }, 54, undefined)).toBe(
-      'XY · Z = 54.0 · tilted 15.0°',
-    );
+    expect(
+      describeCut({ axis: 'Z', offset: 54, tilt: 0, roll: 0, flipped: false }, 54, 'millimeter'),
+    ).toBe('XY · Z = 54.0 mm');
+    expect(
+      describeCut({ axis: 'Z', offset: 54, tilt: 15, roll: 0, flipped: false }, 54, undefined),
+    ).toBe('XY · Z = 54.0 · tilted 15.0°');
     expect(formatLength(3.25, undefined)).toBe('3.3');
     expect(formatArea(1559.4, 'millimeter')).toBe('1,559 mm²');
     expect(formatArea(12, undefined)).toBe('12 sq. units');
