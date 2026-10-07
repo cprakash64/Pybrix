@@ -128,7 +128,22 @@ the work budget, not parallelism, is the product's bound. Recorded as debt for a
 - HV-C01 and HV-C06 were failing only because `artifacts/release/` held an artifact built from an
   older commit. They are no longer waived: rebuilt at the clean HEAD (`npm run build`,
   `npm run release:build`), `npm run release:verify` passes 28/28.
-- **Not run: the Playwright suites** (`test:e2e`, `test:e2e:harness`, `test:e2e:timing`). The host
-  has no Chromium (`npx playwright install` was never run here), so every browser test fails at
-  launch. That is an environment gap and says nothing about the code; it is an open item for the
-  next session with a browser.
+- **Browser gate (REPAIR-CORE-06A-BROWSER-GATE).** Chromium (Playwright chromium-headless-shell
+  151.0.7922.34) was installed with `npx playwright install chromium`; no repository file changed.
+  `test:e2e` 390 passed / 2 skipped; `test:e2e:harness` 139 passed (nine of them the new
+  `e2e-harness/local-repair.spec.ts`); `test:e2e:timing` 15 passed. Earlier single failures in
+  `adversarial-import`, `stl-import` (host load) and `texture-workflow` 7C-R02 (a cancellation
+  race in an unrelated Manifold test) passed on re-run and are not regressions.
+- `e2e-harness/local-repair.spec.ts` drives the PRODUCTION plan, candidate, commit and undo
+  services through the harness bridge (the option has no public control until 06B), with the real
+  Web Worker protocol, the disposable kernel worker and the real Geogram WASM, and installs
+  results in the real store so the real analysis hook re-analyses each new revision. It proves:
+  success (3 pinches), residual (winding resolution + link retriangulation), refusals
+  (non-manifold edge: `no_change` and no candidate; inconsistent fan: `partial_unsupported`, no
+  repair), the work limit (`partial_limit`, whole-operation prefix, apply + undo), preview ==
+  Apply candidate, fresh post-Apply analysis, exact Undo (digest equality) and retry,
+  cancellation at planning and candidate stages, stale replacement, a dying kernel worker (fails
+  closed), and browser == Node work units for the same geometry.
+- To reach the limit with a small workload the candidate request may carry
+  `localRepairWorkCeiling`, which can only NARROW the product's primary budget (the precedent is
+  `memoryBudgetBytes`); a test asserts a huge value changes nothing.
