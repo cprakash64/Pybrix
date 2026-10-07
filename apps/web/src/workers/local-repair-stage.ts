@@ -467,7 +467,9 @@ async function exchangeLocal(
         return;
       }
       finish();
-      if (data.kind !== 'local-repair-result' && data.kind !== 'failed') {
+      // The reply is typed, but it crossed a thread boundary: compare as a plain string.
+      const kind: string = data.kind;
+      if (kind !== 'local-repair-result' && kind !== 'failed') {
         reject(internalError('The local repair answered with an unrecognised message.'));
         return;
       }
