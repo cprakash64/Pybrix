@@ -20,10 +20,16 @@
  *
  * Usage:
  *   node scripts/release-server.mjs [--port 4180] [--no-isolation] [--root DIR]
+ *                                   [--deployment-headers]
+ *
+ * `--deployment-headers` (REPAIR-CORE-07) applies EXACTLY the headers of the deployment template
+ * `deploy/nginx/cad-fixer-security-headers.conf` — Content-Security-Policy, Permissions-Policy,
+ * the cross-origin trio — so the release-candidate qualification runs the packaged artifact under
+ * the policy a real host would send, not under a development server's approximation of it.
  */
 
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -35,6 +41,19 @@ const flag = (name, fallback) => {
 const port = Number(flag('--port', '4180'));
 const isolate = !args.includes('--no-isolation');
 const root = resolve(flag('--root', 'apps/web/dist'));
+
+/** `add_header NAME "VALUE" always;` lines of the deployment template, verbatim. */
+function deploymentHeaders() {
+  const text = readFileSync(resolve('deploy/nginx/cad-fixer-security-headers.conf'), 'utf8');
+  const headers = {};
+  for (const line of text.split('\n')) {
+    const match = /^\s*add_header\s+(\S+)\s+"(.*)"\s+always;\s*$/.exec(line);
+    if (match !== null) headers[match[1]] = match[2];
+  }
+  if (!('Content-Security-Policy' in headers)) throw new Error('template has no CSP');
+  return Object.freeze(headers);
+}
+const DEPLOYMENT = args.includes('--deployment-headers') ? deploymentHeaders() : {};
 
 /**
  * The MIME types that matter, and every one of them is load-bearing.
@@ -100,6 +119,7 @@ const server = createServer((request, response) => {
     'Content-Type': TYPES[extension] ?? 'application/octet-stream',
     ...ALWAYS,
     ...(isolate ? ISOLATION : {}),
+    ...DEPLOYMENT,
     /*
      * CACHING, as the hosting contract requires it. Hashed assets are immutable
      * by construction; the HTML must NOT be, or a browser holding an old shell

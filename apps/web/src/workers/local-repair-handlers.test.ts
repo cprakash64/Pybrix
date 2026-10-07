@@ -303,6 +303,69 @@ describe('local repair candidate, commit and undo', () => {
     expect(built.value.candidate).toBeDefined();
   });
 
+  it('APPLY TRUTHFULNESS: the committed mesh IS the previewed candidate — same object, same digest, one history entry', async () => {
+    const mesh = pairs(4);
+    const handle = residentDocuments.commit(singlePartDocument(mesh));
+    const { planHash, localHash } = await plan(handle);
+    const created: CanonicalMesh[] = [];
+    const original = repairCandidates.create.bind(repairCandidates);
+    const spy = vi
+      .spyOn(repairCandidates, 'create')
+      .mockImplementation((source, part, candidateMesh, validation) => {
+        created.push(candidateMesh);
+        return original(source, part, candidateMesh, validation);
+      });
+    const check = verifier();
+    const built = await repairCreateCandidateHandler(
+      {
+        handle,
+        partId: PART,
+        requested: REQUESTED,
+        planHash,
+        localRepair: true,
+        localRepairPlanHash: localHash,
+        verifierPort: check.port,
+      },
+      context(),
+    );
+    check.close();
+    spy.mockRestore();
+    const previewed = created[0];
+    const candidate = built.value.candidate;
+    if (previewed === undefined || candidate === undefined) throw new Error('no candidate');
+    // A digest of every byte of both buffers (two independent FNV-1a lanes).
+    const digestOf = (m: CanonicalMesh): string => {
+      let x = 0x811c9dc5;
+      let y = 0x01000193;
+      for (const buffer of [m.positions, m.indices]) {
+        for (const byte of new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)) {
+          x = Math.imul(x ^ byte, 0x01000193) >>> 0;
+          y = Math.imul(y ^ byte, 0x85ebca6b) >>> 0;
+        }
+      }
+      return `${x.toString(16)}${y.toString(16)}`;
+    };
+    const before = digestOf(previewed);
+    expect(repairHistory.stats().recordCount).toBe(0);
+
+    const committed = await repairCommitHandler(
+      { candidate, expectedSource: handle, expectedPart: PART, planHash },
+      context(),
+    );
+    const installed = resident(committed.value.handle);
+    // No repair is rerun and no geometry is rebuilt: the object Apply installs is the previewed one.
+    expect(installed).toBe(previewed);
+    expect(digestOf(installed)).toBe(before);
+    expect(repairHistory.stats().recordCount).toBe(1);
+    expect(repairCandidates.stats().candidateCount).toBe(0);
+    // ...and the previous mesh is retained for an exact Undo, not recomputed.
+    const undone = await repairUndoHandler(
+      { handle: committed.value.handle, recordId: committed.value.repairRecordId },
+      context(),
+    );
+    expect(resident(undone.value.handle)).toBe(mesh);
+  });
+
   it('reports a work limit as a typed outcome, never an error, and applies a whole-operation prefix', async () => {
     const mesh = pairs(10);
     const handle = residentDocuments.commit(singlePartDocument(mesh));

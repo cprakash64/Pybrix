@@ -111,7 +111,7 @@ export const REPAIR_QUALIFIER = 'Self-intersections and wall thickness have not 
  * rather than merely old. Import, analysis and export are unaffected and say so,
  * because losing repair should not read as losing the application.
  */
-export const REPAIR_ISOLATION_HEADLINE = 'Conservative repair is unavailable in this context';
+export const REPAIR_ISOLATION_HEADLINE = 'Repair is unavailable in this context';
 
 export const REPAIR_ISOLATION_DETAIL =
   'Repair needs a cancellation signal it can act on while the work is running, which requires a cross-origin isolated page (COOP and COEP). This page is not cross-origin isolated, so Pybrix will not offer a repair it could not stop. Import, mesh analysis and export are unaffected.';
@@ -642,7 +642,7 @@ export function describeBoundsComparison(comparison: BoundsComparison): string {
  */
 export const REPAIR_APPLIED_DETAIL = 'Selected topological issues were repaired and revalidated.';
 
-export const NO_REPAIRS_AVAILABLE_HEADLINE = 'No conservative repairs are currently available.';
+export const NO_REPAIRS_AVAILABLE_HEADLINE = 'No safe automatic repairs are currently available.';
 
 /**
  * Why there is nothing to offer.
@@ -696,7 +696,7 @@ function formatCount(value: number, noun: string): string {
  */
 export function describeAnalysisDependency(state: AnalysisLifecycle, running: boolean): string {
   if (running || state === 'analyzing') {
-    return 'Conservative repair is planned from the topology report. Analysis is still running, so there is nothing to plan from yet.';
+    return 'Repair is planned from the topology report. Analysis is still running, so there is nothing to plan from yet.';
   }
   switch (state) {
     case 'cancelled':
@@ -709,7 +709,7 @@ export function describeAnalysisDependency(state: AnalysisLifecycle, running: bo
       return 'The topology report describes a different version of this model. A new analysis is needed before a repair can be planned.';
     case 'idle':
     case 'unavailable':
-      return 'Conservative repair is planned from the topology report. Analysis has not produced one for this version of the model yet.';
+      return 'Repair is planned from the topology report. Analysis has not produced one for this version of the model yet.';
   }
 }
 

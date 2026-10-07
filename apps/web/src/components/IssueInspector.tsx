@@ -192,7 +192,7 @@ function FixAction({
             }.`;
       return (
         <SuggestedFix
-          text={`${scope} Conservative repair previews the result in Auto repair; nothing changes until you apply it there.`}
+          text={`${scope} Repair previews the result first; nothing changes until you apply it.`}
         >
           <button
             type="button"
