@@ -812,7 +812,8 @@ function CandidateReview({
         />
         <Fact
           label="Triangles reversed"
-          value={counts.flippedFaces.toLocaleString()}
+          // Both repairs' reversals, so this agrees with the summary and the overlay.
+          value={(counts.flippedFaces + (localChange?.reversedCount ?? 0)).toLocaleString()}
           testId="change-count-flippedFaces"
         />
         {boundaryFill === undefined ? null : (
