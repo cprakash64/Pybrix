@@ -23,6 +23,7 @@ import {
   planConservativeRepair,
   REPAIR_MEMORY_CEILING_PARAM,
   resolveRepairMemoryCeiling,
+  resolveRepairWorkCeiling,
   undoRepair,
   type RepairCapableClient,
 } from './repair-service';
@@ -545,5 +546,23 @@ describe('committing', () => {
     expect(seen).toEqual([
       { candidate: CANDIDATE, expectedSource: HANDLE, expectedPart: PART, planHash: 'hash' },
     ]);
+  });
+});
+
+describe('the narrowing-only work ceiling — REPAIR-CORE-06B', () => {
+  it('reads a positive integer and nothing else', () => {
+    expect(resolveRepairWorkCeiling('?repairWorkCeiling=1500')).toBe(1500);
+    expect(resolveRepairWorkCeiling('?repairWorkCeiling=12.9')).toBe(12);
+    for (const bad of [
+      '',
+      '?repairWorkCeiling=',
+      '?repairWorkCeiling=0',
+      '?repairWorkCeiling=-4',
+    ]) {
+      expect(resolveRepairWorkCeiling(bad)).toBeUndefined();
+    }
+    expect(resolveRepairWorkCeiling('?repairWorkCeiling=abc')).toBeUndefined();
+    expect(resolveRepairWorkCeiling('?repairWorkCeiling=Infinity')).toBeUndefined();
+    expect(resolveRepairWorkCeiling('?other=1')).toBeUndefined();
   });
 });

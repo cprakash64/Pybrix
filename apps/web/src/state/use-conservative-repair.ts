@@ -13,6 +13,7 @@ import {
   discardRepairCandidate,
   planConservativeRepair,
   resolveRepairMemoryCeiling,
+  resolveRepairWorkCeiling,
   undoRepair,
   type RepairCapableClient,
   type RepairMemoryCeiling,
@@ -71,6 +72,8 @@ export interface ConservativeRepairControls {
   readonly isBusy: boolean;
   /** The ceiling in force, and whether it was narrowed below the product's. */
   readonly memoryCeiling: RepairMemoryCeiling;
+  /** A narrowed automatic-repair work limit from the URL, when one is in force. */
+  readonly workCeiling: number | undefined;
 }
 
 /**
@@ -109,6 +112,7 @@ export function useConservativeRepair(): ConservativeRepairControls {
   >(undefined);
 
   const memoryCeiling = useMemo(() => resolveRepairMemoryCeiling(globalThis.location.search), []);
+  const workCeiling = useMemo(() => resolveRepairWorkCeiling(globalThis.location.search), []);
 
   /* ------------------------------------------------------------- release -- */
 
@@ -295,7 +299,10 @@ export function useConservativeRepair(): ConservativeRepairControls {
         : undefined;
     const local =
       repair.localPlan !== undefined && repair.localPlan.eligible > 0
-        ? { planHash: repair.localPlan.planHash }
+        ? {
+            planHash: repair.localPlan.planHash,
+            ...(workCeiling === undefined ? {} : { workCeiling }),
+          }
         : undefined;
     if (plan === undefined || (plan.noOp && fill === undefined && local === undefined)) return;
     /*
@@ -444,6 +451,7 @@ export function useConservativeRepair(): ConservativeRepairControls {
     repair.fillPlan,
     repair.localPlan,
     repair.partId,
+    workCeiling,
     repair.plan,
     repair.selection,
     store,
@@ -672,6 +680,7 @@ export function useConservativeRepair(): ConservativeRepairControls {
       repair.candidateState === RepairCandidateState.Building ||
       repair.commitState !== RepairCommitState.Idle,
     memoryCeiling,
+    workCeiling,
   };
 }
 

@@ -11,6 +11,7 @@ import {
   SelfIntersectionStatus,
   type BoundaryFillPlan,
   type ConservativeRepairPlan,
+  type LocalRepairPlan,
   type DocumentHandle,
   type DocumentRenderSnapshot,
   type PartDescriptor,
@@ -25,6 +26,7 @@ import { GeometryClientProvider } from '../runtime/client-context';
 import { GeometryClient } from '../runtime/geometry-client';
 import { WorkspaceProvider } from '../state/store-context';
 import { WorkflowControllersProvider } from '../state/workflow-controllers';
+import { NO_SAFE_CHANGE_CODE } from '../state/repair-preview-summary';
 import { WorkspaceStore } from '../state/workspace-store';
 import {
   REPAIR_EXCLUSIONS,
@@ -437,7 +439,7 @@ describe('the primary action', () => {
     expect(screen.getByTestId('repair-no-repairs')).toHaveTextContent(NO_REPAIRABLE_PROBLEMS);
   });
 
-  it('becomes Apply repairs + Cancel preview once a validated preview exists', () => {
+  it('becomes Apply repairs + Discard preview once a validated preview exists', () => {
     const store = renderWorkspace((s) => {
       loadModel(s);
     });
@@ -448,7 +450,7 @@ describe('the primary action', () => {
     expect(screen.queryByTestId('preview-repair')).toBeNull();
     expect(screen.getByTestId('apply-repair')).toBeEnabled();
     expect(screen.getByTestId('apply-repair')).toHaveTextContent('Apply repairs');
-    expect(screen.getByTestId('discard-preview')).toHaveTextContent('Cancel preview');
+    expect(screen.getByTestId('discard-preview')).toHaveTextContent('Discard preview');
     expect(screen.getByTestId('repair-preview-ready')).toHaveTextContent(
       'nothing has changed until you apply it',
     );
@@ -1125,5 +1127,148 @@ describe('a repair outcome and the model’s health are distinct', () => {
     expect(screen.getByTestId('repair-applied')).toHaveAttribute('data-outcome', 'checking');
     expect(screen.queryByTestId('repair-applied-status')).toBeNull();
     expect(screen.getByTestId('health-summary')).not.toHaveTextContent('remaining');
+  });
+});
+
+/* ------------------------------------------------------- REPAIR-CORE-06B -- */
+
+describe('the 06B repair experience', () => {
+  const NOOP_PLAN = planWith([]);
+  const localPlan = (limitLikely: boolean): LocalRepairPlan => ({
+    requested: true,
+    pinchedVertices: 5,
+    eligible: 5,
+    unsupportedNonManifoldEdge: 0,
+    byClass: {},
+    workLimit: { primary: 1_200_000, residual: 40_000 },
+    estimatedWorkLowerBound: 45,
+    limitLikely,
+    planHash: 'lr-1',
+  });
+  const commitLocalPlan = (store: WorkspaceStore, limitLikely: boolean): void => {
+    act(() => {
+      const token = store.beginRepairPlan(HANDLE, PART, DEGENERATE_PLAN.requested);
+      store.commitRepairPlan(token, HANDLE, NOOP_PLAN, fillPlan(0), localPlan(limitLikely));
+    });
+  };
+
+  it('offers Repair when the only work is a local repair, with no option to choose it', () => {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+    });
+    analyse(store, { nonManifoldVertexCount: 5, isVertexManifold: false });
+    commitLocalPlan(store, false);
+    expect(screen.getByTestId('preview-repair')).toBeEnabled();
+    expect(screen.getByTestId('issue-status-non-manifold-vertices')).toHaveTextContent(
+      'Repair available',
+    );
+    // There is no Local Repair control and no algorithm name anywhere on screen.
+    expect(screen.queryByText(/local repair/i)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/LS-A2|surgery|retriangulat|geogram/i);
+  });
+
+  it('limitLikely is a subtle advisory and never disables or pre-judges Repair', () => {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+    });
+    analyse(store, { nonManifoldVertexCount: 5, isVertexManifold: false });
+    commitLocalPlan(store, true);
+    expect(screen.getByTestId('repair-limit-advisory')).toHaveTextContent(
+      'unusually complex. Automatic repair may be limited.',
+    );
+    expect(screen.getByTestId('preview-repair')).toBeEnabled();
+    // It never shows a limit outcome before the engine has returned one.
+    expect(screen.queryByTestId('repair-summary')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/too complex for this automatic repair pass/);
+  });
+
+  it('shows no advisory when the plan does not say the model is complex', () => {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+    });
+    analyse(store, { nonManifoldVertexCount: 5, isVertexManifold: false });
+    commitLocalPlan(store, false);
+    expect(screen.queryByTestId('repair-limit-advisory')).toBeNull();
+  });
+
+  it('presents a no-safe-change result as a neutral note, never an alert', () => {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+    });
+    analyse(store, { nonManifoldVertexCount: 5, isVertexManifold: false });
+    commitLocalPlan(store, false);
+    act(() => {
+      const token = store.beginRepairPreview();
+      if (token === undefined) throw new Error('no token');
+      store.beginRepairCandidate(token);
+      store.failRepairCandidate(token, {
+        message:
+          'Pybrix couldn’t safely repair these issues automatically. Your model is unchanged.',
+        code: NO_SAFE_CHANGE_CODE,
+        retryable: false,
+      });
+    });
+    const note = screen.getByTestId('repair-no-safe-change');
+    expect(note).toHaveAttribute('role', 'status');
+    expect(note).toHaveTextContent('Your model is unchanged');
+    expect(screen.queryByTestId('repair-candidate-error')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('repair-no-safe-change-line')).toBeInTheDocument();
+    expect(screen.queryByTestId('repair-failure-line')).toBeNull();
+  });
+
+  it('still presents a real failure as an alert', () => {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+    });
+    analyse(store, { zeroAreaFaceCount: 2 });
+    commitPlan(store, DEGENERATE_PLAN);
+    act(() => {
+      const token = store.beginRepairPreview();
+      if (token === undefined) throw new Error('no token');
+      store.beginRepairCandidate(token);
+      store.failRepairCandidate(token, {
+        message: 'The repair worker stopped unexpectedly.',
+        code: 'INTERNAL_ERROR',
+        retryable: true,
+      });
+    });
+    expect(screen.getByTestId('repair-candidate-error')).toHaveAttribute('role', 'alert');
+    expect(screen.queryByTestId('repair-no-safe-change')).toBeNull();
+  });
+
+  it('shows honest stage progress while building, with no percentage', () => {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+    });
+    analyse(store, { zeroAreaFaceCount: 2 });
+    commitPlan(store, DEGENERATE_PLAN);
+    act(() => {
+      const token = store.beginRepairPreview();
+      if (token === undefined) throw new Error('no token');
+      store.beginRepairCandidate(token);
+      store.reportRepairProgress(token, 0.62, 'repairing pinched vertices');
+    });
+    expect(screen.getByTestId('repair-phase')).toHaveTextContent('Building a safe repair…');
+    expect(screen.queryByTestId('repair-percent')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/62\s*%/);
+    // The bar is indeterminate: it has no value to claim.
+    expect(screen.getByLabelText('Repair in progress')).not.toHaveAttribute('value');
+    expect(screen.getByTestId('cancel-repair')).toBeEnabled();
+  });
+
+  it('summarises what is fixed and what remains, and says which model each count describes', () => {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+    });
+    analyse(store, { zeroAreaFaceCount: 2 });
+    commitPlan(store, DEGENERATE_PLAN);
+    commitPreview(store);
+    expect(screen.getByTestId('repair-summary-headline')).toHaveTextContent('Ready to apply');
+    expect(screen.getByTestId('repair-summary-fixed')).toHaveTextContent('2 degenerate');
+    expect(screen.getByTestId('repair-summary-current')).toBeInTheDocument();
+    expect(screen.getByTestId('repair-summary-after')).toBeInTheDocument();
+    // The Health line still describes the committed model, not the candidate.
+    expect(screen.getByTestId('health-summary')).not.toHaveTextContent(/remaining/);
   });
 });

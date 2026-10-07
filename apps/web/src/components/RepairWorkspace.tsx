@@ -81,7 +81,7 @@ import { PanelSection } from './shell/primitives';
  *
  * NOTHING HERE COMMITS. Repair model builds and validates a candidate through
  * the existing transactional workflow; Apply repairs asks the worker, which
- * re-checks every guard; Cancel preview discards; Undo restores the retained
+ * re-checks every guard; Discard preview discards; Undo restores the retained
  * mesh. The panels stay mounted while hidden, because their hooks own worker
  * operations.
  */

@@ -72,7 +72,7 @@ export const REPAIR_WORKSPACE_TITLE = 'Repair';
 export const REPAIR_MODEL_ACTION = 'Repair model';
 export const ANALYZE_MODEL_ACTION = 'Analyze model';
 export const APPLY_REPAIRS_ACTION = 'Apply repairs';
-export const CANCEL_PREVIEW_ACTION = 'Cancel preview';
+export const CANCEL_PREVIEW_ACTION = 'Discard preview';
 export const UNDO_REPAIR_ACTION = 'Undo repair';
 
 /** Beneath the action while it is available. */

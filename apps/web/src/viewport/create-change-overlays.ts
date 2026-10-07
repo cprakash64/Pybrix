@@ -80,7 +80,7 @@ const CHANGE_COLORS: Readonly<Record<ChangeOverlayKey, Color>> = {
   removedZeroArea: new Color('#ff59d6'),
   flippedFaces: new Color('#38e8b0'),
   localRemoved: new Color('#f5c542'),
-  localAdded: new Color('#4cc9f0'),
+  localAdded: new Color('#8dff6b'),
 };
 
 export interface ChangeOverlayInput {

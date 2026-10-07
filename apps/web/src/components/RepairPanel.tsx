@@ -221,6 +221,13 @@ export function RepairPanel(): ReactNode {
           />
         ) : null}
 
+        {controls.workCeiling === undefined ? null : (
+          <p className="panel__note" data-testid="repair-work-ceiling-note">
+            A reduced automatic repair limit is in force for this session, set by a URL option. It
+            can only make automatic repair stop sooner, never later.
+          </p>
+        )}
+
         {controls.memoryCeiling.narrowed ? (
           <p className="panel__note" data-testid="repair-memory-note">
             A reduced repair memory ceiling of{' '}
@@ -742,9 +749,12 @@ function CandidateReview({
   const presented = presentAcceptance(validation.acceptance, validation.regressions);
   const rows = buildMetricRows(validation);
   const details = useInfoDisclosure();
+  // Brought into view once, when the preview appears: it is content, and on a short window the
+  // sticky actions below it would otherwise leave the summary out of sight.
+  const previewRef = useRevealOnMount<HTMLDivElement>();
 
   return (
-    <div className="repair-preview" data-testid="repair-candidate">
+    <div className="repair-preview" data-testid="repair-candidate" ref={previewRef}>
       {/* A PREVIEW IS NOT AN APPLICATION: the headline says so in words. */}
       <p className="repair-preview__headline" data-testid="repair-candidate-headline">
         {presented.headline}
