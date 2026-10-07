@@ -13,10 +13,12 @@ import {
 } from '@cadfixer/file-formats';
 import { distinctMeshes } from '@cadfixer/mesh-core';
 import { runLocalRepair, type LocalRepairLimits } from '@cadfixer/mesh-hole-fill';
+import { LOCAL_CHANGE_FACE_LIMIT } from '@cadfixer/geometry-runtime';
 import { applyLocalRepairPatch } from '@cadfixer/mesh-repair';
 import { analyseTopology } from '@cadfixer/mesh-topology';
 import { uncancellable } from '@cadfixer/shared';
 import { createKernelNarrowphase } from '../apps/web/src/workers/hole-fill-narrowphase';
+import { describeChange } from '../apps/web/src/workers/local-repair-stage';
 import { testReadContext } from '../packages/file-formats/src/test-context';
 import { PRODUCTION_REPAIR_WORK_LIMITS } from '../packages/mesh-hole-fill/src/repair-work-limits';
 
@@ -114,8 +116,28 @@ it.skipIf(!enabled)(
       const repairMs = performance.now() - started;
       let stlSha256: string | undefined;
       let after: ReturnType<typeof analyseTopology>['report'] | undefined;
+      // REPAIR-CORE-06B: what the preview overlay would cost the page, measured on this model.
+      let overlay: Record<string, number> | undefined;
       if (result.patch !== undefined) {
         const candidate = applyLocalRepairPatch(mesh, result.patch);
+        const overlayStarted = performance.now();
+        const change = describeChange(
+          result.patch,
+          candidate.mesh,
+          candidate.appendedFaceCount,
+          LOCAL_CHANGE_FACE_LIMIT,
+        );
+        overlay = {
+          generationMs: performance.now() - overlayStarted,
+          payloadBytes:
+            change.removedSourceFaces.byteLength +
+            change.reversedSourceFaces.byteLength +
+            change.addedPositions.byteLength,
+          removedCount: change.removedCount,
+          reversedCount: change.reversedCount,
+          addedCount: change.addedCount,
+          truncated: change.truncated ? 1 : 0,
+        };
         const written = await writeBinaryStl(candidate.mesh, writeContext);
         stlSha256 = createHash('sha256').update(written.bytes).digest('hex');
         after = analyseTopology(candidate.mesh, {
@@ -156,6 +178,7 @@ it.skipIf(!enabled)(
             stlSha256,
             before: row(before),
             after: row(after),
+            overlay,
             operations: result.operations.map((op) => ({
               vertex: op.vertex,
               depth: op.depth,

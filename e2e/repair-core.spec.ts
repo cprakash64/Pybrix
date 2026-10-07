@@ -30,10 +30,11 @@ async function previewAndApply(page: Page): Promise<void> {
   await page.getByTestId('preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
   await page.getByTestId('apply-repair').click();
-  await expect(page.getByTestId('repair-applied-remaining')).not.toContainText(
-    'Checking the repaired mesh',
-    { timeout: 180_000 },
-  );
+  // The fresh analysis of the NEW revision settles the card (a complete repair has no
+  // 'remaining' list at all, so waiting on that list would wait on nothing).
+  await expect(page.getByTestId('repair-applied')).not.toHaveAttribute('data-outcome', 'checking', {
+    timeout: 180_000,
+  });
 }
 
 async function bytesOf(download: Download): Promise<Buffer> {
@@ -53,14 +54,15 @@ test('RCF1: Repair model is enabled on a large part when only openings qualify, 
   );
   await expect(page.getByTestId('preview-repair')).toBeEnabled();
   await expect(page.getByTestId('repair-scope')).toHaveText(
-    '6 openings can be filled. Other detected issues will remain.',
+    // REPAIR-CORE-06B: the seven pinched boundaries are repairable too (separated, then filled).
+    '6 openings can be filled. 2 repairable issue types of 2 detected. You review the result before anything changes.',
   );
   await expect(page.getByTestId('issue-status-open-boundaries')).toHaveText(
     '6 fillable · 7 need attention',
   );
 });
 
-test('RCF2: preview fills six, names the seven it left, applies atomically, and undo restores', async ({
+test('RCF2: preview fills thirteen — six, plus seven separated first — applies atomically, and undo restores', async ({
   page,
 }) => {
   await openCube(page);
@@ -69,23 +71,26 @@ test('RCF2: preview fills six, names the seven it left, applies atomically, and 
 
   await page.getByTestId('preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
-  await expect(page.getByTestId('change-count-filledOpenings')).toHaveText('6');
-  await expect(page.getByTestId('fill-left-open-count')).toHaveText('7 openings left open');
-  await expect(page.getByTestId('fill-left-open-NOT_SIMPLE')).toContainText('Complex boundary');
+  await expect(page.getByTestId('change-count-filledOpenings')).toHaveText('13');
+  // Nothing is left open: the seven pinched boundaries became simple openings and were filled.
+  await expect(page.getByTestId('fill-left-open-count')).toHaveCount(0);
   // Nothing has changed yet.
   await expect(triangles).toHaveText(TRIANGLES.toLocaleString('en-US'));
 
   await page.getByTestId('apply-repair').click();
-  await expect(page.getByTestId('repair-applied-remaining')).not.toContainText(
-    'Checking the repaired mesh',
-    { timeout: 180_000 },
-  );
+  // The fresh analysis of the NEW revision settles the card (a complete repair has no
+  // 'remaining' list at all, so waiting on that list would wait on nothing).
+  await expect(page.getByTestId('repair-applied')).not.toHaveAttribute('data-outcome', 'checking', {
+    timeout: 180_000,
+  });
   // Two triangles per four-point opening; nothing else changed.
-  await expect(triangles).toHaveText((TRIANGLES + 12).toLocaleString('en-US'));
-  await expect(page.getByTestId('repair-applied-changes')).toHaveText('6 openings filled');
-  // Truthful remaining: the branched boundaries and their pinch points.
-  await expect(page.getByTestId('repair-applied-remaining')).toContainText('7 open boundaries');
-  await expect(page.getByTestId('repair-applied-remaining')).toContainText('non-manifold vertices');
+  await expect(page.getByTestId('repair-applied-changes')).toContainText('13 openings filled');
+  await expect(page.getByTestId('repair-applied-changes')).toContainText(
+    '7 non-manifold vertices repaired',
+  );
+  // FRESH counts from the repaired revision: no open boundary and no pinch remains.
+  await expect(page.getByTestId('issue-count-open-boundaries')).toHaveText('0');
+  await expect(page.getByTestId('issue-count-non-manifold-vertices')).toHaveText('0');
   const workspace = (await page.getByTestId('repair-workspace').textContent()) ?? '';
   expect(workspace).not.toMatch(/\b(watertight|printable|fully repaired|all issues fixed)\b/i);
 
@@ -121,6 +126,10 @@ for (const target of ['stl', 'obj', '3mf'] as const) {
     }
     await openCube(page);
     await previewAndApply(page);
+    // What the repaired model holds is read from the application, not computed here: the
+    // round trip must give back exactly this.
+    const repairedTriangles = (await page.getByTestId('status-triangles').innerText()).trim();
+    expect(repairedTriangles).not.toBe(TRIANGLES.toLocaleString('en-US'));
 
     await page.getByTestId('workflow-convert').click();
     await page.getByTestId(`convert-target-${target}`).check();
@@ -154,12 +163,11 @@ for (const target of ['stl', 'obj', '3mf'] as const) {
       target === 'stl' ? 'model/stl' : target === 'obj' ? 'model/obj' : 'model/3mf',
       bytes,
     );
-    await expect(page.getByTestId('status-triangles')).toHaveText(
-      (TRIANGLES + 12).toLocaleString('en-US'),
-      { timeout: 180_000 },
-    );
-    // Only the seven complex boundaries remain open after the round trip.
-    await expect(page.getByTestId('issue-count-open-boundaries')).toHaveText('7', {
+    await expect(page.getByTestId('status-triangles')).toHaveText(repairedTriangles, {
+      timeout: 180_000,
+    });
+    // REPAIR-CORE-06B: all thirteen openings were closed, and they stay closed.
+    await expect(page.getByTestId('issue-count-open-boundaries')).toHaveText('0', {
       timeout: 180_000,
     });
   });
@@ -178,15 +186,14 @@ test('RCF4: cancelling a preview that would fill openings leaves the model untou
   await expect(page.getByTestId('preview-repair')).toBeEnabled();
 });
 
-test('RCF5: switching filling off leaves Repair model disabled, with the reason', async ({
+test('RCF5: switching filling off leaves the openings alone; Repair still has the pinched vertices to attempt', async ({
   page,
 }) => {
   await openCube(page);
   await page.getByTestId('repair-op-toggle-fill-openings').uncheck();
-  await expect(page.getByTestId('preview-repair')).toBeDisabled({ timeout: 60_000 });
-  await expect(page.getByTestId('repair-no-repairs')).toHaveText(
-    'No safe automatic repairs are available for the detected issues.',
-  );
+  // The seven pinched vertices are still work for Repair, so it is not disabled.
+  await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 60_000 });
+  await expect(page.getByTestId('repair-no-repairs')).toHaveCount(0);
   await expect(page.getByTestId('issue-status-open-boundaries')).toHaveText(
     'Automatic filling not selected',
   );

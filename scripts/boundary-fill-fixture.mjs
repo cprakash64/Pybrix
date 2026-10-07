@@ -13,6 +13,11 @@
  *     rim that meets itself at one point, which the scan must classify as
  *     branched and admission must never fill.
  *
+ *   - `extraPiece` (REPAIR-CORE-06B): a small closed tetrahedron far from the cube. It is a second
+ *     connected component, which Pybrix reports and never repairs, so a model that REPAIR fully
+ *     handles still has one detected issue left afterwards — a stable "partial" fixture now that
+ *     the local repair separates and fills the branched boundaries.
+ *
  * Used by the Chromium qualification (`boundary-fill.qualify.mjs`) and mirrored
  * in `e2e/repair-core.spec.ts`. No user model is needed anywhere.
  */
@@ -60,7 +65,8 @@ export function holedCubeStl(n, options = {}) {
     { o: [0, 0, 0], U: [1, 0, 0], V: [0, 0, 1] }, // -Y
   ];
 
-  let triangles = 12 * n * n - removed.size * 2;
+  const piece = options.extraPiece === true;
+  let triangles = 12 * n * n - removed.size * 2 + (piece ? 4 : 0);
   const bytes = Buffer.alloc(84 + triangles * 50);
   bytes.write('pybrix repair-core-02 holed cube', 0, 'ascii');
   bytes.writeUInt32LE(triangles, 80);
@@ -93,6 +99,18 @@ export function holedCubeStl(n, options = {}) {
         write(a, c, d);
       }
     }
+  }
+  if (piece) {
+    // A closed tetrahedron, wound outward, well away from the cube (which spans 0..n).
+    const o = n * 3;
+    const a = [o, 0, 0];
+    const b = [o + 4, 0, 0];
+    const c = [o, 4, 0];
+    const d = [o, 0, 4];
+    write(a, c, b);
+    write(a, b, d);
+    write(b, c, d);
+    write(a, d, c);
   }
   if (offset !== bytes.length) throw new Error('holed cube: size mismatch');
   return { bytes, triangles, simple, branched };

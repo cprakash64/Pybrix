@@ -19,10 +19,22 @@ import { enter, pick } from './ui-fixtures';
 
 test.describe.configure({ timeout: 240_000 });
 
-/** 6 simple flat openings a repair fills, and 7 branched ones it never does. */
-const PARTIAL = holedCubeStl(gridForTriangles(20_000));
-/** Only branched boundaries: detected, with no safe automatic repair. */
-const NO_FIX = holedCubeStl(gridForTriangles(20_000), { simple: 0, branched: 7 });
+/*
+ * REPAIR-CORE-06B changed what a branched boundary means to Repair: the two corner-touching
+ * openings are pinched vertices, the local repair separates them, and the fill stage then closes
+ * the two simple openings each one becomes. So a cube with 6 simple and 7 branched openings is
+ * now repaired COMPLETELY (13 filled). What stays a partial result is a second connected piece,
+ * which Pybrix reports and never repairs: `extraPiece`. And "nothing Pybrix can repair" is that
+ * second piece alone.
+ */
+/** 6 simple and 7 branched openings, plus a separate piece Repair never touches. */
+const PARTIAL = holedCubeStl(gridForTriangles(20_000), { extraPiece: true });
+/** A closed cube and a separate piece: one detected issue, with no repair for it. */
+const NO_FIX = holedCubeStl(gridForTriangles(20_000), {
+  simple: 0,
+  branched: 0,
+  extraPiece: true,
+});
 
 async function open(page: Page, name: string, bytes: Uint8Array | Buffer): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -129,6 +141,7 @@ test('B: a repair that leaves detected issues is "Partial repair completed"', as
   const before = await page.getByTestId('health-summary').innerText();
   expect(before).not.toContain('remaining');
   expect(await count(page, 'open-boundaries')).toBe('13');
+  expect(await count(page, 'components')).toBe('2');
 
   await repair(page);
   const card = page.getByTestId('repair-applied');
@@ -140,11 +153,17 @@ test('B: a repair that leaves detected issues is "Partial repair completed"', as
   );
 
   // FIXED and STILL NEEDS ATTENTION, each category with its own count.
-  await expect(page.getByTestId('repair-applied-changes')).toHaveText('6 openings filled');
-  expect(await count(page, 'open-boundaries')).toBe('7');
-  const openings = page.getByTestId('repair-remaining-open-boundaries');
-  await expect(openings).toContainText('7 open boundaries');
-  await expect(openings).toContainText('Not automatically fillable');
+  // The six simple openings, and the seven pinched ones the local repair separated and the fill
+  // stage then closed: thirteen, each stated in its own terms.
+  await expect(page.getByTestId('repair-applied-changes')).toContainText('13 openings filled');
+  await expect(page.getByTestId('repair-applied-changes')).toContainText(
+    '7 non-manifold vertices repaired',
+  );
+  expect(await count(page, 'open-boundaries')).toBe('0');
+  expect(await count(page, 'components')).toBe('2');
+  const pieces = page.getByTestId('repair-remaining-components');
+  await expect(pieces).toContainText('2 separate components');
+  await expect(pieces).toContainText('Review recommended');
   // The result card and the issue rows are one account of the model.
   for (const row of await page.locator('[data-testid^="repair-remaining-"]').all()) {
     const id = ((await row.getAttribute('data-testid')) ?? '').replace('repair-remaining-', '');
@@ -181,23 +200,23 @@ test('B: a repair that leaves detected issues is "Partial repair completed"', as
   expect(reason.clipped).toBe(false);
   await page.getByTestId('repair-no-repairs-info').click();
   await expect(page.getByTestId('repair-no-repairs-detail')).toContainText(
-    'Still detected: 7 open boundaries',
+    'Still detected: 2 separate components',
   );
 
   // One announcement, one card, and an Activity entry about what changed.
   await expect(page.getByTestId('repair-applied-status')).toHaveText(
-    'Partial repair completed. 6 openings filled. Some detected issues remain.',
+    'Partial repair completed. 13 openings filled and 7 non-manifold vertices repaired. Some detected issues remain.',
   );
   await expect(page.getByTestId('repair-applied')).toHaveCount(1);
   await expect(page.getByTestId('status-list')).toContainText(
-    'Repair applied: 6 openings filled. Health shows what remains.',
+    'Repair applied: 13 openings filled and 7 non-manifold vertices repaired. Health shows what remains.',
   );
   // Nowhere is a total of unlike things printed.
   await expect(page.getByTestId('status-list')).not.toContainText(/found [\d,]+ issues/);
 });
 
 test('C: a model with nothing Pybrix can repair shows no outcome at all', async ({ page }) => {
-  await open(page, 'branched-only.stl', NO_FIX.bytes);
+  await open(page, 'piece-only.stl', NO_FIX.bytes);
   await expect(page.getByTestId('repair-op-status-fill-openings')).toHaveText('None eligible');
   await expect(page.getByTestId('repair-applied')).toHaveCount(0);
   await expect(page.getByTestId('repair-applied-status')).toHaveCount(0);
@@ -207,9 +226,7 @@ test('C: a model with nothing Pybrix can repair shows no outcome at all', async 
   );
   const health = page.getByTestId('health-summary');
   await expect(health).toHaveText(/^\d+ errors? · \d+ warnings?$/);
-  await expect(page.getByTestId('issue-status-open-boundaries')).toHaveText(
-    'Not automatically fillable',
-  );
+  await expect(page.getByTestId('issue-status-open-boundaries')).toHaveText('No issue');
 });
 
 test('D: Undo restores the geometry and takes every post-repair wording with it', async ({
@@ -237,8 +254,8 @@ test('D: Undo restores the geometry and takes every post-repair wording with it'
   await repair(page);
   await expect(page.getByTestId('repair-applied')).toHaveCount(1);
   await expect(page.getByTestId('repair-applied-headline')).toHaveText('Partial repair completed');
-  await expect(page.getByTestId('repair-applied-changes')).toHaveText('6 openings filled');
-  expect(await count(page, 'open-boundaries')).toBe('7');
+  await expect(page.getByTestId('repair-applied-changes')).toContainText('13 openings filled');
+  expect(await count(page, 'open-boundaries')).toBe('0');
   await expect(page.getByTestId('repair-applied-status')).toHaveCount(1);
 });
 
@@ -247,8 +264,8 @@ test('E: opening another model takes the previous outcome with it', async ({ pag
   await repair(page);
   await expect(page.getByTestId('health-summary')).toContainText('remaining');
 
-  await pick(page, 'branched-only.stl', 'model/stl', Buffer.from(NO_FIX.bytes));
-  await expect(page.getByTestId('fact-filename')).toHaveText('branched-only.stl', {
+  await pick(page, 'piece-only.stl', 'model/stl', Buffer.from(NO_FIX.bytes));
+  await expect(page.getByTestId('fact-filename')).toHaveText('piece-only.stl', {
     timeout: 120_000,
   });
   await expect(page.getByTestId('repair-op-status-fill-openings')).toHaveText('None eligible', {
@@ -305,7 +322,7 @@ for (const viewport of [
       'repair-applied-headline',
       'repair-applied-support',
       'repair-applied-changes',
-      'repair-remaining-open-boundaries',
+      'repair-remaining-components',
       'undo-repair',
       'repair-no-repairs',
       'repair-no-repairs-info',

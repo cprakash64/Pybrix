@@ -343,8 +343,11 @@ test('O6: winding unification is blocked by a non-manifold vertex, with an expla
   await expect(winding.reason).toContainText('do not form a single continuous fan');
   await expect(winding.toggle).toBeDisabled();
 
-  await expect(page.getByTestId('repair-no-repairs')).toBeVisible();
-  await expect(page.getByTestId('preview-repair')).toBeDisabled();
+  // REPAIR-CORE-06B: the winding operation is still blocked (it needs one continuous fan), but
+  // the pinched vertex itself is now something Repair can attempt, so Repair is available and
+  // nothing has changed until it is applied.
+  await expect(page.getByTestId('preview-repair')).toBeEnabled();
+  await expect(page.getByTestId('repair-no-repairs')).toHaveCount(0);
   await expect(page.getByTestId('fact-triangles')).toHaveText('4');
 });
 

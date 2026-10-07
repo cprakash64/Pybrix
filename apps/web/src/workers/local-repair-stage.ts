@@ -162,7 +162,7 @@ function strided(values: Uint32Array, limit: number): Uint32Array {
  * candidate, because the rebuild places survivors first; their positions are copied out, so the
  * candidate itself never leaves the worker.
  */
-function describeChange(
+export function describeChange(
   patch: {
     readonly removedSourceFaces: Uint32Array;
     readonly flippedSourceFaces: Uint32Array;

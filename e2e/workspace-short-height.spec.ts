@@ -33,7 +33,9 @@ const VIEWPORTS = [
   { width: 430, height: 932 },
 ] as const;
 
-const CUBE = holedCubeStl(gridForTriangles(20_000));
+// With a separate piece, so the repaired model keeps one detected issue and the card has a
+// 'remaining' list to bring into reach (REPAIR-CORE-06B repairs the branched boundaries).
+const CUBE = holedCubeStl(gridForTriangles(20_000), { extraPiece: true });
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -270,9 +272,14 @@ for (const viewport of VIEWPORTS) {
     await page.getByTestId('preview-repair').click();
     await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
     await page.getByTestId('apply-repair').click();
-    await expect(page.getByTestId('repair-applied-remaining')).not.toContainText(
-      'Checking the repaired mesh',
-      { timeout: 180_000 },
+    // The fresh analysis of the NEW revision settles the card (a complete repair has no
+    // 'remaining' list at all, so waiting on that list would wait on nothing).
+    await expect(page.getByTestId('repair-applied')).not.toHaveAttribute(
+      'data-outcome',
+      'checking',
+      {
+        timeout: 180_000,
+      },
     );
     expect(
       await page

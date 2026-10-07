@@ -201,15 +201,16 @@ test('RUX03: a large model is described honestly — limits stated, nothing impl
   );
   await expect(page.getByTestId('issue-detail-open-boundaries')).toContainText('complex');
   await expect(page.getByTestId('hole-fill-size-limit')).toBeVisible();
+  // REPAIR-CORE-06B: pinched vertices are what the local repair attempts.
   await expect(page.getByTestId('issue-status-non-manifold-vertices')).toHaveText(
-    'Not automatically repairable',
+    /^(Repair available|Partly repairable)$/,
   );
   await expect(page.getByTestId('issue-status-components')).toContainText('Review recommended');
   await expect(page.getByTestId('issue-status-degenerate-faces')).toHaveText('Repair available');
 
   // The action covers what it covers, and says the rest needs attention.
   await expect(page.getByTestId('repair-scope')).toHaveText(
-    /^1 repairable issue type of \d+ detected\. \d+ types will need other attention\.$/,
+    /^2 repairable issue types of \d+ detected\. \d+ types will need other attention\.$/,
   );
   const workspace = (await page.getByTestId('repair-workspace').textContent()) ?? '';
   expect(workspace).not.toMatch(/\b(watertight|printable|fix all|fully repaired|perfect)\b/i);
@@ -241,14 +242,20 @@ test('RUX04: Repair model previews; Cancel discards; Apply commits; the result i
   await page.getByTestId('apply-repair').click();
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 120_000 });
   await expect(triangles).toHaveText('259,224');
-  await expect(page.getByTestId('repair-applied-changes')).toHaveText(
+  await expect(page.getByTestId('repair-applied-changes')).toContainText(
     '3 degenerate triangles removed',
+  );
+  await expect(page.getByTestId('repair-applied-changes')).toContainText(
+    'non-manifold vertices repaired',
   );
   // "Remaining" comes from the new revision's analysis, and it is not empty.
   await expect(page.getByTestId('repair-applied-remaining')).toContainText('open boundaries', {
     timeout: 120_000,
   });
-  await expect(page.getByTestId('repair-applied-remaining')).toContainText('non-manifold vertices');
+  // The twelve pinched vertices were repaired, and the fresh analysis no longer lists them.
+  await expect(page.getByTestId('repair-applied-remaining')).not.toContainText(
+    'non-manifold vertices',
+  );
   // With nothing safe left, the action stays where it is — disabled, with why.
   // REPAIR-UX-04: issues remain, so the outcome is PARTIAL and says so once.
   await expect(page.getByTestId('repair-applied-headline')).toHaveText('Partial repair completed');
