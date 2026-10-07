@@ -355,15 +355,17 @@ describe('workflow navigation', () => {
     );
   });
 
-  it('describes Repair as conservative rather than as general repair', () => {
+  it('describes Repair as safe automatic repair rather than as repairing everything', () => {
     renderApp();
 
-    const summary = screen.getByText(/Conservative repair: remove exact duplicate/);
+    const summary = screen.getByText(/Safe automatic repair: remove duplicate/);
     expect(summary).toBeInTheDocument();
-    // The old summary promised closing openings and resolving non-manifold
-    // geometry. Conservative repair does neither, and the navigation must not
-    // advertise a capability the screen behind it does not have.
-    expect(summary.textContent).not.toMatch(/close|non-manifold/i);
+    // REPAIR-CORE-06B: Repair now separates pinched vertices and fills simple openings, so the
+    // summary names them. It must still never promise more than that: no claim of a complete,
+    // printable or guaranteed result, and the qualifier says each step is checked.
+    expect(summary.textContent).toMatch(/pinched vertices/);
+    expect(summary.textContent).toMatch(/only where each can be checked/);
+    expect(summary.textContent).not.toMatch(/everything|all issues|printable|watertight|perfect/i);
   });
 });
 

@@ -35,7 +35,7 @@ export const WORKFLOWS: readonly WorkflowDescriptor[] = Object.freeze([
     id: WorkflowId.Repair,
     label: 'Repair',
     summary:
-      'Conservative repair: remove exact duplicate and degenerate triangles, and unify relative face winding.',
+      'Safe automatic repair: remove duplicate and degenerate triangles, unify winding, separate pinched vertices and fill simple openings — only where each can be checked.',
     implemented: true,
   },
   {
