@@ -435,6 +435,108 @@ describe('local repair candidate, commit and undo', () => {
     expect(sent[1]).toBe(1_200_000);
   });
 
+  it('refuses a malformed patch from the kernel worker: no candidate, source untouched', async () => {
+    const mesh = pairs(2);
+    const handle = residentDocuments.commit(singlePartDocument(mesh));
+    const { planHash, localHash } = await plan(handle);
+    const sourceFaces = mesh.indices.length / 3;
+    const bad: Record<string, Partial<NonNullable<LocalRepairResultWire['patch']>>> = {
+      'removed index out of range': { removedSourceFaces: Uint32Array.of(sourceFaces + 5) },
+      'appended corner outside the slot space': { appendedFaces: Uint32Array.of(0, 1, 9_999) },
+      'non-finite coordinate': { appendedPositions: Float32Array.of(0, Number.NaN, 0) },
+      'ragged appended faces': { appendedFaces: Uint32Array.of(0, 1) },
+      'absurd appended count': { appendedFaces: new Uint32Array(3 * (sourceFaces * 9 + 5_000)) },
+    };
+    for (const [label, override] of Object.entries(bad)) {
+      const channel = new MessageChannel();
+      channel.port2.onmessage = (event: MessageEvent<LocalRepairMessage>): void => {
+        const reply: LocalRepairResultWire = {
+          kind: 'local-repair-result',
+          operationId: event.data.operationId,
+          outcome: {
+            kind: 'complete',
+            cancelled: false,
+            counts: {
+              eligible: 2,
+              unsupportedNonManifoldEdge: 0,
+              repaired: 2,
+              remaining: 0,
+              unattempted: 0,
+              remainingByReason: {},
+            },
+            limitReached: undefined,
+            work: {
+              primary: { used: 1, limit: 100 },
+              residual: { used: 0, limit: 100 },
+            },
+            residual: {
+              ran: false,
+              skippedBecause: undefined,
+              linkRetriangulations: 0,
+              primaryAfterResidual: 0,
+              windingComponentsResolved: 0,
+              windingFacesReversed: 0,
+            },
+          },
+          patch: {
+            removedSourceFaces: new Uint32Array(0),
+            flippedSourceFaces: new Uint32Array(0),
+            appendedPositions: new Float32Array(0),
+            appendedFaces: new Uint32Array(0),
+            ...override,
+          },
+        };
+        channel.port2.postMessage(reply);
+      };
+      await expect(
+        (async (): ReturnType<typeof repairCreateCandidateHandler> =>
+          repairCreateCandidateHandler(
+            {
+              handle,
+              partId: PART,
+              requested: REQUESTED,
+              planHash,
+              localRepair: true,
+              localRepairPlanHash: localHash,
+              verifierPort: channel.port1,
+            },
+            context(),
+          ))(),
+        label,
+      ).rejects.toMatchObject({ code: AppErrorCode.Internal });
+      channel.port1.close();
+      channel.port2.close();
+      // Nothing was registered and the resident model is the one that was committed.
+      expect(resident(handle)).toBe(mesh);
+    }
+  });
+
+  it('refuses an unrecognised reply from the kernel worker', async () => {
+    const handle = residentDocuments.commit(singlePartDocument(pairs(1)));
+    const { planHash, localHash } = await plan(handle);
+    const channel = new MessageChannel();
+    channel.port2.onmessage = (): void => {
+      channel.port2.postMessage({ kind: 'surprise' });
+    };
+    await expect(
+      (async (): ReturnType<typeof repairCreateCandidateHandler> =>
+        repairCreateCandidateHandler(
+          {
+            handle,
+            partId: PART,
+            requested: REQUESTED,
+            planHash,
+            localRepair: true,
+            localRepairPlanHash: localHash,
+            verifierPort: channel.port1,
+          },
+          context(),
+        ))(),
+    ).rejects.toMatchObject({ code: AppErrorCode.Internal });
+    channel.port1.close();
+    channel.port2.close();
+  });
+
   it('fails closed without a verifier: nothing is repaired and the reason is typed', async () => {
     const handle = residentDocuments.commit(singlePartDocument(pairs(2)));
     const { planHash, localHash } = await plan(handle);

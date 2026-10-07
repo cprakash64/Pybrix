@@ -265,6 +265,45 @@ function narrowed(product: number | undefined, requested: number | undefined): n
   return product === undefined ? Math.floor(requested) : Math.min(product, Math.floor(requested));
 }
 
+/** Generous, but finite: no honest repair adds more than this many faces per source face. */
+const MAX_APPENDED_FACES_PER_SOURCE_FACE = 8;
+const APPENDED_FACE_ALLOWANCE = 1_024;
+
+/**
+ * Checks the SHAPE of a patch before a candidate is built from it: counts bounded by the mesh,
+ * every index inside the slot space it names, every coordinate finite. A violation is an internal
+ * failure — never a candidate and never a partial application. The independent structural check
+ * and topology analysis that follow still run on whatever passes.
+ */
+export function assertPatchShape(
+  patch: {
+    readonly removedSourceFaces: Uint32Array;
+    readonly flippedSourceFaces: Uint32Array;
+    readonly appendedPositions: Float32Array;
+    readonly appendedFaces: Uint32Array;
+  },
+  mesh: CanonicalMesh,
+): void {
+  const invalid = (what: string): never => {
+    throw internalError('The local repair returned an invalid result.', { details: { what } });
+  };
+  const sourceFaces = Math.floor(mesh.indices.length / 3);
+  const sourceSlots = Math.floor(mesh.positions.length / 3);
+  if (patch.appendedFaces.length % 3 !== 0) invalid('appended face length');
+  if (patch.appendedPositions.length % 3 !== 0) invalid('appended position length');
+  const appendedFaces = patch.appendedFaces.length / 3;
+  if (appendedFaces > sourceFaces * MAX_APPENDED_FACES_PER_SOURCE_FACE + APPENDED_FACE_ALLOWANCE) {
+    invalid('appended face count');
+  }
+  if (patch.removedSourceFaces.length > sourceFaces) invalid('removed face count');
+  if (patch.flippedSourceFaces.length > sourceFaces) invalid('reversed face count');
+  const slots = sourceSlots + patch.appendedPositions.length / 3;
+  for (const face of patch.removedSourceFaces) if (face >= sourceFaces) invalid('removed index');
+  for (const face of patch.flippedSourceFaces) if (face >= sourceFaces) invalid('reversed index');
+  for (const slot of patch.appendedFaces) if (slot >= slots) invalid('appended corner');
+  for (const value of patch.appendedPositions) if (!Number.isFinite(value)) invalid('coordinate');
+}
+
 export async function runLocalRepairStage(
   input: LocalRepairStageInput,
 ): Promise<LocalRepairStageResult> {
@@ -304,6 +343,9 @@ export async function runLocalRepairStage(
   }
   const wire = reply.outcome;
   const patch = reply.patch;
+  // The reply crossed a thread boundary. The kernel worker is our own code, but nothing the
+  // authoritative worker builds a candidate from is trusted until its SHAPE has been checked.
+  if (patch !== undefined) assertPatchShape(patch, input.mesh);
   const reasons = Object.entries(wire.counts.remainingByReason)
     .map(([reason, count]) => ({ reason, count }))
     .sort((x, y) => y.count - x.count || (x.reason < y.reason ? -1 : 1));
@@ -425,6 +467,10 @@ async function exchangeLocal(
         return;
       }
       finish();
+      if (data.kind !== 'local-repair-result' && data.kind !== 'failed') {
+        reject(internalError('The local repair answered with an unrecognised message.'));
+        return;
+      }
       resolve(data);
     };
     channel.start();
