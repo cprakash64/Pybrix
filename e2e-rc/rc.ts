@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { expect, type Locator, type Page } from '@playwright/test';
 
 /**
@@ -90,6 +90,20 @@ export async function jsHeapMiB(page: Page): Promise<number> {
 }
 
 /** Live dedicated workers in the page, from the browser's own target list. */
+export async function workerUrls(page: Page): Promise<string[]> {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { targetInfos } = (await session.send('Target.getTargets')) as {
+      targetInfos: { type: string; url: string }[];
+    };
+    return targetInfos
+      .filter((target) => target.type === 'worker')
+      .map((target) => target.url.replace(/^https?:\/\/[^/]+/, ''));
+  } finally {
+    await session.detach();
+  }
+}
+
 export async function liveWorkers(page: Page): Promise<number> {
   const session = await page.context().newCDPSession(page);
   try {
@@ -141,7 +155,12 @@ export async function importModel(page: Page, source: Source, mime = 'model/stl'
   await page.getByTestId('browse-button').click();
   const handle = await chooser;
   if (typeof source === 'string') await handle.setFiles(source);
-  else
+  else if (source.buffer.byteLength > 40 * 1024 * 1024) {
+    // Playwright refuses buffers over 50 MB; a large file is handed over by path, as a person's is.
+    const path = `${REPORT_DIR}/upload-${source.name}`;
+    writeFileSync(path, source.buffer);
+    await handle.setFiles(path);
+  } else
     await handle.setFiles({
       name: source.name,
       mimeType: source.mime || mime,

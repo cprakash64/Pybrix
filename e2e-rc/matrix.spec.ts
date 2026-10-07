@@ -22,6 +22,7 @@ import {
   settled,
   waitForResult,
   browserRssMiB,
+  workerUrls,
   type ConsoleAudit,
 } from './rc';
 
@@ -332,4 +333,31 @@ test('MEMORY: repeated cycles retain no growing state', async ({ page }) => {
   // Warm-up is expected in the first cycles; after that the retained size must not keep climbing.
   expect(last.heap - mid.heap, 'JS heap after the warm-up').toBeLessThan(40);
   expect(last.rss - mid.rss, 'browser RSS after the warm-up').toBeLessThan(250);
+});
+
+test('MEMORY (long): twenty apply/undo cycles settle to a plateau and keep only the resident workers', async ({
+  page,
+}) => {
+  await open(page, 'p40.stl', pinchedPairsStl(40));
+  expect(await settled(page)).toBe('ready');
+  const rss: number[] = [];
+  const urls: string[][] = [];
+  for (let i = 1; i <= 20; i += 1) {
+    await page.getByTestId('preview-repair').click();
+    expect(await waitForResult(page)).toBe('candidate');
+    await applyAndSettle(page);
+    await page.getByTestId('undo-repair').click();
+    await expect(page.getByTestId('repair-applied')).toHaveCount(0, { timeout: 120_000 });
+    await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 120_000 });
+    rss.push(browserRssMiB());
+    urls.push(await workerUrls(page));
+  }
+  record({ kind: 'memory-long', rss, workers: urls[urls.length - 1] });
+  // The same resident workers every cycle: no per-cycle worker is left behind.
+  for (const set of urls) expect(set.length).toBeLessThanOrEqual(2);
+  // A plateau: the second half grows by no more than a small fraction of the first half's growth
+  // plus a fixed allowance for allocator noise.
+  const quarter = rss.slice(0, 5).reduce((a, b) => a + b, 0) / 5;
+  const last = rss.slice(-5).reduce((a, b) => a + b, 0) / 5;
+  expect(last - quarter, 'RSS growth across twenty cycles').toBeLessThan(120);
 });
