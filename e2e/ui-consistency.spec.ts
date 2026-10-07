@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { enter, openBox, openDefects, selectFace } from './ui-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * UI-06: the visual-regression foundation.
@@ -78,6 +79,9 @@ test('shell geometry and drawer tiers hold at every breakpoint', async ({ page }
     { width: 390, tool: undefined, inspector: undefined, toolDrawer: true, inspectorDrawer: true },
   ];
   await page.goto('/');
+  // Collapsed by default (PYBRIX-08A); the docked tiers below measure it open.
+  const rail = page.getByTestId('expand-inspector');
+  if (await rail.isVisible()) await rail.click();
   for (const tier of tiers) {
     await page.setViewportSize({ width: tier.width, height: 844 });
     const top = await rect(page, '.topbar');
@@ -222,6 +226,7 @@ test('a selected card reads the same in every workspace, and not by colour alone
 test('the inspector keeps one order, context first, in every workspace', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
+  await openInspector(page);
   const order = ['Selection', 'Model', 'Export', 'Runtime'];
   // Export appears only once there is a model to export.
   await expect(page.locator('#inspector .panel-section__title:visible')).toHaveText([

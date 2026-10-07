@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { enter, openBox, openDefects } from './ui-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * PR-01: release-readiness behaviours of the shipped application.
@@ -111,6 +112,7 @@ test('leaving the page asks first only while applied work is unexported', async 
   // Apply a real repair.
   await openDefects(page);
   await page.getByTestId('issue-row-degenerate-faces').click();
+  await openInspector(page);
   await page.getByTestId('issue-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();

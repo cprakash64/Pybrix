@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Response } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
 import { APP_BASE_URL } from './app-origin';
+import { openInspector } from './inspector';
 
 /**
  * BQ23–BQ29, BQ43–BQ54 — THE HOSTING CONTRACT, MEASURED RATHER THAN DECLARED.
@@ -126,6 +127,7 @@ test('BQ29, BQ54: the whole flow is same-origin and sends no geometry anywhere',
   await openFile(page, 'small.stl', binaryStl(700).bytes);
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   const pending = page.waitForEvent('download', { timeout: 60_000 });
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await pending;
 

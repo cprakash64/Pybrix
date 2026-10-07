@@ -15,6 +15,7 @@ import {
 } from './stl-fixtures';
 import { objDefectAndClean, threeMfDefectiveTetrahedron } from './format-fixtures';
 import { openAdvancedDiagnostics, openPreviewDetails } from './repair-ui';
+import { openInspector } from './inspector';
 
 /**
  * The conservative repair workflow, end to end, through the REAL worker.
@@ -179,6 +180,7 @@ test('O1: a same-orientation duplicate is previewed, applied, and its expected s
 
   // Export resolves the NEW revision: a stale handle would fail outright.
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await download;
   await expect(page.getByTestId('status-list')).not.toContainText('out-of-date');
@@ -424,6 +426,7 @@ test('O8: discarding a preview leaves the model authoritative and exportable', a
   await expect(page.getByTestId('fact-triangles')).toHaveText('6');
   await expect(page.getByTestId('preview-repair')).toBeVisible();
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await download;
 });
@@ -519,7 +522,7 @@ test('O11: losing the worker clears the model, the preview, and every overlay', 
   });
 
   // Policy A: the model goes, and so does everything that named it.
-  await expect(page.getByTestId('model-empty')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('model-empty')).toBeAttached({ timeout: 20_000 });
   await expect(page.getByTestId('repair-overview')).toHaveCount(0);
   await expect(page.getByTestId('preview-repair')).toBeDisabled();
   await expect(page.getByTestId('repair-candidate')).toHaveCount(0);
@@ -572,6 +575,7 @@ test('O12: a repair above the memory ceiling is refused before anything is alloc
   await openAdvancedDiagnostics(page);
   await expect(page.getByTestId('topo-boundary-edges')).toBeVisible();
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await download;
 });
@@ -653,6 +657,7 @@ test('O15: undo restores the pre-repair geometry as a new revision', async ({ pa
 
   // M1 is exportable in its own right before the undo.
   const repaired = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await repaired;
 
@@ -676,6 +681,7 @@ test('O15: undo restores the pre-repair geometry as a new revision', async ({ pa
 
   // Export resolves the restored revision.
   const restored = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await restored;
   await expect(page.getByTestId('status-list')).not.toContainText('out-of-date');
@@ -711,6 +717,7 @@ test('O16: nothing leaves the browser during planning, preview, apply, undo, or 
   await expect(page.getByTestId('fact-triangles')).toHaveText('6', { timeout: 30_000 });
 
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await download;
 
@@ -933,6 +940,7 @@ async function readFact(page: Page, testId: string): Promise<number> {
  * then goes back to Repair so the next step acts on the panels it expects.
  */
 async function exportAs(page: Page, target: 'stl' | 'obj' | '3mf'): Promise<Buffer> {
+  await openInspector(page);
   await page.getByTestId('open-convert').click();
   await expect(page.getByTestId('convert-workspace')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId(`convert-target-${target}`).check();

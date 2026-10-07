@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { analysisHeavyStl } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * Real browser timings, recorded rather than asserted.
@@ -96,6 +97,7 @@ test.describe('browser benchmark', () => {
 
       const exportStart = Date.now();
       const download = page.waitForEvent('download');
+      await openInspector(page);
       await page.getByTestId('export-binary').click();
       await download;
       const exportMs = Date.now() - exportStart;

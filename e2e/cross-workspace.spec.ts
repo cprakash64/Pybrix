@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { modelXml, threeMf } from './format-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * UI-06: one model through all four workspaces in one session.
@@ -135,6 +136,7 @@ test('one model through Repair, Convert, Split and Texture leaves one healthy ap
 
   // CONVERT: select a format, then return. Nothing is written.
   await page.getByTestId('workflow-convert').click();
+  await openInspector(page);
   await expect(page.getByTestId('export-summary-destination')).toBeVisible();
   await page.getByTestId('convert-target-obj').check();
   await expect(page.getByTestId('convert-export')).toHaveText('Convert to OBJ');

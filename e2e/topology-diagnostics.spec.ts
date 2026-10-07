@@ -9,6 +9,7 @@ import {
   tetrahedronStl,
   windingConflictStl,
 } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * Topology diagnostics, end to end, through the REAL worker.
@@ -232,6 +233,7 @@ test('H7: cancelling analysis keeps the model and installs no partial report', a
   // The model survived, and no report was installed.
   await expect(page.getByTestId('fact-triangles')).toHaveText(heavy.triangles.toLocaleString());
   await expect(page.getByTestId('topology-headline')).toHaveCount(0);
+  await openInspector(page);
   await expect(page.getByTestId('export-binary')).toBeEnabled();
 
   // And the user can run it again, from the workspace's primary action.
@@ -301,7 +303,7 @@ test('H9: losing the worker clears the model, the report, and the overlays', asy
   });
 
   // Policy A: the model is discarded rather than left on screen looking usable.
-  await expect(page.getByTestId('model-empty')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('model-empty')).toBeAttached({ timeout: 20_000 });
   await expect(page.getByTestId('repair-overview')).toHaveCount(0);
   await expect(page.getByTestId('issue-list')).toHaveCount(0);
   await expect(page.getByTestId('topology-headline')).toHaveCount(0);
@@ -336,6 +338,7 @@ test('H10: nothing leaves the browser during import, analysis, overlays, or expo
   await page.getByTestId('overlay-toggle-boundaryEdges').check();
 
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await download;
 

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * BQ25, BQ57 — WHAT HAPPENS WHEN A HOST FORGETS THE ISOLATION HEADERS.
@@ -109,6 +110,7 @@ test('BQ25, BQ58: the rest of the product still works without isolation', async 
   await expect(page.getByTestId('health-triangles')).toHaveText((500).toLocaleString());
 
   const pending = page.waitForEvent('download', { timeout: 60_000 });
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   const download = await pending;
   const stream = await download.createReadStream();

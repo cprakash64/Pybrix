@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { objMultiPart } from './format-fixtures';
 import { binaryStl } from './stl-fixtures';
 import { enter, gridBox, openDefects, watchErrors } from './ui-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * PR-01: what CAD Fixer writes, CAD Fixer can read back — through the product.
@@ -120,6 +121,7 @@ test('a repaired model exports as 3MF and reads back repaired', async ({ page })
   await page.goto('/');
   await openDefects(page);
   await page.getByTestId('issue-row-degenerate-faces').click();
+  await openInspector(page);
   await page.getByTestId('issue-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();

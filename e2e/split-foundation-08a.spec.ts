@@ -336,9 +336,7 @@ test.describe('Manual Split', () => {
     await expect(page.getByTestId('split-hud-cut')).toContainText('rolled 10.0°');
     await previewSplit(page);
     const text = async (id: string): Promise<number> =>
-      Number(
-        (await page.getByTestId(id).innerText()).match(/([\d,]+) mm³/)?.[1]?.replace(/,/g, ''),
-      );
+      Number(/([\d,]+) mm³/.exec(await page.getByTestId(id).innerText())?.[1]?.replace(/,/g, ''));
     const a = await text('split-piece-a');
     const b = await text('split-piece-b');
     expect(a + b).toBeGreaterThan(47_900);

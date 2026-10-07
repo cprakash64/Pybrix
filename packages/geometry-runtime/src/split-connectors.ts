@@ -620,22 +620,39 @@ function centers(
   return selected;
 }
 
+/**
+ * The stages of a split, reported as they BEGIN. These are facts about where the
+ * work is, not a percentage: the kernel calls inside a stage are synchronous and
+ * poll nothing, so a fraction between stages would be invented.
+ */
+export const SplitStage = {
+  PreparingCut: 'preparing-cut',
+  Intersecting: 'intersecting',
+  BuildingCutSurfaces: 'building-cut-surfaces',
+  AddingConnectors: 'adding-connectors',
+} as const;
+export type SplitStage = (typeof SplitStage)[keyof typeof SplitStage];
+
 export async function splitWithConnectors(
   backend: BooleanBackend,
   source: CanonicalMesh,
   request: SplitRequest,
   cancellation: CancellationToken,
+  onStage?: (stage: SplitStage) => void,
 ): Promise<SplitResult> {
   throwIfCancelled(cancellation);
+  onStage?.(SplitStage.PreparingCut);
   requireSolid(source, 'source', cancellation);
   const tolerance = splitTolerance(source),
     [positive, negative] = buildSplitCutters(source, request.plane);
+  onStage?.(SplitStage.Intersecting);
   let pieceA = (await runValidatedBoolean(backend, 'intersection', source, positive, cancellation))
       .mesh,
     pieceB = (await runValidatedBoolean(backend, 'intersection', source, negative, cancellation))
       .mesh;
   requireSolid(pieceA, 'piece A', cancellation);
   requireSolid(pieceB, 'piece B', cancellation);
+  onStage?.(SplitStage.BuildingCutSurfaces);
   const cutA = identifyCutSurface(pieceA, request.plane, tolerance),
     cutB = identifyCutSurface(pieceB, request.plane, tolerance),
     sourceVolume = meshVolume(source),
@@ -650,6 +667,7 @@ export async function splitWithConnectors(
     });
   const c = request.connector,
     placements: SplitVector[] = [];
+  if (c.kind !== 'none') onStage?.(SplitStage.AddingConnectors);
   if (c.kind === 'pin') {
     dimension(c.diameter, 'Pin diameter');
     dimension(c.depth, 'Pin depth');

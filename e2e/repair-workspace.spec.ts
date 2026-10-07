@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { binaryStlFrom, type Point } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * UI-02: the Repair workspace.
@@ -151,8 +152,10 @@ test('B, C: selecting an issue synchronizes the list, the HUD and the inspector'
   );
 
   // Dismiss clears the selection everywhere and deletes nothing.
+  await openInspector(page);
   await page.getByTestId('issue-dismiss').click();
   await expect(page.getByTestId('issue-hud')).toHaveCount(0);
+  await openInspector(page);
   await expect(page.getByTestId('issue-inspector-empty')).toBeVisible();
   await expect(row(page, 'winding-conflicts')).toHaveAttribute('aria-pressed', 'false');
   await expect(row(page, 'winding-conflicts')).toHaveAttribute('data-severity', 'warning');
@@ -185,6 +188,7 @@ test('E: Fix this previews a real whole-part repair, and the findings are re-der
 
   await row(page, 'degenerate-faces').click();
   await expect(page.getByTestId('issue-suggested-fix')).toContainText('whole part');
+  await openInspector(page);
   await page.getByTestId('issue-preview-repair').click();
   // The conservative repair builds and validates a candidate; nothing is applied yet.
   await expect(page.getByTestId('apply-repair')).toBeVisible({ timeout: 60_000 });
@@ -198,6 +202,7 @@ test('E: Fix this previews a real whole-part repair, and the findings are re-der
     timeout: 60_000,
   });
   await expect(page.getByTestId('issue-count-degenerate-faces')).toHaveText('0');
+  await openInspector(page);
   await expect(page.getByTestId('issue-inspector-empty')).toBeVisible();
   // Winding conflicts were not selected for this repair, and remain.
   await expect(row(page, 'winding-conflicts')).toHaveAttribute('data-severity', 'warning');
@@ -213,8 +218,11 @@ test('E: Fix this fills ONE open boundary through the validated fill workflow', 
   await row(page, 'open-boundaries').click();
   await expect(page.getByTestId('issue-hud-position')).toHaveText('1 / 1');
   await expect(page.getByTestId('issue-hud-next')).toBeDisabled();
+  await openInspector(page);
   await page.getByTestId('issue-preview-fill').click();
+  await openInspector(page);
   await expect(page.getByTestId('issue-apply-fill')).toBeVisible({ timeout: 60_000 });
+  await openInspector(page);
   await page.getByTestId('issue-apply-fill').click();
 
   await expect(page.getByTestId('issue-count-open-boundaries')).toHaveText('0', {

@@ -10,6 +10,7 @@ import {
   thinWallStl,
 } from './hole-fill-fixtures';
 import { tetrahedronStl, windingConflictStl } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * HFUX01–HFUX32: THE OPEN-BOUNDARY WORKFLOW, END TO END, THROUGH THE REAL
@@ -93,6 +94,7 @@ async function openingCount(page: Page): Promise<number> {
  * acts on the openings panel it expects.
  */
 async function convert(page: Page, target: 'stl' | 'obj' | '3mf'): Promise<Buffer> {
+  await openInspector(page);
   await page.getByTestId('open-convert').click();
   await expect(page.getByTestId('convert-workspace')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId(`convert-target-${target}`).check();
@@ -509,6 +511,7 @@ test('HFUX25: OBJ and 3MF exports carry the filled geometry too', async ({ page 
   // 3MF needs a unit, and an STL states none. The workspace blocks it and says so —
   // which is the Stage 4A-2B3 behaviour, unchanged by this stage. Asserting the
   // block is what proves the fill did not quietly invent one.
+  await openInspector(page);
   await page.getByTestId('open-convert').click();
   await expect(page.getByTestId('convert-workspace')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('convert-target-3mf').check();

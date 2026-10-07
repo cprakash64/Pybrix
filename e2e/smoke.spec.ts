@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { isAppOrigin } from './app-origin';
+import { openInspector } from './inspector';
 
 /**
  * End-to-end smoke tests against the production build served by `vite preview`.
@@ -89,6 +90,7 @@ test('the document is cross-origin isolated, so multithreaded WASM will be possi
 test('the geometry worker round-trips a transferred buffer', async ({ page }) => {
   await page.goto('/');
 
+  await openInspector(page);
   await page.getByTestId('run-self-test').click();
 
   await expect(page.getByTestId('self-test-state')).toHaveText('passed', { timeout: 15_000 });
@@ -127,6 +129,7 @@ test('the page issues no network requests beyond its own assets', async ({ page 
   });
 
   await page.goto('/');
+  await openInspector(page);
   await page.getByTestId('run-self-test').click();
   await expect(page.getByTestId('self-test-state')).toHaveText('passed', { timeout: 15_000 });
 

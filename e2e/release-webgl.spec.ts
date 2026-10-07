@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl, combinedRepairStl } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * BQ01–BQ08 — WHAT HAPPENS WHEN THE GPU GOES AWAY.
@@ -172,6 +173,7 @@ test('BQ03: restoring the context leaves the document intact and exportable', as
    */
   expect(await health(page)).toEqual(before);
   const pending = page.waitForEvent('download', { timeout: 60_000 });
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   const download = await pending;
   const stream = await download.createReadStream();

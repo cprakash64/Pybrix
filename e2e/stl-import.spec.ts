@@ -121,7 +121,7 @@ test('rejects a truncated binary STL and keeps the workspace empty', async ({ pa
   await openFile(page, 'broken.stl', truncatedBinaryStl());
 
   await expect(page.getByTestId('status-list')).toContainText('truncated', { timeout: 20_000 });
-  await expect(page.getByTestId('model-empty')).toBeVisible();
+  await expect(page.getByTestId('model-empty')).toBeAttached();
 });
 
 test('a failed replacement import keeps the previously loaded model', async ({ page }) => {

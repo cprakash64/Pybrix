@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { enter, inWindow, openBox, openDefects, selectFace, watchErrors } from './ui-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * UI-06: the cross-workspace audit's fixes, each reproducing the defect it
@@ -41,6 +42,7 @@ test('I-02: the inspector leads with the workspace’s context, in view without 
   // A short window: the case in which the context used to sit below the fold.
   await page.setViewportSize({ width: 1280, height: 650 });
   await page.goto('/');
+  await openInspector(page);
   const titles = page.locator('#inspector .panel-section__title:visible');
   // With nothing loaded there is nothing to export, so that section is hidden.
   await expect(titles).toHaveText(['Selection', 'Model', 'Runtime']);
@@ -56,6 +58,8 @@ test('I-02: the inspector leads with the workspace’s context, in view without 
 
   // Every other workspace's context is likewise first, and no offset leaked.
   await openBox(page);
+  // A new document starts with the Inspector collapsed again.
+  await openInspector(page);
   for (const [id, probe] of [
     ['convert', 'export-summary-destination'],
     ['split', 'split-inspector-plane'],
@@ -186,6 +190,7 @@ test('I-08: legacy and workspace secondary buttons are one control', async ({ pa
   await page.getByTestId('preview-repair').click();
   const legacy = page.getByTestId('discard-preview');
   await expect(legacy).toBeVisible({ timeout: 60_000 });
+  await openInspector(page);
   const inspector = page.getByTestId('open-convert');
   for (const property of ['border-radius', 'font-weight', 'background-color', 'border-top-color']) {
     const value = await legacy.evaluate(

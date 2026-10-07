@@ -232,6 +232,7 @@ export {
   splitSourceReasons,
   describeSplitSourceRefusal,
   SplitSourceReason,
+  SplitStage,
 } from './split-connectors';
 export { SplitCandidateStore } from './split-candidates';
 export type { SplitCandidateHandle, SplitCandidateSummary } from './split-candidates';

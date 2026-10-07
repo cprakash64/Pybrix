@@ -9,6 +9,7 @@ import {
 import { CancellationSource } from '@cadfixer/shared';
 import {
   SplitSourceReason,
+  SplitStage,
   describeSplitSourceRefusal,
   splitWithConnectors,
   type SplitResult,
@@ -205,5 +206,51 @@ describe('PYBRIX-08A truthful refusal wording', () => {
     expect(describeSplitSourceRefusal([SplitSourceReason.OpenBoundaries])).toMatch(
       /open boundaries.*requires a closed solid|requires a closed solid.*open boundaries/s,
     );
+  });
+});
+
+describe('PYBRIX-08A split progress stages', () => {
+  async function stagesOf(
+    source: CanonicalMesh,
+    connector: Parameters<typeof splitWithConnectors>[2]['connector'],
+  ): Promise<SplitStage[]> {
+    const backend = await createManifoldBooleanBackend(binary);
+    const stages: SplitStage[] = [];
+    try {
+      await splitWithConnectors(
+        backend,
+        source,
+        { plane: { origin: [0, 0, 0], normal: [0, 0, 1] }, connector },
+        new CancellationSource().token,
+        (stage) => stages.push(stage),
+      );
+    } catch {
+      // A refusal is the point of one test below; the stages reached are what it reads.
+    }
+    return stages;
+  }
+
+  it('reports preparing, intersecting and building cut surfaces, in that order', async () => {
+    expect(await stagesOf(cube(), { kind: 'none' })).toEqual([
+      SplitStage.PreparingCut,
+      SplitStage.Intersecting,
+      SplitStage.BuildingCutSurfaces,
+    ]);
+  });
+
+  it('adds a connectors stage only when a connector was asked for', async () => {
+    const stages = await stagesOf(cube(), {
+      kind: 'pin',
+      count: 1,
+      diameter: 4,
+      depth: 6,
+      clearance: 0.2,
+      maleSide: 'A',
+    });
+    expect(stages.at(-1)).toBe(SplitStage.AddingConnectors);
+  });
+
+  it('a refused source never reaches the intersection stage', async () => {
+    expect(await stagesOf(openCube(), { kind: 'none' })).toEqual([SplitStage.PreparingCut]);
   });
 });

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { objDefectAndClean, objMultiPart, threeMfSharedPlacements } from './format-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * THE MULTI-PART WORKFLOW ON A REAL FILE.
@@ -137,7 +138,9 @@ test('MF-P24: a thousand real placements share one geometry, within document lim
 
   // AND THE INTERFACE IS STILL USABLE. A thousand parts is metadata, not a
   // thousand meshes: the selector renders and a part can still be chosen.
+  await openInspector(page);
   await expect(page.getByTestId('part-option-part-1000')).toBeVisible();
+  await openInspector(page);
   await page.getByTestId('part-option-part-500').click();
   await expect(page.getByTestId('part-option-part-500')).toHaveAttribute('aria-pressed', 'true');
   // Selecting is not a model change, so no geometry moved.
@@ -169,6 +172,7 @@ test('loading a second document frees the first document’s geometry', async ({
 test('Mesh Health and the repair panel describe the part the user selected', async ({ page }) => {
   await openFile(page, 'mixed.obj', objDefectAndClean().bytes);
 
+  await openInspector(page);
   await expect(page.getByTestId('part-selector')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('fact-parts')).toHaveText('2');
   // The document total, in the panel that describes the document.
@@ -180,6 +184,7 @@ test('Mesh Health and the repair panel describe the part the user selected', asy
   await expect(page.getByTestId('health-triangles')).toHaveText('5', { timeout: 30_000 });
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
 
+  await openInspector(page);
   await page.getByTestId('part-option-part-2').click();
 
   // Every scoped surface follows, and the counts genuinely differ.
@@ -193,6 +198,7 @@ test('Mesh Health and the repair panel describe the part the user selected', asy
 
 test('switching parts repeatedly creates and disposes no geometry', async ({ page }) => {
   await openFile(page, 'mixed.obj', objDefectAndClean().bytes);
+  await openInspector(page);
   await expect(page.getByTestId('part-selector')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
   const before = await readScene(page);
@@ -232,6 +238,7 @@ test('a repair changes the selected part and leaves the other one alone', async 
   await expect(page.getByTestId('fact-triangles')).toHaveText('8');
   await expect(page.getByTestId('fact-parts')).toHaveText('2');
 
+  await openInspector(page);
   await page.getByTestId('part-option-part-2').click();
   // Part 2 was never touched.
   await expect(page.getByTestId('health-triangles')).toHaveText('4', { timeout: 60_000 });
@@ -266,6 +273,7 @@ test('the single-part export states, before the click, what it leaves out', asyn
   await openFile(page, 'assembly.obj', objMultiPart(3).bytes);
   await expect(page.getByTestId('fact-parts')).toHaveText('3', { timeout: 30_000 });
 
+  await openInspector(page);
   const note = page.getByTestId('export-part-note');
   await expect(note).toBeVisible();
   await expect(note).toContainText('The other 2 parts are not included');

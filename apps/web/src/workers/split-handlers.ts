@@ -2,6 +2,7 @@ import { documentTriangleCount, documentVertexCount, partId } from '@cadfixer/me
 import {
   documentByteLength,
   splitWithConnectors,
+  SplitStage,
   type OperationHandler,
 } from '@cadfixer/geometry-runtime';
 import {
@@ -38,6 +39,14 @@ export function setSplitQualificationObserver(
   qualificationObserver = observer;
 }
 
+/** Where each stage begins, in the user's words. Notes only: no stage reports a fraction it cannot know. */
+const STAGE_PROGRESS: Readonly<Record<SplitStage, readonly [number, string]>> = Object.freeze({
+  [SplitStage.PreparingCut]: [0.02, 'Preparing cut…'],
+  [SplitStage.Intersecting]: [0.1, 'Intersecting model…'],
+  [SplitStage.BuildingCutSurfaces]: [0.6, 'Building cut surfaces…'],
+  [SplitStage.AddingConnectors]: [0.7, 'Adding connectors…'],
+});
+
 export const splitCreateHandler: OperationHandler<'split/create'> = async (payload, context) => {
   context.throwIfCancelled();
   const sourcePart = residentDocuments.resolvePart(payload.source, partId(payload.partId));
@@ -45,7 +54,7 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
   const ticket = splitCandidates.begin(payload.source, sourcePart.id);
   let booleanIndex = 0;
   try {
-    context.reportProgress(0.05, 'checking split');
+    context.reportProgress(0.02, 'Preparing cut…');
     const result = await splitWithConnectors(
       {
         operate: (kind, a, b, cancellation) => {
@@ -67,14 +76,17 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
       sourcePart.mesh,
       payload.request,
       context.cancellation,
+      (stage) => {
+        context.reportProgress(STAGE_PROGRESS[stage][0], STAGE_PROGRESS[stage][1]);
+      },
     );
-    context.reportProgress(0.85, 'validating pieces');
+    context.reportProgress(0.85, 'Checking parts…');
     const summary = splitCandidates.resolve(ticket, result, context.cancellation);
     const preview = splitCandidates.preview(summary.candidate, (document) => ({
       render: buildDocumentRenderSnapshot(document),
       parts: describeParts(document),
     }));
-    context.reportProgress(1, 'preview ready');
+    context.reportProgress(1, 'Preparing preview…');
     return {
       value: { ...summary, ...preview },
       transfer: documentRenderTransferables(preview.render),
