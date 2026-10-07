@@ -766,6 +766,7 @@ export function createViewport(
     canvas.dataset.editArrow =
       arrow === undefined ? 'none' : arrow.map((value) => value.toFixed(1)).join(',');
     canvas.dataset.tintedParts = String(partTints?.size ?? 0);
+    canvas.dataset.hiddenParts = String(hiddenParts.size);
     canvas.dataset.textureSelectionTriangles = String(
       textureSelectionMesh === undefined
         ? 0

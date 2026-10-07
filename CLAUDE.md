@@ -1086,6 +1086,40 @@ lost`, `printable`, `watertight`, and the rest. **"The numbers are unchanged"
   candidate. No effect resets React state. Cancel resets the settings;
   switching workspace keeps them.
 
+## Workspace foundations invariants (PYBRIX-08A)
+
+- **THE INSPECTOR STARTS COLLAPSED, AND NOTHING BUT THE USER OPENS IT.**
+  `inspectorCollapsed` initialises to `true` in `ShellLayoutProvider`, is session
+  state only, and is never persisted. A new document id re-collapses it. A load, a
+  selection, a Repair and a workspace change never open it. Its facts stay in the
+  DOM while collapsed, so tests assert them with `toHaveText`, not `toBeVisible`.
+- **A UNIT INTERPRETATION IS A READING OF COORDINATES, NEVER AN EDIT.** It lives in
+  `WorkspaceState.unitInterpretation` as `{ documentId, unit }`: no coordinate is
+  rewritten, no revision is consumed, and `GeometryDocument.unit` is untouched. It
+  is keyed by `documentId` because that is stable across revisions, so Repair,
+  Split, Texture and the Undo of any of them cannot discard it, and a new import
+  cannot inherit it. Do not turn it into a document edit: that consumes a revision
+  and re-analyses a two-million-triangle model to change a label.
+- **A UNIT THE FILE STATES ALWAYS WINS.** `setUnitInterpretation` refuses a
+  document whose source states a unit. Nothing is inferred from bounding-box
+  size, and the prompt preselects nothing.
+- **PHYSICAL PARAMETERS ARE MILLIMETRES IN THE INTERFACE AND COORDINATE UNITS IN
+  THE REQUEST.** `millimetresToCoordinates` is applied where the request is built
+  (`connectorRequest`, `textureRequest`) and nowhere else. A value the engine
+  would refuse in the model's units is refused with a message, never clamped.
+- **ONE READER: `useUnitInterpretation`.** Split, Texture, the Model panel and
+  Convert read it; Convert's `unitAssertion` is seeded from it and writes back to
+  it. A hook boundary is deliberate (the React Compiler rejects a plain function
+  call on `model` inside these hooks).
+- **SPLIT REFUSALS ARE TYPED.** `SplitSourceReason` travels in
+  `AppError.details.reasons`. The sentence names Repair only when every reason is
+  winding or degenerate/duplicate triangles. It never promises Repair for an
+  opening or a non-manifold edge.
+- **THE PLANE WITH NO ROLL AND NO SWAP IS THE QUALIFIED PLANE, BYTE FOR BYTE.**
+  A zero roll is skipped, not applied as an identity rotation.
+- **PIECE VISIBILITY HIDES, IT NEVER RE-UPLOADS.** `setHiddenParts` toggles a
+  mesh's `visible`; it is not routed through `setModel`.
+
 ## Surface Texture workspace invariants (UI-05)
 
 - **ONE SELECTION, IN THE STORE.** `WorkspaceState.textureSelection` is the

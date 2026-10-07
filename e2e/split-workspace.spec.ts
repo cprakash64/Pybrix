@@ -295,17 +295,23 @@ test('a cut that cannot be made is refused, the model stays, and settings are ke
   await previewSplit(page);
 });
 
-test('connectors are unavailable for a model that states no unit', async ({ page }) => {
+test('connectors wait for the user to say how to read a model that states no unit', async ({
+  page,
+}) => {
   await page.goto('/');
   const chooser = page.waitForEvent('filechooser');
   await page.getByTestId('browse-button').click();
   await (
     await chooser
   ).setFiles({ name: 'plain.stl', mimeType: 'model/stl', buffer: binaryStl(12).bytes });
-  await expect(page.getByTestId('fact-triangles')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('fact-triangles')).toHaveText('12', { timeout: 60_000 });
   await enterSplit(page);
   await expect(page.getByTestId('split-connector-pin')).toBeDisabled();
-  await expect(page.getByTestId('split-connectors-unit')).toContainText('millimetres');
+  await expect(page.getByTestId('split-connectors-unit')).toContainText('Choose its units');
+  // Nothing is preselected and nothing is guessed from the model's size.
+  await expect(page.getByTestId('split-unit-interpretation').locator('input:checked')).toHaveCount(
+    0,
+  );
   // The range carries no invented unit.
   await expect(page.getByTestId('split-position-range')).not.toContainText('mm');
 });
