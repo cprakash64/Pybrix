@@ -1,3 +1,4 @@
+import { LengthUnit } from '@cadfixer/shared';
 import { describe, expect, it } from 'vitest';
 import { MAX_TEXTURE_ELEMENTS, MAX_TEXTURE_PRIMITIVE_TRIANGLES } from '@cadfixer/geometry-runtime';
 import type { DocumentHandle } from '@cadfixer/geometry-runtime';
@@ -110,10 +111,11 @@ describe('settings are checked by the engine’s own rules', () => {
     ).toBeUndefined();
   });
 
-  it('needs a millimetre document, and converts nothing', () => {
+  it('needs a known physical unit, and never an unknown one', () => {
     expect(textureAvailable('millimeter')).toBe(true);
+    expect(textureAvailable('inch')).toBe(true);
     expect(textureAvailable(undefined)).toBe(false);
-    expect(textureAvailable('inch')).toBe(false);
+    expect(textureAvailable('furlong')).toBe(false);
   });
 });
 
@@ -136,6 +138,26 @@ describe('the request sent to the worker', () => {
       heightOrDepth: 0.6,
       rotationDegrees: 30,
     });
+  });
+
+  it('expresses physical sizes in the model’s coordinate units, leaving angles alone', () => {
+    const request = textureRequest(
+      SELECTION,
+      {
+        pattern: 'lines',
+        mode: 'raised',
+        featureSize: 2.54,
+        spacing: 25.4,
+        heightOrDepth: 0.254,
+        rotationDegrees: 30,
+      },
+      LengthUnit.Inch,
+    );
+    // 25.4 mm is one inch; the model is read as inches, so one coordinate unit.
+    expect(request.featureSize).toBeCloseTo(0.1, 12);
+    expect(request.spacing).toBeCloseTo(1, 12);
+    expect(request.heightOrDepth).toBeCloseTo(0.01, 12);
+    expect(request.rotationDegrees).toBe(30);
   });
 
   it('sends no rotation for dots, which the engine ignores', () => {

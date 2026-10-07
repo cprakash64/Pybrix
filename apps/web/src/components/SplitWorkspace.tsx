@@ -34,6 +34,7 @@ import {
   WorkspaceOutcome,
   useRevealAtEnd,
 } from './shell/action-footer';
+import { UnitInterpretationPrompt } from './UnitInterpretationPrompt';
 import { Icon } from './shell/Icon';
 import { NumberField } from './shell/number-field';
 import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/primitives';
@@ -253,6 +254,10 @@ function ConnectorSection({ split }: { readonly split: SplitControls }): ReactNo
           {SPLIT_COPY.connectorsNeedMillimetres}
         </p>
       )}
+      <UnitInterpretationPrompt
+        reason="Connector sizes are physical, so Pybrix needs to know what this model’s numbers mean."
+        testId="split-unit-interpretation"
+      />
       {connector.kind === 'none' ? null : (
         <ConnectorParameters split={split} connector={connector} disabled={disabled} />
       )}

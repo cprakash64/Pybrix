@@ -194,14 +194,35 @@ describe('connectors', () => {
     expect(group).not.toHaveTextContent(/snap|thread|magnet|puzzle|screw|keyed/i);
   });
 
-  it('disables connectors for a model that states no millimetres, and says why', () => {
+  it('disables connectors for a model that states no unit, and asks how to read it', () => {
     mount((store) => {
       load(store, undefined);
     });
     expect(screen.getByTestId('split-connector-pin')).toBeDisabled();
     expect(screen.getByTestId('split-connector-dovetail')).toBeDisabled();
     expect(screen.getByTestId('split-connector-none')).toBeEnabled();
-    expect(screen.getByTestId('split-connectors-unit')).toHaveTextContent('millimetres');
+    expect(screen.getByTestId('split-connectors-unit')).toHaveTextContent('Choose its units');
+    // Nothing is preselected: no radio is checked until the user chooses.
+    const prompt = screen.getByTestId('split-unit-interpretation');
+    expect(prompt.querySelectorAll('input:checked')).toHaveLength(0);
+  });
+
+  it('enables connectors once the user chooses how to read the units', () => {
+    mount((store) => {
+      load(store, undefined);
+    });
+    fireEvent.click(screen.getByTestId('split-unit-interpretation-inch'));
+    expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
+    expect(screen.getByTestId('split-unit-interpretation-inch')).toBeChecked();
+    expect(screen.queryByTestId('split-connectors-unit')).toBeNull();
+  });
+
+  it('offers no unit choice when the file states its own unit', () => {
+    mount((store) => {
+      load(store, 'millimeter');
+    });
+    expect(screen.queryByTestId('split-unit-interpretation')).toBeNull();
+    expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
   });
 
   it('states pin clearance precisely and shows the socket it produces', () => {

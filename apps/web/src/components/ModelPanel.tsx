@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { describeEncoding, describeSourceFormat, describeUnit } from '../state/model';
+import { UnitBasis, describeEffectiveUnit } from '../state/unit-interpretation';
+import { useUnitInterpretation } from '../state/use-unit-interpretation';
 import { useWorkspaceState } from '../state/store-context';
 import { useModelExport } from '../state/use-model-export';
 import { useOpenConvertWorkspace } from './shell/open-convert';
@@ -31,6 +33,7 @@ import { Icon } from './shell/Icon';
  */
 export function ModelPanel(): ReactNode {
   const { model } = useWorkspaceState();
+  const unitReading = useUnitInterpretation();
 
   if (model === undefined) {
     return (
@@ -69,7 +72,15 @@ export function ModelPanel(): ReactNode {
         {model.parts.length > 1 ? (
           <Fact label="Parts" value={model.parts.length.toLocaleString()} testId="fact-parts" />
         ) : null}
-        <Fact label="Units" value={describeUnit(model.source)} testId="fact-units" />
+        <Fact
+          label="Units"
+          value={
+            unitReading.basis === UnitBasis.Chosen
+              ? describeEffectiveUnit(unitReading, model.source.formatId)
+              : describeUnit(model.source)
+          }
+          testId="fact-units"
+        />
         {bounds === undefined ? null : (
           <>
             <Fact

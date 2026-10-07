@@ -22,6 +22,9 @@ import {
   type SplitRange,
 } from './split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
+import type { LengthUnit } from '@cadfixer/shared';
+import { millimetresToCoordinates, unitWord } from './unit-interpretation';
+import { useUnitInterpretation } from './use-unit-interpretation';
 import { StatusSeverity } from './workspace-store';
 import { WorkflowId } from './workflows';
 
@@ -129,7 +132,29 @@ export interface SplitControls {
 const messageOf = (cause: unknown, fallback: string): string =>
   cause instanceof Error && cause.message !== '' ? cause.message : fallback;
 
-function connectorRequest(settings: ConnectorSettings): SplitConnector {
+/**
+ * The connector request in the MODEL'S coordinate units. The panel's sizes are
+ * physical (millimetres); a model read as inches has 25.4 mm to a coordinate
+ * unit. Without a known unit nothing is converted, because connectors are not
+ * offered then.
+ */
+export function connectorRequest(
+  rawSettings: ConnectorSettings,
+  unit: LengthUnit | undefined,
+): SplitConnector {
+  const toCoordinates = (millimetres: number): number =>
+    unit === undefined ? millimetres : millimetresToCoordinates(millimetres, unit);
+  const settings: ConnectorSettings =
+    rawSettings.kind === 'none'
+      ? rawSettings
+      : {
+          ...rawSettings,
+          diameter: toCoordinates(rawSettings.diameter),
+          depth: toCoordinates(rawSettings.depth),
+          clearance: toCoordinates(rawSettings.clearance),
+          dovetailWidth: toCoordinates(rawSettings.dovetailWidth),
+          dovetailLength: toCoordinates(rawSettings.dovetailLength),
+        };
   switch (settings.kind) {
     case 'none':
       return { kind: 'none' };
@@ -156,7 +181,10 @@ function connectorRequest(settings: ConnectorSettings): SplitConnector {
 }
 
 /** The first dimension the engine would refuse, named, or undefined. */
-export function connectorProblemOf(settings: ConnectorSettings): string | undefined {
+export function connectorProblemOf(
+  settings: ConnectorSettings,
+  unit?: LengthUnit,
+): string | undefined {
   if (settings.kind === 'none') return undefined;
   const checks: [number, string, boolean][] =
     settings.kind === 'pin'
@@ -174,6 +202,10 @@ export function connectorProblemOf(settings: ConnectorSettings): string | undefi
   for (const [value, label, zero] of checks) {
     if (!isValidDimension(value, zero))
       return `${label} must be between ${zero ? '0' : '0.01'} and 1000 mm.`;
+    // The engine bounds the dimension in the MODEL'S units, which differ from
+    // millimetres for a model read as inches, metres and so on.
+    if (unit !== undefined && !isValidDimension(millimetresToCoordinates(value, unit), zero))
+      return `${label} is outside the range Pybrix can build in a model read as ${unitWord(unit).toLowerCase()}.`;
   }
   return undefined;
 }
@@ -183,7 +215,7 @@ export function useSplitWorkflow(): SplitControls {
   const store = useWorkspaceStore();
   const client = useGeometryClient();
   const part = model?.parts.find((candidate) => candidate.partId === activePartId);
-  const unit = model?.source.unit;
+  const { unit: unitValue } = useUnitInterpretation();
   const active = selectedWorkflow === WorkflowId.Split;
 
   /*
@@ -208,7 +240,9 @@ export function useSplitWorkflow(): SplitControls {
    * another part retires them without an effect having to reset anything. The
    * worker-side resources they held are released by the cleanup below.
    */
-  const session = active ? partKey : '';
+  // The reading of the units is part of the session: connector sizes mean something
+  // else under a different one, so a preview made under the old reading is retired.
+  const session = active ? `${partKey}|${unitValue ?? ''}` : '';
   const [work, setWork] = useState<{
     readonly session: string;
     readonly phase: SplitPhase;
@@ -250,13 +284,13 @@ export function useSplitWorkflow(): SplitControls {
   const range = useMemo(() => splitRange(plane.axis, bounds), [bounds, plane.axis]);
   const offset = plane.offset ?? range.center;
   const splitPlane = useMemo(() => splitPlaneFor(plane, bounds), [bounds, plane]);
-  const available = connectorsAvailable(unit);
+  const available = connectorsAvailable(unitValue);
   /* Connectors that cannot be built are never the selected kind. */
   const connector: ConnectorSettings = useMemo(
     () => (available ? connectorState : { ...connectorState, kind: 'none' }),
     [available, connectorState],
   );
-  const connectorProblem = available ? connectorProblemOf(connector) : undefined;
+  const connectorProblem = available ? connectorProblemOf(connector, unitValue) : undefined;
 
   const setError = useCallback(
     (message: string | undefined): void => {
@@ -400,7 +434,7 @@ export function useSplitWorkflow(): SplitControls {
     const operation = client.createSplit(
       model.handle,
       part.partId,
-      { plane: splitPlane, connector: connectorRequest(connector) },
+      { plane: splitPlane, connector: connectorRequest(connector, unitValue) },
       (update) => {
         setProgress(update.note ?? 'Computing…');
       },
@@ -429,6 +463,7 @@ export function useSplitWorkflow(): SplitControls {
     client,
     connector,
     connectorProblem,
+    unitValue,
     invalidate,
     model,
     part,
@@ -561,7 +596,7 @@ export function useSplitWorkflow(): SplitControls {
 
   return {
     part,
-    unit,
+    unit: unitValue,
     plane,
     range,
     offset,

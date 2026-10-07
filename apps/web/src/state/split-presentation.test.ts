@@ -23,7 +23,13 @@ import {
   splitRange,
   tiltAxisOf,
 } from './split-presentation';
-import { connectorProblemOf, DEFAULT_CONNECTOR } from './use-split-workflow';
+import { LengthUnit } from '@cadfixer/shared';
+import {
+  connectorProblemOf,
+  connectorRequest,
+  DEFAULT_CONNECTOR,
+  type ConnectorSettings,
+} from './use-split-workflow';
 
 /**
  * UI-04: the Split & Connect workspace's arithmetic and wording.
@@ -156,10 +162,11 @@ describe('connectors', () => {
     );
   });
 
-  it('allows connectors only for a document that states millimetres', () => {
+  it('allows connectors for any known physical unit, and never for an unknown one', () => {
     expect(connectorsAvailable('millimeter')).toBe(true);
+    expect(connectorsAvailable('inch')).toBe(true);
     expect(connectorsAvailable(undefined)).toBe(false);
-    expect(connectorsAvailable('inch')).toBe(false);
+    expect(connectorsAvailable('furlong')).toBe(false);
   });
 });
 
@@ -180,5 +187,42 @@ describe('export and wording', () => {
     const text = Object.values(SPLIT_COPY).join(' ').toLowerCase();
     for (const banned of ['printable', 'watertight', 'guaranteed fit', 'fits bed', 'add cut'])
       expect(text).not.toContain(banned);
+  });
+});
+
+describe('connector sizes are physical, whatever the model’s unit', () => {
+  const pin: ConnectorSettings = {
+    kind: 'pin',
+    count: 1,
+    diameter: 5.08,
+    depth: 10.16,
+    clearance: 0.254,
+    maleSide: 'A',
+    dovetailWidth: 12.7,
+    dovetailLength: 25.4,
+    dovetailAngle: 0,
+  };
+
+  it('leaves millimetre sizes unchanged for a millimetre model', () => {
+    expect(connectorRequest(pin, LengthUnit.Millimeter)).toMatchObject({
+      diameter: 5.08,
+      depth: 10.16,
+      clearance: 0.254,
+    });
+  });
+
+  it('converts them into inches for a model read as inches', () => {
+    const request = connectorRequest(pin, LengthUnit.Inch);
+    if (request.kind !== 'pin') throw new Error('expected a pin');
+    expect(request.diameter).toBeCloseTo(0.2, 12);
+    expect(request.depth).toBeCloseTo(0.4, 12);
+    expect(request.clearance).toBeCloseTo(0.01, 12);
+  });
+
+  it('refuses a size the engine could not build in the model’s units', () => {
+    // 0.1 mm is 0.0039 in: below the engine's 0.01 coordinate-unit floor.
+    const tiny: ConnectorSettings = { ...pin, diameter: 0.1 };
+    expect(connectorProblemOf(tiny, LengthUnit.Millimeter)).toBeUndefined();
+    expect(connectorProblemOf(tiny, LengthUnit.Inch)).toMatch(/outside the range/);
   });
 });

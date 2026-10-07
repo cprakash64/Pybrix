@@ -172,6 +172,67 @@ function outward(mesh: CanonicalMesh): CanonicalMesh {
   }
   return { ...mesh, indices };
 }
+/**
+ * WHY A PART IS NOT A SPLITTABLE SOLID. Typed, so a caller can test the reason
+ * and the sentence can change without weakening what a test proves. The reasons
+ * are independent: a part may carry several at once.
+ */
+export const SplitSourceReason = {
+  /** At least one edge belongs to only one triangle: the surface has an opening. */
+  OpenBoundaries: 'OPEN_BOUNDARIES',
+  /** An edge shared by more than two triangles, or a vertex shared by separate fans. */
+  NonManifold: 'NON_MANIFOLD',
+  /** Neighbouring triangles disagree about which side is outside. */
+  WindingConflict: 'WINDING_CONFLICT',
+  /** Zero-area triangles, or triangles repeated at the same positions. */
+  DegenerateOrDuplicate: 'DEGENERATE_OR_DUPLICATE',
+} as const;
+export type SplitSourceReason = (typeof SplitSourceReason)[keyof typeof SplitSourceReason];
+
+/** The reasons a part is not a closed manifold solid, in a fixed order; empty when it is one. */
+export function splitSourceReasons(report: {
+  readonly boundaryEdgeCount: number;
+  readonly nonManifoldEdgeCount: number;
+  readonly nonManifoldVertexCount: number;
+  readonly windingConflictEdgeCount: number;
+  readonly zeroAreaFaceCount: number;
+  readonly repeatedPositionFaceCount: number;
+}): readonly SplitSourceReason[] {
+  const reasons: SplitSourceReason[] = [];
+  if (report.boundaryEdgeCount > 0) reasons.push(SplitSourceReason.OpenBoundaries);
+  if (report.nonManifoldEdgeCount > 0 || report.nonManifoldVertexCount > 0)
+    reasons.push(SplitSourceReason.NonManifold);
+  if (report.windingConflictEdgeCount > 0) reasons.push(SplitSourceReason.WindingConflict);
+  if (report.zeroAreaFaceCount > 0 || report.repeatedPositionFaceCount > 0)
+    reasons.push(SplitSourceReason.DegenerateOrDuplicate);
+  return reasons;
+}
+
+/**
+ * The sentence for a set of reasons. TRUTHFUL ABOUT REPAIR: it points at Repair
+ * only when every reason is one Repair's conservative operations address
+ * (winding, degenerate and duplicate triangles). An opening or a non-manifold
+ * edge may or may not be fixable, so those say what Split needs and no more.
+ */
+export function describeSplitSourceRefusal(reasons: readonly SplitSourceReason[]): string {
+  const facts: string[] = [];
+  if (reasons.includes(SplitSourceReason.OpenBoundaries))
+    facts.push('it still has open boundaries');
+  if (reasons.includes(SplitSourceReason.NonManifold))
+    facts.push('it has non-manifold edges or vertices');
+  if (reasons.includes(SplitSourceReason.WindingConflict))
+    facts.push('its triangles do not agree which side is outside');
+  if (reasons.includes(SplitSourceReason.DegenerateOrDuplicate))
+    facts.push('it has zero-area or repeated triangles');
+  const base = `Manual splitting currently requires a closed solid, and this part is not one: ${facts.join('; ')}.`;
+  const repairable = reasons.every(
+    (reason) =>
+      reason === SplitSourceReason.WindingConflict ||
+      reason === SplitSourceReason.DegenerateOrDuplicate,
+  );
+  return repairable ? `${base} Repair can address these.` : base;
+}
+
 function requireSolid(mesh: CanonicalMesh, label: string, cancellation: CancellationToken): void {
   assertMeshStructure(mesh, `split/${label}`);
   const r = analyseTopology(mesh, {
@@ -182,18 +243,14 @@ function requireSolid(mesh: CanonicalMesh, label: string, cancellation: Cancella
     sampleLimit: 0,
     componentSummaryLimit: 8,
   }).report;
-  if (
-    r.boundaryEdgeCount ||
-    r.nonManifoldEdgeCount ||
-    r.nonManifoldVertexCount ||
-    r.windingConflictEdgeCount ||
-    r.zeroAreaFaceCount ||
-    r.repeatedPositionFaceCount
-  )
-    throw invalidState(
-      'This part is not currently a closed manifold solid, so Pybrix cannot split it safely yet. Run Repair or choose another part.',
-      { label },
-    );
+  const reasons = splitSourceReasons(r);
+  if (reasons.length > 0)
+    throw invalidState(describeSplitSourceRefusal(reasons), {
+      code: 'SPLIT_SOURCE_NOT_CLOSED_SOLID',
+      // ErrorDetails hold scalars only, so the typed reasons travel comma-joined.
+      reasons: reasons.join(','),
+      label,
+    });
 }
 const BOX_INDICES = [
   0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7,

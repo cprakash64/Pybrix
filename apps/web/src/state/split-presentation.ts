@@ -1,4 +1,5 @@
 import type { SplitPlane } from '@cadfixer/geometry-runtime';
+import { isLengthUnit } from '@cadfixer/shared';
 
 /**
  * THE SPLIT & CONNECT WORKSPACE, decided once: its plane arithmetic, its
@@ -231,9 +232,13 @@ export function isValidDimension(value: number, allowZero = false): boolean {
   return Number.isFinite(value) && value >= (allowZero ? 0 : 0.01) && value <= 1000;
 }
 
-/** Connectors need a stated millimetre document; nothing is converted. */
+/**
+ * Connectors need a known physical unit — stated by the file or chosen by the
+ * user (PYBRIX-08A). Their sizes are millimetres; the request converts them
+ * into the model's coordinate units. The mesh itself is never rescaled.
+ */
 export function connectorsAvailable(unit: string | undefined): boolean {
-  return unit === 'millimeter';
+  return unit !== undefined && isLengthUnit(unit);
 }
 
 /* --------------------------------------------------------------- copy -- */
@@ -250,7 +255,7 @@ export const SPLIT_COPY = Object.freeze({
   placementNote:
     'Placed automatically on the cut face, inside its material and away from its edges. There is no manual placement.',
   connectorsNeedMillimetres:
-    'Connectors need a model that states millimetres, because their sizes are millimetres and Pybrix converts no units.',
+    'Connectors have physical sizes, so Pybrix needs to know what this model’s numbers mean. Choose its units to continue.',
   fitNote: 'Printers vary: 0.2 mm is a starting point, not a guarantee of fit.',
   resultSection: 'Result',
   noPart: 'Open a model to split it.',

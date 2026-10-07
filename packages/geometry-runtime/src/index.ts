@@ -229,6 +229,9 @@ export {
   dovetailFemaleDimensions,
   splitTolerance,
   splitWithConnectors,
+  splitSourceReasons,
+  describeSplitSourceRefusal,
+  SplitSourceReason,
 } from './split-connectors';
 export { SplitCandidateStore } from './split-candidates';
 export type { SplitCandidateHandle, SplitCandidateSummary } from './split-candidates';

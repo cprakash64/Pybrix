@@ -1,3 +1,5 @@
+import { isLengthUnit, type LengthUnit } from '@cadfixer/shared';
+import type { UnitInterpretation } from './unit-interpretation';
 import type {
   BoundaryFillOutcome,
   BoundaryFillPlan,
@@ -1019,6 +1021,12 @@ export interface WorkspaceState {
    * the loaded model's handle is stale and read as no selection.
    */
   readonly textureSelection: TextureSelectionState | undefined;
+  /**
+   * How the user chose to READ a unitless document's dimensions — PYBRIX-08A.
+   * Keyed by `documentId`, so it survives every revision (a repair, a split,
+   * their Undo) and can never apply to the next import. Never touches geometry.
+   */
+  readonly unitInterpretation: UnitInterpretation | undefined;
   readonly importProgress: ImportProgressState;
   readonly exportProgress: ExportProgressState;
   /**
@@ -1129,6 +1137,7 @@ const INITIAL_STATE: WorkspaceState = {
   splitPlane: undefined,
   texturePreview: undefined,
   textureSelection: undefined,
+  unitInterpretation: undefined,
   importProgress: { state: ImportState.Idle, fraction: 0 },
   exportProgress: { state: ExportState.Idle, fraction: 0 },
   conversion: CONVERSION_CLOSED,
@@ -1508,6 +1517,7 @@ export class WorkspaceStore {
        */
       holeFill: { ...EMPTY_HOLE_FILL, handle: model.handle, partId: activePart?.partId },
       conversion: CONVERSION_CLOSED,
+      unitInterpretation: undefined,
       /*
        * The ACTIVE PART's size decides its own policy — not the document total.
        * The check runs on one mesh, so a small part inside a large document is
@@ -3241,8 +3251,47 @@ export class WorkspaceStore {
         ...CONVERSION_CLOSED,
         state: ConversionState.Reviewing,
         target: preferredTarget,
+        // Seeded from the shared interpretation of THIS document, if the user
+        // has made one: the Convert unit is the same statement, not a second one.
+        unitAssertion: this.interpretedUnitOfLoadedModel(),
       },
     });
+  }
+
+  /** The user's chosen reading for the loaded document, when it is a unitless one. */
+  private interpretedUnitOfLoadedModel(): string | undefined {
+    const { model, unitInterpretation } = this.state;
+    if (model === undefined || model.source.unit !== undefined) return undefined;
+    return unitInterpretation?.documentId === model.handle.documentId
+      ? unitInterpretation.unit
+      : undefined;
+  }
+
+  /**
+   * Chooses how a unitless document's dimensions are READ. Metadata only: no
+   * revision, no geometry, no undo entry. Refused (returns false) for a document
+   * whose file states its own unit, or when there is no document.
+   */
+  public setUnitInterpretation(unit: LengthUnit | undefined): boolean {
+    const { model, conversion } = this.state;
+    if (model === undefined || model.source.unit !== undefined) return false;
+    this.update({
+      unitInterpretation:
+        unit === undefined ? undefined : { documentId: model.handle.documentId, unit },
+      // An open Convert session states the same thing, unless an export is running.
+      ...(conversion.state === ConversionState.Closed ||
+      conversion.state === ConversionState.Working
+        ? {}
+        : {
+            conversion: {
+              ...conversion,
+              unitAssertion: unit,
+              failure: undefined,
+              result: undefined,
+            },
+          }),
+    });
+    return true;
   }
 
   public closeConversion(): void {
@@ -3278,7 +3327,17 @@ export class WorkspaceStore {
   public setConversionUnit(unit: string | undefined): void {
     const previous = this.state.conversion;
     if (previous.state === ConversionState.Working) return;
+    // The statement is about the MODEL, so it is also the shared interpretation
+    // (for a unitless document) that Split and Texture read.
+    const { model } = this.state;
+    const interpretation: UnitInterpretation | undefined =
+      model === undefined || model.source.unit !== undefined
+        ? this.state.unitInterpretation
+        : unit !== undefined && isLengthUnit(unit)
+          ? { documentId: model.handle.documentId, unit }
+          : undefined;
     this.update({
+      unitInterpretation: interpretation,
       conversion: {
         ...previous,
         state: ConversionState.Reviewing,
