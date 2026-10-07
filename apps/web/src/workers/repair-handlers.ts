@@ -572,6 +572,9 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
           mesh: fillBase,
           report: baseReport,
           verifierPort: payload.verifierPort,
+          ...(payload.localRepairWorkCeiling === undefined
+            ? {}
+            : { workCeiling: payload.localRepairWorkCeiling }),
           operationId: `${payload.handle.documentId}@${String(payload.handle.revision)}/${part.id}/local`,
           documentId: payload.handle.documentId,
           partId: part.id,

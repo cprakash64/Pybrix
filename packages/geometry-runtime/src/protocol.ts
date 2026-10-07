@@ -617,6 +617,12 @@ export interface RepairCandidatePayload {
   /** `LocalRepairPlan.planHash` the caller saw. Re-checked against the conservative candidate's source. */
   readonly localRepairPlanHash?: string;
   /**
+   * A work ceiling that may only NARROW the product's primary budget, exactly as
+   * `memoryBudgetBytes` may only narrow the memory ceiling: a message can make CAD Fixer stop
+   * sooner and never later. Qualification uses it to reach the limit with a small workload.
+   */
+  readonly localRepairWorkCeiling?: number;
+  /**
    * A channel to a disposable worker that runs the exact intersection check on
    * the LOCAL region of the patches. Without it no opening can be verified, and
    * none is filled.

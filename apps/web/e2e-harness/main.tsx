@@ -11,9 +11,20 @@ import {
   type ExportTarget,
 } from '../src/runtime/document-export-service';
 import { deriveDocumentExportName, downloadBytes } from '../src/runtime/download';
-import { HoleFillService } from '../src/runtime/hole-fill-service';
+import { HoleFillService, openFillVerifier } from '../src/runtime/hole-fill-service';
+import {
+  commitRepair,
+  createRepairCandidate,
+  planConservativeRepair,
+  undoRepair,
+  type RepairCandidateOutcome,
+  type RepairSession,
+} from '../src/runtime/repair-service';
 import { HarnessBar } from './harness-bar';
-import type { GeometryEditCandidateHandle } from '@cadfixer/geometry-runtime';
+import type {
+  GeometryEditCandidateHandle,
+  RepairCandidateHandle,
+} from '@cadfixer/geometry-runtime';
 import { objNeedsFileSink } from '@cadfixer/file-formats';
 import type { ExportFileDestination } from '../src/runtime/export-file-sink';
 import { SharedCancellationSource } from '@cadfixer/shared';
@@ -686,6 +697,270 @@ async function awaitTestBoolean(): Promise<HarnessBooleanResult> {
   return result;
 }
 
+/**
+ * REPAIR-CORE-06A-BROWSER-GATE — the LOCAL PINCH REPAIR through the real browser path.
+ *
+ * The option has no public control until 06B, so this is the supported test seam: it drives the
+ * PRODUCTION `planConservativeRepair`, `createRepairCandidate`, `commitRepair` and `undoRepair`
+ * services — which open the production disposable kernel worker with the real Geogram WASM — and
+ * installs results in the REAL store exactly as `use-conservative-repair.ts` does, so the real
+ * `useTopologyAnalysis` hook re-analyses the new revision. Nothing about the geometry or the
+ * decision is reproduced here; the bridge starts the operation, counts live workers, and reports
+ * scalars.
+ */
+let liveLocalRepairVerifiers = 0;
+let createdLocalRepairVerifiers = 0;
+
+interface HarnessLocalRepairResult {
+  readonly status: string;
+  readonly message?: string;
+  readonly planHash?: string;
+  readonly localPlan?: Record<string, unknown>;
+  readonly candidateId?: string;
+  readonly candidateRevision?: number;
+  readonly candidatePartId?: string;
+  readonly outcome?: Record<string, unknown>;
+  readonly notRun?: string;
+  readonly acceptance?: string;
+  readonly candidateTriangles?: number;
+  readonly candidateNonManifoldVertices?: number;
+  readonly sourceNonManifoldVertices?: number;
+  readonly durationMs: number;
+  readonly cancelLatencyMs?: number;
+}
+
+interface PendingLocalRepair {
+  readonly session: { cancel(): void };
+  readonly result: Promise<HarnessLocalRepairResult>;
+  readonly cancelAt: { requestedAt?: number };
+}
+
+let activeLocalRepair: PendingLocalRepair | undefined;
+let previewedLocalRepair: RepairCandidateOutcome | undefined;
+let lastLocalRepairRecord:
+  { recordId: string; handle: { documentId: string; revision: number } } | undefined;
+
+function countingVerifier(
+  onFailure: () => void,
+  options: { readonly failAfterMs?: number },
+): ReturnType<typeof openFillVerifier> {
+  const inner = openFillVerifier(onFailure);
+  liveLocalRepairVerifiers += 1;
+  createdLocalRepairVerifiers += 1;
+  let disposed = false;
+  if (options.failAfterMs !== undefined) setTimeout(onFailure, options.failAfterMs);
+  return {
+    port: inner.port,
+    dispose: (): void => {
+      if (disposed) return;
+      disposed = true;
+      liveLocalRepairVerifiers -= 1;
+      inner.dispose();
+    },
+  };
+}
+
+function beginLocalRepair(
+  documentId: string,
+  revision: number,
+  partIdentifier: string,
+  options: {
+    readonly cancelAfterMs?: number;
+    readonly workCeiling?: number;
+    readonly failVerifierAfterMs?: number;
+  } = {},
+): void {
+  const startedAt = performance.now();
+  const cancelAt: { requestedAt?: number } = {};
+  const handle = { documentId, revision } as never;
+  const state: { current: { cancel(): void } } = { current: { cancel: (): void => undefined } };
+  const verifierOptions =
+    options.failVerifierAfterMs === undefined ? {} : { failAfterMs: options.failVerifierAfterMs };
+  previewedLocalRepair = undefined;
+
+  const result = (async (): Promise<HarnessLocalRepairResult> => {
+    let planHash: string | undefined;
+    let localPlan: Record<string, unknown> | undefined;
+    try {
+      const planning = planConservativeRepair({
+        handle,
+        partId: partIdentifier,
+        client: geometryClient,
+        requested: [],
+        localRepair: true,
+      });
+      state.current = planning;
+      const planned = await planning.promise;
+      planHash = planned.plan.planHash;
+      localPlan = planned.localRepair as unknown as Record<string, unknown> | undefined;
+      const local = planned.localRepair;
+      if (local === undefined) throw new Error('the worker returned no local repair plan');
+
+      const building: RepairSession<RepairCandidateOutcome> = createRepairCandidate({
+        handle,
+        partId: partIdentifier,
+        client: geometryClient,
+        requested: [],
+        planHash,
+        localRepair: {
+          planHash: local.planHash,
+          ...(options.workCeiling === undefined ? {} : { workCeiling: options.workCeiling }),
+        },
+        openVerifier: (onFailure) => countingVerifier(onFailure, verifierOptions),
+      });
+      state.current = building;
+      const built = await building.promise;
+      previewedLocalRepair = built;
+      return {
+        status: built.candidate === undefined ? 'NO_CANDIDATE' : 'CANDIDATE',
+        planHash,
+        ...(localPlan === undefined ? {} : { localPlan }),
+        ...(built.candidate === undefined
+          ? {}
+          : {
+              candidateId: built.candidate.candidateId,
+              candidateRevision: built.candidate.sourceRevision,
+              candidatePartId: built.candidate.partId,
+            }),
+        ...(built.localRepair === undefined
+          ? {}
+          : { outcome: built.localRepair as unknown as Record<string, unknown> }),
+        ...(built.localRepairNotRun === undefined ? {} : { notRun: built.localRepairNotRun }),
+        acceptance: built.validation.acceptance,
+        candidateTriangles: built.counts.candidateFaceCount,
+        candidateNonManifoldVertices: built.validation.after.nonManifoldVertexCount,
+        sourceNonManifoldVertices: built.validation.before.nonManifoldVertexCount,
+        durationMs: performance.now() - startedAt,
+        ...(cancelAt.requestedAt === undefined
+          ? {}
+          : { cancelLatencyMs: performance.now() - cancelAt.requestedAt }),
+      };
+    } catch (cause) {
+      return {
+        status: cause instanceof Error ? cause.name : 'UNKNOWN',
+        message: cause instanceof Error ? cause.message : String(cause),
+        ...(planHash === undefined ? {} : { planHash }),
+        ...(localPlan === undefined ? {} : { localPlan }),
+        durationMs: performance.now() - startedAt,
+        ...(cancelAt.requestedAt === undefined
+          ? {}
+          : { cancelLatencyMs: performance.now() - cancelAt.requestedAt }),
+      };
+    }
+  })();
+
+  activeLocalRepair = {
+    session: {
+      cancel: (): void => {
+        cancelAt.requestedAt = performance.now();
+        state.current.cancel();
+      },
+    },
+    result,
+    cancelAt,
+  };
+  if (options.cancelAfterMs !== undefined) {
+    setTimeout(() => {
+      activeLocalRepair?.session.cancel();
+    }, options.cancelAfterMs);
+  }
+}
+
+async function awaitLocalRepair(): Promise<HarnessLocalRepairResult> {
+  const pending = activeLocalRepair;
+  if (pending === undefined) throw new Error('no local repair is running');
+  const result = await pending.result;
+  activeLocalRepair = undefined;
+  return result;
+}
+
+/**
+ * Applies the PREVIEWED candidate — the very handle the build returned — and installs the result
+ * in the real store, as the repair hook does. The new revision is then analysed by the real
+ * analysis hook; this bridge never sets a report.
+ */
+async function applyLocalRepair(): Promise<Record<string, unknown>> {
+  const preview = previewedLocalRepair;
+  if (preview?.candidate === undefined) throw new Error('there is no previewed candidate');
+  const candidate: RepairCandidateHandle = preview.candidate;
+  const committed = await commitRepair({
+    client: geometryClient,
+    candidate,
+    expectedSource: preview.source,
+    expectedPart: preview.partId,
+    planHash: preview.plan.planHash,
+  }).promise;
+  previewedLocalRepair = undefined;
+  const applied = store.applyRepairResult({
+    handle: committed.handle,
+    parentRevision: committed.parentRevision,
+    recordId: committed.repairRecordId,
+    partId: committed.partId,
+    appliedOperations: committed.appliedOperations,
+    counts: preview.counts,
+    filledOpenings: preview.boundaryFill?.filledCount ?? 0,
+    undoable: committed.undoable,
+    render: committed.render,
+    parts: committed.parts,
+    bounds: committed.bounds,
+    triangleCount: committed.triangleCount,
+    vertexCount: committed.vertexCount,
+    residentBytes: committed.residentBytes,
+  });
+  lastLocalRepairRecord = {
+    recordId: committed.repairRecordId,
+    handle: { documentId: committed.handle.documentId, revision: committed.handle.revision },
+  };
+  return {
+    installed: applied,
+    committedCandidateId: candidate.candidateId,
+    previewCandidateId: candidate.candidateId,
+    documentId: committed.handle.documentId,
+    revision: committed.handle.revision,
+    parentRevision: committed.parentRevision,
+    triangleCount: committed.triangleCount,
+    recordId: committed.repairRecordId,
+    undoable: committed.undoable,
+    previewTriangles: preview.counts.candidateFaceCount,
+  };
+}
+
+async function undoLocalRepair(): Promise<Record<string, unknown>> {
+  const record = lastLocalRepairRecord;
+  const model = store.getSnapshot().model;
+  if (record === undefined || model === undefined) throw new Error('there is nothing to undo');
+  const result = await undoRepair({
+    client: geometryClient,
+    handle: model.handle,
+    recordId: record.recordId,
+  }).promise;
+  const restored = store.applyUndoResult({
+    handle: result.handle,
+    partId: result.partId,
+    render: result.render,
+    parts: result.parts,
+    bounds: result.bounds,
+    triangleCount: result.triangleCount,
+    vertexCount: result.vertexCount,
+    residentBytes: result.residentBytes,
+  });
+  lastLocalRepairRecord = undefined;
+  return {
+    installed: restored,
+    documentId: result.handle.documentId,
+    revision: result.handle.revision,
+    triangleCount: result.triangleCount,
+  };
+}
+
+async function discardLocalRepair(): Promise<boolean> {
+  const preview = previewedLocalRepair;
+  previewedLocalRepair = undefined;
+  if (preview?.candidate === undefined) return false;
+  const result = await geometryClient.discardRepairCandidate(preview.candidate).promise;
+  return result.released;
+}
+
 declare global {
   interface Window {
     cadfixerHarness?: {
@@ -757,6 +1032,22 @@ declare global {
       holeFillActiveOperation(): string | undefined;
       holeFillLiveWorkers(): number;
       holeFillLiveChannels(): number;
+      beginLocalRepair(
+        documentId: string,
+        revision: number,
+        partId: string,
+        options?: {
+          readonly cancelAfterMs?: number;
+          readonly workCeiling?: number;
+          readonly failVerifierAfterMs?: number;
+        },
+      ): void;
+      awaitLocalRepair(): Promise<HarnessLocalRepairResult>;
+      cancelLocalRepair(): void;
+      applyLocalRepair(): Promise<Record<string, unknown>>;
+      undoLocalRepair(): Promise<Record<string, unknown>>;
+      discardLocalRepair(): Promise<boolean>;
+      localRepairVerifiers(): { live: number; created: number };
     };
   }
 }
@@ -878,6 +1169,16 @@ window.cadfixerHarness = {
   holeFillActiveOperation: (): string | undefined => holeFillService.activeOperation,
   holeFillLiveWorkers: (): number => holeFillService.liveWorkerCount,
   holeFillLiveChannels: (): number => holeFillService.liveChannelCount,
+  beginLocalRepair,
+  awaitLocalRepair,
+  cancelLocalRepair: (): void => activeLocalRepair?.session.cancel(),
+  applyLocalRepair,
+  undoLocalRepair,
+  discardLocalRepair,
+  localRepairVerifiers: (): { live: number; created: number } => ({
+    live: liveLocalRepairVerifiers,
+    created: createdLocalRepairVerifiers,
+  }),
 };
 
 createRoot(container).render(

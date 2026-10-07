@@ -68,6 +68,24 @@ interface HarnessExportResult {
   readonly cancelLatencyMs?: number;
 }
 
+interface HarnessLocalRepairResult {
+  readonly status: string;
+  readonly message?: string;
+  readonly planHash?: string;
+  readonly localPlan?: Record<string, unknown>;
+  readonly candidateId?: string;
+  readonly candidateRevision?: number;
+  readonly candidatePartId?: string;
+  readonly outcome?: Record<string, unknown>;
+  readonly notRun?: string;
+  readonly acceptance?: string;
+  readonly candidateTriangles?: number;
+  readonly candidateNonManifoldVertices?: number;
+  readonly sourceNonManifoldVertices?: number;
+  readonly durationMs: number;
+  readonly cancelLatencyMs?: number;
+}
+
 declare global {
   interface Window {
     readonly cadfixerHarness?: {
@@ -174,6 +192,22 @@ declare global {
       holeFillActiveOperation(): string | undefined;
       holeFillLiveWorkers(): number;
       holeFillLiveChannels(): number;
+      beginLocalRepair(
+        documentId: string,
+        revision: number,
+        partId: string,
+        options?: {
+          readonly cancelAfterMs?: number;
+          readonly workCeiling?: number;
+          readonly failVerifierAfterMs?: number;
+        },
+      ): void;
+      awaitLocalRepair(): Promise<HarnessLocalRepairResult>;
+      cancelLocalRepair(): void;
+      applyLocalRepair(): Promise<Record<string, unknown>>;
+      undoLocalRepair(): Promise<Record<string, unknown>>;
+      discardLocalRepair(): Promise<boolean>;
+      localRepairVerifiers(): { live: number; created: number };
     };
   }
 }

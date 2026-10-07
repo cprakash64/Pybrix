@@ -373,6 +373,33 @@ describe('local repair candidate, commit and undo', () => {
     ).rejects.toMatchObject({ code: AppErrorCode.ModelUnavailable });
   });
 
+  it('a work ceiling may only NARROW the product budget, never widen it', async () => {
+    const handle = residentDocuments.commit(singlePartDocument(pairs(2)));
+    const { planHash, localHash } = await plan(handle);
+    const sent: (number | undefined)[] = [];
+    for (const ceiling of [500, 50_000_000]) {
+      const check = verifier();
+      await repairCreateCandidateHandler(
+        {
+          handle,
+          partId: PART,
+          requested: REQUESTED,
+          planHash,
+          localRepair: true,
+          localRepairPlanHash: localHash,
+          localRepairWorkCeiling: ceiling,
+          verifierPort: check.port,
+        },
+        context(),
+      );
+      check.close();
+      sent.push(check.requests[0]?.limits.primary);
+      repairCandidates.releaseAll();
+    }
+    expect(sent[0]).toBe(500);
+    expect(sent[1]).toBe(1_200_000);
+  });
+
   it('fails closed without a verifier: nothing is repaired and the reason is typed', async () => {
     const handle = residentDocuments.commit(singlePartDocument(pairs(2)));
     const { planHash, localHash } = await plan(handle);

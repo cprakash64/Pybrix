@@ -120,6 +120,8 @@ export interface LocalRepairStageInput {
   /** Stage 2's report of exactly `mesh`. */
   readonly report: TopologyReport;
   readonly verifierPort: ProtocolPort | undefined;
+  /** May only NARROW the production primary budget; a larger value is ignored. */
+  readonly workCeiling?: number;
   readonly operationId: string;
   readonly documentId: string;
   readonly partId: string;
@@ -197,6 +199,12 @@ function noRunOutcome(kind: LocalRepairOutcomeKind): LocalRepairOutcome {
   };
 }
 
+/** The smaller of the product's ceiling and a requested one; a request can never widen it. */
+function narrowed(product: number | undefined, requested: number | undefined): number | undefined {
+  if (requested === undefined || !Number.isFinite(requested) || requested <= 0) return product;
+  return product === undefined ? Math.floor(requested) : Math.min(product, Math.floor(requested));
+}
+
 export async function runLocalRepairStage(
   input: LocalRepairStageInput,
 ): Promise<LocalRepairStageResult> {
@@ -222,7 +230,7 @@ export async function runLocalRepairStage(
     positions,
     indices,
     limits: {
-      primary: PRODUCTION_REPAIR_WORK_LIMITS.primary,
+      primary: narrowed(PRODUCTION_REPAIR_WORK_LIMITS.primary, input.workCeiling),
       residual: PRODUCTION_REPAIR_WORK_LIMITS.residual,
     },
   };

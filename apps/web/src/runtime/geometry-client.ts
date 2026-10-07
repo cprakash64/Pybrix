@@ -118,6 +118,8 @@ export interface RepairCandidateOptions {
   readonly localRepair?: boolean;
   /** `LocalRepairPlan.planHash` the caller saw. */
   readonly localRepairPlanHash?: string;
+  /** Narrows the primary work budget; never widens it. */
+  readonly localRepairWorkCeiling?: number;
   readonly verifierPort?: MessagePort;
 }
 
@@ -644,6 +646,9 @@ export class GeometryClient {
               ...(options.localRepairPlanHash === undefined
                 ? {}
                 : { localRepairPlanHash: options.localRepairPlanHash }),
+              ...(options.localRepairWorkCeiling === undefined
+                ? {}
+                : { localRepairWorkCeiling: options.localRepairWorkCeiling }),
             }
           : {}),
         ...(options.verifierPort === undefined ? {} : { verifierPort: options.verifierPort }),

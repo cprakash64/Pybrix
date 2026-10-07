@@ -192,12 +192,104 @@ export const HarnessFixtureId = {
    * representation question can be asked of the same Apply.
    */
   RepairSharedIndexedPairMillimetre: 'repair-shared-indexed-pair-mm',
+  /**
+   * REPAIR-CORE-06A-BROWSER-GATE. Local pinch repair fixtures: three bounded, generated pinched
+   * vertices (success); one pinched vertex with a reversed face, which only the residual phase
+   * (component winding resolution and link retriangulation) repairs; one with two reversed faces
+   * whose fan is not one consistent chain, which the engine must refuse; and four hundred pinched
+   * vertices, a workload for a lowered work ceiling.
+   */
+  LocalRepairPinch: 'local-repair-pinch',
+  LocalRepairResidual: 'local-repair-residual',
+  LocalRepairRefusal: 'local-repair-refusal',
+  LocalRepairHeavy: 'local-repair-heavy',
+  /** A pinch whose apex also carries a non-manifold edge: unsupported, so nothing is attempted. */
+  LocalRepairUnsupportedEdge: 'local-repair-unsupported-edge',
 } as const;
 
 export type HarnessFixtureId = (typeof HarnessFixtureId)[keyof typeof HarnessFixtureId];
 
 export function isHarnessFixtureId(value: string): value is HarnessFixtureId {
   return Object.values(HarnessFixtureId).some((id) => id === value);
+}
+
+type Vec3 = readonly [number, number, number];
+type Tri = readonly [number, number, number];
+
+function meshFrom(points: readonly Vec3[], faces: readonly Tri[]): CanonicalMesh {
+  const positions = createPositionArray(points.length * 3);
+  points.forEach((point, index) => {
+    positions.set(point, index * 3);
+  });
+  const indices = createIndexArray(faces.length * 3);
+  faces.forEach((face, index) => {
+    indices.set(face, index * 3);
+  });
+  return { positions, indices, metadata: {} };
+}
+
+/** `count` tetrahedron pairs, each pair sharing ONE corner coordinate: one pinched vertex each. */
+function pinchedPairs(count: number): CanonicalMesh {
+  const points: Vec3[] = [];
+  const faces: Tri[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const dx = (i % 10) * 6;
+    const dy = Math.floor(i / 10) * 6;
+    const base: Vec3[] = [
+      [0, 0, 0],
+      [1, 0, 1],
+      [-0.5, 0.9, 1],
+      [-0.5, -0.9, 1.1],
+      [-1, 0.1, -1],
+      [0.5, -0.9, -1.2],
+      [0.45, 0.95, -1.1],
+    ];
+    const offset = points.length;
+    for (const p of base) points.push([p[0] + dx, p[1] + dy, p[2]]);
+    for (const f of [
+      [0, 2, 1],
+      [0, 3, 2],
+      [0, 1, 3],
+      [1, 2, 3],
+      [0, 4, 5],
+      [0, 5, 6],
+      [0, 6, 4],
+      [4, 6, 5],
+    ] as const) {
+      faces.push([f[0] + offset, f[1] + offset, f[2] + offset]);
+    }
+  }
+  return meshFrom(points, faces);
+}
+
+/** Two closed cones of `n` faces meeting at one coordinate, `reversed` of whose faces are flipped. */
+function bowtie(
+  n: number,
+  heightA: number,
+  heightB: number,
+  reversed: readonly number[],
+): CanonicalMesh {
+  const points: Vec3[] = [[0, 0, 0]];
+  const faces: [number, number, number][] = [];
+  const cone = (height: number, phase: number): void => {
+    const base = points.length;
+    for (let k = 0; k < n; k += 1) {
+      const angle = phase + (2 * Math.PI * k) / n;
+      points.push([Math.cos(angle), Math.sin(angle), height]);
+    }
+    for (let k = 0; k < n; k += 1) {
+      faces.push(
+        height >= 0 ? [0, base + k, base + ((k + 1) % n)] : [0, base + ((k + 1) % n), base + k],
+      );
+    }
+  };
+  cone(heightA, 0);
+  cone(heightB, 0.3);
+  for (const index of reversed) {
+    const face = faces[index];
+    if (face !== undefined) faces[index] = [face[0], face[2], face[1]];
+  }
+  return meshFrom(points, faces);
 }
 
 function named(
@@ -473,6 +565,35 @@ export function buildHarnessDocument(id: HarnessFixtureId): GeometryDocument {
 
     case HarnessFixtureId.MillimetreSharedMedium1000:
       return sharedGridPlacements(24, 1000);
+
+    case HarnessFixtureId.LocalRepairPinch:
+      return { parts: [named('a', pinchedPairs(3), 'Three pinched vertices')] };
+
+    case HarnessFixtureId.LocalRepairResidual:
+      return { parts: [named('a', bowtie(6, 0.05, -0.05, [1]), 'Pinch with a reversed face')] };
+
+    case HarnessFixtureId.LocalRepairRefusal:
+      return { parts: [named('a', bowtie(4, 0.5, -0.5, [1, 4]), 'Pinch the engine must refuse')] };
+
+    case HarnessFixtureId.LocalRepairUnsupportedEdge: {
+      // The residual-phase bowtie plus a third face on the edge (apex, first rim vertex).
+      const base = bowtie(6, 0.05, -0.05, []);
+      const vertexCount = base.positions.length / 3;
+      const positions = createPositionArray(base.positions.length + 3);
+      positions.set(base.positions);
+      positions.set([0, 0, 3], base.positions.length);
+      const indices = createIndexArray(base.indices.length + 3);
+      indices.set(base.indices);
+      indices.set([0, 1, vertexCount], base.indices.length);
+      return {
+        parts: [
+          named('a', { positions, indices, metadata: {} }, 'Pinch beside a non-manifold edge'),
+        ],
+      };
+    }
+
+    case HarnessFixtureId.LocalRepairHeavy:
+      return { parts: [named('a', pinchedPairs(400), 'Four hundred pinched vertices')] };
 
     case HarnessFixtureId.HoleFillSmall:
       return {

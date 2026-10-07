@@ -323,7 +323,11 @@ export interface RepairCandidateRequest {
    * Run the local pinch repair — REPAIR-CORE-06A. The same disposable kernel worker is opened for
    * this preview only; without it nothing could be verified and nothing would be repaired.
    */
-  readonly localRepair?: { readonly planHash: string };
+  readonly localRepair?: {
+    readonly planHash: string;
+    /** Narrows the primary work budget; the worker takes the smaller of this and the product's. */
+    readonly workCeiling?: number;
+  };
   /** Injectable for tests; the application uses the real verifier. */
   readonly openVerifier?: (onFailure: () => void) => FillVerifier;
   /**
@@ -369,7 +373,13 @@ export function createRepairCandidate(
             : { fillOpenings: true, fillPlanHash: request.fill.planHash }),
           ...(request.localRepair === undefined
             ? {}
-            : { localRepair: true, localRepairPlanHash: request.localRepair.planHash }),
+            : {
+                localRepair: true,
+                localRepairPlanHash: request.localRepair.planHash,
+                ...(request.localRepair.workCeiling === undefined
+                  ? {}
+                  : { localRepairWorkCeiling: request.localRepair.workCeiling }),
+              }),
           ...(verifier === undefined ? {} : { verifierPort: verifier.port }),
         },
       );

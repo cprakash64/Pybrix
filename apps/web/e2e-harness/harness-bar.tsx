@@ -19,6 +19,11 @@ import { HarnessFixtureId, type HarnessFixtureId as FixtureId } from './fixtures
  */
 
 const FIXTURES: readonly { readonly id: FixtureId; readonly label: string }[] = [
+  { id: HarnessFixtureId.LocalRepairPinch, label: 'Local repair: three pinches' },
+  { id: HarnessFixtureId.LocalRepairResidual, label: 'Local repair: residual pinch' },
+  { id: HarnessFixtureId.LocalRepairRefusal, label: 'Local repair: refused pinch' },
+  { id: HarnessFixtureId.LocalRepairUnsupportedEdge, label: 'Local repair: unsupported edge' },
+  { id: HarnessFixtureId.LocalRepairHeavy, label: 'Local repair: 400 pinches' },
   { id: HarnessFixtureId.TwoIndependentParts, label: 'Two independent parts' },
   { id: HarnessFixtureId.SharedPairApart, label: 'Shared pair, apart' },
   { id: HarnessFixtureId.SharedPairOverlapping, label: 'Shared pair, overlapping' },
@@ -114,6 +119,10 @@ export function HarnessBar(): ReactNode {
     analysisPartId: analysis.partId,
     analysisState: analysis.state,
     analysisFaceCount: analysis.report?.sourceFaceCount,
+    analysisReportRevision: analysis.report?.documentRevision,
+    analysisHandleRevision: analysis.handle?.revision,
+    analysisNonManifoldVertices: analysis.report?.nonManifoldVertexCount,
+    analysisWindingConflicts: analysis.report?.windingConflictEdgeCount,
     selfIntersectionPartId: selfIntersection.partId,
     selfIntersectionBand: selfIntersection.band,
     selfIntersectionStatus: selfIntersection.report?.status,

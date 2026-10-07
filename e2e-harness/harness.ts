@@ -42,6 +42,11 @@ export const Fixture = {
   RepairSharedPairMillimetre: 'repair-shared-pair-mm',
   RepairShared1000Millimetre: 'repair-shared-1000-mm',
   RepairSharedIndexedPairMillimetre: 'repair-shared-indexed-pair-mm',
+  LocalRepairPinch: 'local-repair-pinch',
+  LocalRepairResidual: 'local-repair-residual',
+  LocalRepairRefusal: 'local-repair-refusal',
+  LocalRepairHeavy: 'local-repair-heavy',
+  LocalRepairUnsupportedEdge: 'local-repair-unsupported-edge',
 } as const;
 
 export type Fixture = (typeof Fixture)[keyof typeof Fixture];
@@ -70,6 +75,10 @@ export interface HarnessState {
   readonly analysisPartId?: string;
   readonly analysisState: string;
   readonly analysisFaceCount?: number;
+  readonly analysisReportRevision?: number;
+  readonly analysisHandleRevision?: number;
+  readonly analysisNonManifoldVertices?: number;
+  readonly analysisWindingConflicts?: number;
   readonly selfIntersectionPartId?: string;
   readonly selfIntersectionBand: string;
   readonly selfIntersectionStatus?: string;
