@@ -29,7 +29,12 @@ import type { UndoableChangeKind } from './repair-history';
 // against are restated in `hole-fill.ts`.
 import type { BoundaryLoopRefusal, HoleFillStatus, HoleFillValidationSummary } from './hole-fill';
 import type { BoundaryFillOutcome, BoundaryFillPlan } from './boundary-fill';
-import type { LocalRepairNotRun, LocalRepairOutcome, LocalRepairPlan } from './local-repair';
+import type {
+  LocalRepairChange,
+  LocalRepairNotRun,
+  LocalRepairOutcome,
+  LocalRepairPlan,
+} from './local-repair';
 
 /**
  * Wire protocol between the main thread and geometry workers.
@@ -665,6 +670,8 @@ export interface RepairCandidateResult {
    */
   readonly localRepair?: LocalRepairOutcome;
   readonly localRepairNotRun?: LocalRepairNotRun;
+  /** The bounded S -> C delta of the local repair, for the preview overlay — REPAIR-CORE-06B. */
+  readonly localChange?: LocalRepairChange;
   /**
    * THE PATCH ONLY, when filling is the only change — REPAIR-CORE-02. Every
    * existing triangle is untouched, so the preview draws these beside the model

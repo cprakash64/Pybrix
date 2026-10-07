@@ -298,8 +298,14 @@ export type {
 export {
   LOCAL_REPAIR_CONTRACT_CHECKED,
   LOCAL_REPAIR_REASON_LIMIT,
+  LOCAL_CHANGE_FACE_LIMIT,
   LocalRepairNotRun,
   LocalRepairOutcomeKind,
   LocalRepairWorkPhase,
 } from './local-repair';
-export type { LocalRepairOutcome, LocalRepairPlan, LocalRepairWorkFigure } from './local-repair';
+export type {
+  LocalRepairChange,
+  LocalRepairOutcome,
+  LocalRepairPlan,
+  LocalRepairWorkFigure,
+} from './local-repair';

@@ -248,6 +248,8 @@ describe('visibility', () => {
     removedRepeatedPosition: true,
     removedZeroArea: true,
     flippedFaces: true,
+    localRemoved: true,
+    localAdded: true,
   };
 
   it('shows removed faces on Before, where they still exist', () => {
@@ -371,5 +373,63 @@ describe('disposal', () => {
 
     expect(overlays.objectCount).toBe(0);
     expect(overlays.group.parent).toBeNull();
+  });
+});
+
+describe('local repair categories — REPAIR-CORE-06B', () => {
+  const withLocal = (): ReturnType<typeof createChangeOverlays> => {
+    const overlays = createChangeOverlays();
+    overlays.setSamples(
+      input({
+        samples: {
+          removedDuplicates: new Uint32Array(0),
+          removedRepeatedPosition: new Uint32Array(0),
+          removedZeroArea: new Uint32Array(0),
+          flippedFaces: new Uint32Array(0),
+          localRemoved: new Uint32Array([0, 1]),
+          // Two added faces, nine floats each: they exist only in the candidate.
+          localAdded: new Float32Array(18).fill(0.5),
+        },
+      }),
+    );
+    return overlays;
+  };
+  const ON = {
+    removedDuplicates: true,
+    removedRepeatedPosition: true,
+    removedZeroArea: true,
+    flippedFaces: true,
+    localRemoved: true,
+    localAdded: true,
+  };
+
+  it('draws replaced faces only on Before and added faces only on After', () => {
+    const overlays = withLocal();
+    expect(overlays.objectCount).toBe(2);
+    overlays.setVisibility(ON, 'before');
+    expect(overlays.group.children.filter((child) => child.visible)).toHaveLength(1);
+    overlays.setVisibility(ON, 'after');
+    expect(overlays.group.children.filter((child) => child.visible)).toHaveLength(1);
+  });
+
+  it('allocates nothing for a candidate with no local repair', () => {
+    const overlays = createChangeOverlays();
+    overlays.setSamples(
+      input({
+        samples: {
+          removedDuplicates: new Uint32Array(0),
+          removedRepeatedPosition: new Uint32Array(0),
+          removedZeroArea: new Uint32Array(0),
+          flippedFaces: new Uint32Array(0),
+        },
+      }),
+    );
+    expect(overlays.objectCount).toBe(0);
+  });
+
+  it('disposes the added-face geometry with the rest', () => {
+    const overlays = withLocal();
+    overlays.setSamples(undefined);
+    expect(overlays.objectCount).toBe(0);
   });
 });

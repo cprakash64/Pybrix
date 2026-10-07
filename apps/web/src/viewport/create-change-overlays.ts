@@ -44,6 +44,13 @@ export interface ChangeOverlaySamples {
   readonly removedZeroArea: Uint32Array;
   /** Source face indices of triangles whose corner order was reversed. */
   readonly flippedFaces: Uint32Array;
+  /**
+   * REPAIR-CORE-06B. Source face indices the local repair replaces, and the positions (nine floats
+   * a face) of the faces it adds. Both come from the exact S -> C patch and are bounded by the
+   * worker; absent for a candidate with no local repair.
+   */
+  readonly localRemoved?: Uint32Array;
+  readonly localAdded?: Float32Array;
 }
 
 export interface ChangeOverlayVisibility {
@@ -51,6 +58,8 @@ export interface ChangeOverlayVisibility {
   readonly removedRepeatedPosition: boolean;
   readonly removedZeroArea: boolean;
   readonly flippedFaces: boolean;
+  readonly localRemoved: boolean;
+  readonly localAdded: boolean;
 }
 
 export type ChangeOverlayKey = keyof ChangeOverlayVisibility;
@@ -70,6 +79,8 @@ const CHANGE_COLORS: Readonly<Record<ChangeOverlayKey, Color>> = {
   removedRepeatedPosition: new Color('#c77dff'),
   removedZeroArea: new Color('#ff59d6'),
   flippedFaces: new Color('#38e8b0'),
+  localRemoved: new Color('#f5c542'),
+  localAdded: new Color('#4cc9f0'),
 };
 
 export interface ChangeOverlayInput {
@@ -100,7 +111,11 @@ const SOURCE_ONLY_KEYS: readonly ChangeOverlayKey[] = [
   'removedDuplicates',
   'removedRepeatedPosition',
   'removedZeroArea',
+  'localRemoved',
 ];
+
+/** Keys whose faces exist only in the candidate, so only the After view has them. */
+const CANDIDATE_ONLY_KEYS: readonly ChangeOverlayKey[] = ['localAdded'];
 
 export function createChangeOverlays(): ChangeOverlayHandle {
   const group = new Group();
@@ -117,6 +132,8 @@ export function createChangeOverlays(): ChangeOverlayHandle {
     removedRepeatedPosition: false,
     removedZeroArea: false,
     flippedFaces: false,
+    localRemoved: false,
+    localAdded: false,
   };
   let view: ChangeOverlayView = 'before';
 
@@ -137,7 +154,8 @@ export function createChangeOverlays(): ChangeOverlayHandle {
 
   const applyVisibility = (): void => {
     for (const [key, object] of faces) {
-      const availableInView = view === 'before' || !SOURCE_ONLY_KEYS.includes(key);
+      const availableInView =
+        view === 'before' ? !CANDIDATE_ONLY_KEYS.includes(key) : !SOURCE_ONLY_KEYS.includes(key);
       object.visible = visibility[key] && availableInView;
     }
     for (const [indicatorView, object] of indicators) {
@@ -149,24 +167,33 @@ export function createChangeOverlays(): ChangeOverlayHandle {
     disposeAll();
     if (input === undefined) return;
 
-    const categories: readonly (readonly [ChangeOverlayKey, Uint32Array])[] = [
-      ['removedDuplicates', input.samples.removedDuplicates],
-      ['removedRepeatedPosition', input.samples.removedRepeatedPosition],
-      ['removedZeroArea', input.samples.removedZeroArea],
-      ['flippedFaces', input.samples.flippedFaces],
+    const categories: readonly (readonly [ChangeOverlayKey, Float32Array])[] = [
+      [
+        'removedDuplicates',
+        buildFacePositions(input.samples.removedDuplicates, input.sourcePositions),
+      ],
+      [
+        'removedRepeatedPosition',
+        buildFacePositions(input.samples.removedRepeatedPosition, input.sourcePositions),
+      ],
+      ['removedZeroArea', buildFacePositions(input.samples.removedZeroArea, input.sourcePositions)],
+      ['flippedFaces', buildFacePositions(input.samples.flippedFaces, input.sourcePositions)],
+      [
+        'localRemoved',
+        buildFacePositions(input.samples.localRemoved ?? new Uint32Array(0), input.sourcePositions),
+      ],
+      // Added faces carry their own positions: they exist only in the candidate.
+      ['localAdded', input.samples.localAdded ?? new Float32Array(0)],
     ];
 
-    for (const [key, sampled] of categories) {
+    for (const [key, positions] of categories) {
       // An empty category allocates nothing at all: a zero-length buffer would
       // still be a GPU resource and a scene-graph node for something with
       // nothing to draw.
-      if (sampled.length === 0) continue;
+      if (positions.length === 0) continue;
 
       const geometry = new BufferGeometry();
-      geometry.setAttribute(
-        'position',
-        new BufferAttribute(buildFacePositions(sampled, input.sourcePositions), 3),
-      );
+      geometry.setAttribute('position', new BufferAttribute(positions, 3));
       const material = new MeshBasicMaterial({
         color: CHANGE_COLORS[key],
         side: DoubleSide,

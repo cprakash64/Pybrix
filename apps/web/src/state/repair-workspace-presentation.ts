@@ -11,6 +11,7 @@ import {
   type BoundaryFillOutcome,
   type BoundaryFillPlan,
   type ConservativeRepairPlan,
+  type LocalRepairPlan,
   type RepairChangeCounts,
   type RepairOperationDecision,
 } from '@cadfixer/geometry-runtime';
@@ -181,6 +182,8 @@ export interface IssueStatusContext {
   readonly fillSelected: boolean;
   /** The worker's fill plan for the CURRENT revision, or `undefined` while pending. */
   readonly fill: BoundaryFillPlan | undefined;
+  /** The local repair plan for the CURRENT revision — REPAIR-CORE-06B. */
+  readonly localRepair?: LocalRepairPlan | undefined;
 }
 
 /**
@@ -209,8 +212,18 @@ export function deriveIssueStatus(issue: RepairIssue, context: IssueStatusContex
       return openBoundaryStatus(issue.count, detail, context);
     }
     case RepairIssueId.NonManifoldEdges:
-    case RepairIssueId.NonManifoldVertices:
       return { fixability: Fixability.NotRepairable, text: 'Not automatically repairable' };
+    case RepairIssueId.NonManifoldVertices: {
+      // REPAIR-CORE-06B: pinched vertices are what the local repair attempts. It repairs a vertex
+      // only if its exact checks pass, so this says "can attempt", never "will fix".
+      const eligible = context.localRepair?.eligible ?? 0;
+      if (eligible === 0) {
+        return { fixability: Fixability.NotRepairable, text: 'Not automatically repairable' };
+      }
+      return eligible >= issue.count
+        ? { fixability: Fixability.Repairable, text: 'Repair available' }
+        : { fixability: Fixability.Partial, text: 'Partly repairable' };
+    }
     case RepairIssueId.SelfIntersections:
       return { fixability: Fixability.NotRepairable, text: 'Not automatically repairable' };
     case RepairIssueId.Components:
@@ -543,6 +556,8 @@ export interface RepairActionInput {
   readonly planNoOp: boolean | undefined;
   /** Openings the current fill plan admitted, when filling is selected. */
   readonly fillableOpenings: number;
+  /** Pinched vertices the local repair can attempt — REPAIR-CORE-06B. Zero when none. */
+  readonly localEligible?: number;
   readonly candidateState: 'idle' | 'building' | 'cancelling' | 'ready' | 'failed' | 'cancelled';
   readonly commitState: 'idle' | 'applying' | 'undoing';
   /** Detected issue types (errors and warnings). */
@@ -567,7 +582,9 @@ export function deriveRepairAction(input: RepairActionInput): RepairActionKind {
   if (input.planState === 'failed') return RepairActionKind.PlanFailed;
   if (input.planState !== 'ready' || input.planNoOp === undefined) return RepairActionKind.Planning;
   // A plan with no conservative work is still work when openings qualify.
-  if (!input.planNoOp || input.fillableOpenings > 0) return RepairActionKind.Ready;
+  if (!input.planNoOp || input.fillableOpenings > 0 || (input.localEligible ?? 0) > 0) {
+    return RepairActionKind.Ready;
+  }
   return input.detectedIssueTypes > 0
     ? RepairActionKind.NothingSafe
     : RepairActionKind.NothingFound;
@@ -698,16 +715,24 @@ export function describeAppliedActivity(changes: readonly string[]): string {
 export function describeAppliedChanges(
   counts: RepairChangeCounts,
   filledOpenings = 0,
+  local: { readonly repaired: number; readonly reversed: number } = { repaired: 0, reversed: 0 },
 ): readonly string[] {
   const lines: string[] = [];
   if (filledOpenings > 0) lines.push(`${plural(filledOpenings, 'opening')} filled`);
+  // REPAIR-CORE-06B: what the local repair fixed, in the model's own terms.
+  if (local.repaired > 0) {
+    lines.push(
+      `${plural(local.repaired, 'non-manifold vertex', 'non-manifold vertices')} repaired`,
+    );
+  }
   if (counts.removedDuplicateFaces > 0) {
     lines.push(`${plural(counts.removedDuplicateFaces, 'duplicate triangle')} removed`);
   }
   const degenerate = counts.removedRepeatedPositionFaces + counts.removedZeroAreaFaces;
   if (degenerate > 0) lines.push(`${plural(degenerate, 'degenerate triangle')} removed`);
-  if (counts.flippedFaces > 0) {
-    lines.push(`${plural(counts.flippedFaces, 'triangle')} reversed to match neighbours`);
+  const reversed = counts.flippedFaces + local.reversed;
+  if (reversed > 0) {
+    lines.push(`${plural(reversed, 'triangle')} reversed to match neighbours`);
   }
   return lines;
 }

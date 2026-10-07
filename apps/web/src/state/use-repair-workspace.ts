@@ -3,6 +3,7 @@ import {
   fillableOpeningCount,
   type BoundaryFillPlan,
   type ConservativeRepairPlan,
+  type LocalRepairPlan,
 } from '@cadfixer/geometry-runtime';
 import { SelfIntersectionBand } from '@cadfixer/mesh-self-intersection';
 import { isInterruptibleRepairSupported } from '../runtime/cancellation-support';
@@ -39,6 +40,8 @@ export interface RepairWorkspaceView {
   readonly currentPlan: ConservativeRepairPlan | undefined;
   /** The fill plan that belongs to `currentPlan`, when filling is selected. */
   readonly currentFill: BoundaryFillPlan | undefined;
+  /** The local repair plan that belongs to `currentPlan`. */
+  readonly currentLocal: LocalRepairPlan | undefined;
   /** Openings Repair model would attempt: admitted, and filling selected. */
   readonly fillableOpenings: number;
   /** Issue types currently detected (errors and warnings). */
@@ -71,6 +74,7 @@ export function useRepairWorkspace(): RepairWorkspaceView {
       : undefined;
 
   const currentFill = currentPlan === undefined ? undefined : repair.fillPlan;
+  const currentLocal = currentPlan === undefined ? undefined : repair.localPlan;
   const fillableOpenings = repair.fillOpenings ? fillableOpeningCount(currentFill) : 0;
 
   const report = reportIsCurrent ? analysis.report : undefined;
@@ -95,12 +99,14 @@ export function useRepairWorkspace(): RepairWorkspaceView {
           selfIntersectionSizeLimited: selfIntersection.band === SelfIntersectionBand.SizeLimit,
           fillSelected: repair.fillOpenings,
           fill: currentFill,
+          localRepair: currentLocal,
         }),
       );
     }
     return map;
   }, [
     currentFill,
+    currentLocal,
     currentPlan,
     navigation.issues,
     partFaceCount,
@@ -123,6 +129,7 @@ export function useRepairWorkspace(): RepairWorkspaceView {
     planState: repair.planState,
     planNoOp: currentPlan?.noOp,
     fillableOpenings,
+    localEligible: currentLocal?.eligible ?? 0,
     candidateState: repair.candidateState,
     commitState: repair.commitState,
     detectedIssueTypes,
@@ -136,6 +143,7 @@ export function useRepairWorkspace(): RepairWorkspaceView {
     reportIsCurrent,
     currentPlan,
     currentFill,
+    currentLocal,
     fillableOpenings,
     detectedIssueTypes,
   };

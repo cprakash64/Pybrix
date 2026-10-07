@@ -2801,6 +2801,104 @@
   overflow-wrap: anywhere;
 }
 
+.workspace-outcome__note {
+  margin: 0 14px 12px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--cad-info);
+  border-radius: var(--radius-sm);
+  background: var(--cad-info-soft);
+  color: var(--cad-text-strong);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * THE PREVIEW SUMMARY — REPAIR-CORE-06B. What will be fixed, what will remain, and how the
+ * current model compares with the candidate. Two quiet columns that stack on a narrow panel;
+ * meaning is carried by the headings and the text, never by colour.
+ */
+.repair-summary {
+  margin: 0 0 10px;
+}
+
+.repair-summary__headline {
+  margin: 0 0 2px;
+  color: var(--cad-text-strong);
+  font: 600 var(--fs-secondary) var(--font-body);
+}
+
+.repair-summary__support {
+  margin: 0 0 8px;
+  color: var(--cad-text);
+  font-size: var(--fs-secondary);
+  line-height: 1.4;
+}
+
+.repair-summary__columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 14px;
+  margin: 0 0 8px;
+}
+
+.repair-summary__heading {
+  margin: 0 0 2px;
+  color: var(--cad-text-muted);
+  font: 600 var(--fs-meta) var(--font-body);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.repair-summary__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--cad-text-strong);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+
+.repair-summary__list li::before {
+  content: '• ';
+  color: var(--cad-text-muted);
+}
+
+.repair-summary__list--none {
+  color: var(--cad-text-muted);
+}
+
+.repair-summary__compare {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0 0 6px;
+  font-size: var(--fs-secondary);
+}
+
+.repair-summary__compare dt {
+  color: var(--cad-text-muted);
+}
+
+.repair-summary__compare dd {
+  margin: 0;
+  color: var(--cad-text-strong);
+}
+
+.repair-advisory {
+  margin: 0 14px 12px;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-meta);
+  line-height: 1.35;
+}
+
+.repair-footer__advisory {
+  margin: 0;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-meta);
+  line-height: 1.35;
+}
+
 .convert-footer__progress-row {
   display: flex;
   justify-content: space-between;

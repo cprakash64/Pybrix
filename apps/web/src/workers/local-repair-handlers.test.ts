@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createIndexArray,
   createPositionArray,
@@ -268,6 +268,41 @@ describe('local repair candidate, commit and undo', () => {
     expect(nonManifoldVertices(mesh)).toBe(3);
   });
 
+  it('returns the exact S -> C delta, bounded, in source faces and candidate positions', async () => {
+    const mesh = pairs(3);
+    const handle = residentDocuments.commit(singlePartDocument(mesh));
+    const { planHash, localHash } = await plan(handle);
+    const check = verifier();
+    const built = await repairCreateCandidateHandler(
+      {
+        handle,
+        partId: PART,
+        requested: REQUESTED,
+        planHash,
+        localRepair: true,
+        localRepairPlanHash: localHash,
+        verifierPort: check.port,
+      },
+      context(),
+    );
+    check.close();
+    const change = built.value.localChange;
+    if (change === undefined) throw new Error('no change delta');
+    const outcome = built.value.localRepair;
+    expect(change.removedCount).toBe(outcome?.facesRemoved);
+    expect(change.addedCount).toBe(outcome?.facesAppended);
+    expect(change.reversedCount).toBe(outcome?.facesReversed);
+    expect(change.removedCount).toBeGreaterThan(0);
+    expect(change.addedCount).toBeGreaterThan(0);
+    expect(change.truncated).toBe(false);
+    const sourceFaces = mesh.indices.length / 3;
+    for (const face of change.removedSourceFaces) expect(face).toBeLessThan(sourceFaces);
+    expect(change.addedPositions.length).toBe(change.addedCount * 9);
+    expect(change.addedPositions.every((value) => Number.isFinite(value))).toBe(true);
+    // The delta is a description, not a mesh: the candidate stays worker-side.
+    expect(built.value.candidate).toBeDefined();
+  });
+
   it('reports a work limit as a typed outcome, never an error, and applies a whole-operation prefix', async () => {
     const mesh = pairs(10);
     const handle = residentDocuments.commit(singlePartDocument(mesh));
@@ -457,8 +492,9 @@ describe('local repair candidate, commit and undo', () => {
       },
       context(source.token),
     );
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+    // Cancel only once the kernel worker has actually been handed the work.
+    await vi.waitFor(() => {
+      expect(check.requests).toHaveLength(1);
     });
     source.cancel();
     await expect(pending).rejects.toMatchObject({ code: 'OPERATION_CANCELLED' });

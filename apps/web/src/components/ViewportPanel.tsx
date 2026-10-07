@@ -480,7 +480,16 @@ export function ViewportPanel(): ReactNode {
         removedDuplicates: previewable.samples.removedDuplicateFaces,
         removedRepeatedPosition: previewable.samples.removedRepeatedPositionFaces,
         removedZeroArea: previewable.samples.removedZeroAreaFaces,
-        flippedFaces: previewable.samples.flippedFaces,
+        flippedFaces: mergeFlipped(
+          previewable.samples.flippedFaces,
+          previewable.localChange?.reversedSourceFaces,
+        ),
+        ...(previewable.localChange === undefined
+          ? {}
+          : {
+              localRemoved: previewable.localChange.removedSourceFaces,
+              localAdded: previewable.localChange.addedPositions,
+            }),
       },
       visibility: repair.changeOverlays,
       view: repair.previewMode === RepairPreviewMode.After ? 'after' : 'before',
@@ -780,3 +789,14 @@ const COMPARE_OPTIONS: readonly SegmentedOption<RepairPreviewMode>[] = [
   { value: RepairPreviewMode.Before, label: 'Before', testId: 'compare-before' },
   { value: RepairPreviewMode.After, label: 'After', testId: 'compare-after' },
 ];
+
+/**
+ * The conservative flips and the local repair's reversed faces, as ONE list of source faces for
+ * the orientation markers. Deduplicated, so a face both repairs touched is drawn once; the
+ * exact counts are reported elsewhere and never read from this bounded list.
+ */
+function mergeFlipped(conservative: Uint32Array, local: Uint32Array | undefined): Uint32Array {
+  if (local === undefined || local.length === 0) return conservative;
+  if (conservative.length === 0) return local;
+  return Uint32Array.from(new Set([...conservative, ...local]));
+}

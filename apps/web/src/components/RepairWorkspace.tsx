@@ -33,6 +33,13 @@ import {
   describeRepairScope,
   describeRepairsExhausted,
 } from '../state/repair-workspace-presentation';
+import {
+  NO_SAFE_CHANGE_CODE,
+  REPAIR_APPLYING_LINE,
+  REPAIR_CHECKING_MODEL_LINE,
+  describeLimitLikely,
+  describeRepairPhase,
+} from '../state/repair-preview-summary';
 import { useWorkspaceState } from '../state/store-context';
 import { totalDefectCount } from '../state/topology-presentation';
 import { useRepairWorkspace, type RepairWorkspaceView } from '../state/use-repair-workspace';
@@ -47,6 +54,7 @@ import {
   ActionFooter,
   ActionFooterLine,
   OutcomeAlert,
+  OutcomeNote,
   WorkspaceOutcome,
 } from './shell/action-footer';
 import { Icon } from './shell/Icon';
@@ -218,8 +226,15 @@ function repairFailures(
   readonly analysis: string | undefined;
   readonly plan: string | undefined;
   readonly candidate: string | undefined;
+  /** A NEUTRAL result — Pybrix looked and found nothing safe to change. Not a failure. */
+  readonly notice: string | undefined;
   readonly commit: string | undefined;
 } {
+  // 'fill-refused' predates 06B and is the same kind of result: a decision, not a fault.
+  const neutral =
+    repair.candidateState === RepairCandidateState.Failed &&
+    (repair.candidateError?.code === NO_SAFE_CHANGE_CODE ||
+      repair.candidateError?.code === 'fill-refused');
   return {
     analysis:
       analysis.state === AnalysisState.Failed && analysis.error !== undefined
@@ -230,9 +245,12 @@ function repairFailures(
         ? repair.planError.message
         : undefined,
     candidate:
-      repair.candidateState === RepairCandidateState.Failed && repair.candidateError !== undefined
+      !neutral &&
+      repair.candidateState === RepairCandidateState.Failed &&
+      repair.candidateError !== undefined
         ? repair.candidateError.message
         : undefined,
+    notice: neutral ? repair.candidateError?.message : undefined,
     commit: repair.commitError?.message,
   };
 }
@@ -253,6 +271,7 @@ function RepairOutcome({
   const { action } = view;
   const failures = repairFailures(action, analysis, repair);
   const report = view.reportIsCurrent ? analysis.report : undefined;
+  const limitAdvisory = describeLimitLikely(view.currentLocal);
   const applied = useCurrentAppliedRepair();
   const exhausted = applied !== undefined && action === RepairActionKind.NothingSafe;
   const explains =
@@ -264,7 +283,13 @@ function RepairOutcome({
   useEffect(() => {
     if (open && !explains) close();
   }, [open, explains, close]);
-  const shown = [failures.analysis, failures.plan, failures.candidate, failures.commit]
+  const shown = [
+    failures.analysis,
+    failures.plan,
+    failures.candidate,
+    failures.notice,
+    failures.commit,
+  ]
     .filter((message) => message !== undefined)
     .join('|');
   const revealKey = `${shown}${open && explains ? '|reason' : ''}`;
@@ -284,6 +309,15 @@ function RepairOutcome({
       {failures.candidate === undefined ? null : (
         <OutcomeAlert testId="repair-candidate-error">{failures.candidate}</OutcomeAlert>
       )}
+      {failures.notice === undefined ? null : (
+        <OutcomeNote testId="repair-no-safe-change">{failures.notice}</OutcomeNote>
+      )}
+      {/* ADVISORY ONLY: it never disables Repair and never predicts the outcome. */}
+      {action === RepairActionKind.Ready && limitAdvisory !== undefined ? (
+        <p className="repair-advisory" data-testid="repair-limit-advisory">
+          {limitAdvisory}
+        </p>
+      ) : null}
       {failures.commit === undefined ? null : (
         <OutcomeAlert testId="repair-commit-error">{failures.commit}</OutcomeAlert>
       )}
@@ -327,7 +361,6 @@ function RepairFooter({
   const { action, scope } = view;
 
   const analysisPercent = Math.round(analysis.fraction * 100);
-  const repairPercent = Math.round(repair.fraction * 100);
   const candidate = repair.candidate;
   const previewable =
     candidate !== undefined &&
@@ -351,7 +384,10 @@ function RepairFooter({
     applied === undefined || !settled || !view.reportIsCurrent
       ? undefined
       : deriveRepairOutcome({
-          changes: describeAppliedChanges(applied.counts, applied.filledOpenings),
+          changes: describeAppliedChanges(applied.counts, applied.filledOpenings, {
+            repaired: applied.localRepaired ?? 0,
+            reversed: applied.localReversed ?? 0,
+          }),
           remainingTypes: view.detectedIssueTypes,
           exhausted: action === RepairActionKind.NothingSafe,
         }).announcement;
@@ -363,7 +399,11 @@ function RepairFooter({
         return (
           <div className="repair-footer__progress" data-testid="analysis-progress">
             <div className="convert-footer__progress-row">
-              <span data-testid="analysis-phase">{analysis.phase ?? 'Analyzing the mesh'}</span>
+              <span data-testid="analysis-phase">
+                {applied === undefined
+                  ? (analysis.phase ?? 'Analyzing the mesh')
+                  : REPAIR_CHECKING_MODEL_LINE}
+              </span>
               <span data-testid="analysis-percent">{analysisPercent}%</span>
             </div>
             <progress
@@ -380,31 +420,21 @@ function RepairFooter({
           <ActionFooterLine testId="repair-cancelling">{REPAIR_CANCELLING_LINE}</ActionFooterLine>
         ) : (
           <div className="repair-footer__progress" data-testid="repair-progress">
+            {/* HONEST STAGES, NO PERCENTAGE: the engine does not know how much work remains,
+                so an indeterminate bar and the stage in words say exactly what is known. */}
             <div className="convert-footer__progress-row">
-              <span data-testid="repair-phase">{repair.phase ?? 'Preparing repair'}</span>
-              <span data-testid="repair-percent">{repairPercent}%</span>
+              <span data-testid="repair-phase">{describeRepairPhase(repair.phase)}</span>
             </div>
-            <progress
-              className="import__bar"
-              max={100}
-              value={repairPercent}
-              aria-label={`Repair preparation progress: ${String(repairPercent)}%`}
-            />
+            <progress className="import__bar" aria-label="Repair in progress" />
           </div>
         );
       case RepairActionKind.Applying:
         return (
           <div className="repair-footer__progress" data-testid="repair-commit-progress">
             <div className="convert-footer__progress-row">
-              <span data-testid="repair-commit-phase">{repair.phase ?? 'Applying'}</span>
-              <span>{repairPercent}%</span>
+              <span data-testid="repair-commit-phase">{REPAIR_APPLYING_LINE}</span>
             </div>
-            <progress
-              className="import__bar"
-              max={100}
-              value={repairPercent}
-              aria-label={`Applying repair: ${String(repairPercent)}%`}
-            />
+            <progress className="import__bar" aria-label="Applying repairs" />
           </div>
         );
       case RepairActionKind.Undoing:
@@ -442,6 +472,10 @@ function RepairFooter({
     action === RepairActionKind.Preview ? (
       <ActionFooterLine testId="repair-preview-ready" title={PREVIEW_READY_LINE}>
         {PREVIEW_READY_LINE}
+      </ActionFooterLine>
+    ) : failures.notice !== undefined ? (
+      <ActionFooterLine testId="repair-no-safe-change-line">
+        Nothing was changed — details above
       </ActionFooterLine>
     ) : repair.candidateState === RepairCandidateState.Cancelled ? (
       <ActionFooterLine testId="repair-cancelled">{REPAIR_CANCELLED_LINE}</ActionFooterLine>

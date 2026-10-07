@@ -7,6 +7,8 @@ import {
 } from '@cadfixer/geometry-runtime';
 import type {
   ConservativeRepairPlan,
+  LocalRepairChange,
+  LocalRepairOutcome,
   RepairChangeCounts,
   RepairChangeSamples,
   RepairOperation,
@@ -60,6 +62,7 @@ import {
   type RepairOutcome,
 } from '../state/repair-workspace-presentation';
 import { IssueSeverity, type RepairIssue, type RepairIssueId } from '../state/repair-issues';
+import { derivePreviewSummary, describeIssueTypeCount } from '../state/repair-preview-summary';
 import { formatArea, formatMagnitude } from '../state/topology-presentation';
 import { useRepairWorkspace } from '../state/use-repair-workspace';
 import {
@@ -151,6 +154,10 @@ export function RepairPanel(): ReactNode {
             operations={repair.lastApplied.appliedOperations}
             counts={repair.lastApplied.counts}
             filledOpenings={repair.lastApplied.filledOpenings}
+            local={{
+              repaired: repair.lastApplied.localRepaired ?? 0,
+              reversed: repair.lastApplied.localReversed ?? 0,
+            }}
             remaining={reportIsCurrent ? remainingIssues(navigation.issues) : undefined}
             statuses={statuses}
             exhausted={action === RepairActionKind.NothingSafe}
@@ -202,6 +209,8 @@ export function RepairPanel(): ReactNode {
             counts={candidate.counts}
             boundaryFill={candidate.boundaryFill}
             samples={candidate.samples}
+            localRepair={candidate.localRepair}
+            localChange={candidate.localChange}
             unit={model.source.unit}
             previewMode={repair.previewMode}
             overlays={repair.changeOverlays}
@@ -468,6 +477,7 @@ function AppliedResult({
   operations,
   counts,
   filledOpenings,
+  local,
   remaining,
   statuses,
   exhausted,
@@ -479,6 +489,7 @@ function AppliedResult({
   readonly operations: readonly RepairOperation[];
   readonly counts: RepairChangeCounts;
   readonly filledOpenings: number;
+  readonly local: { readonly repaired: number; readonly reversed: number };
   readonly remaining: readonly RepairIssue[] | undefined;
   readonly statuses: ReadonlyMap<RepairIssueId, IssueStatus>;
   readonly exhausted: boolean;
@@ -487,7 +498,7 @@ function AppliedResult({
   readonly busy: boolean;
   readonly onUndo: () => void;
 }): ReactNode {
-  const changed = describeAppliedChanges(counts, filledOpenings);
+  const changed = describeAppliedChanges(counts, filledOpenings, local);
   const outcome: RepairOutcome = deriveRepairOutcome({
     changes: changed,
     remainingTypes: remaining?.length,
@@ -625,6 +636,82 @@ function AppliedResult({
   );
 }
 
+/* ------------------------------------------------------ preview summary -- */
+
+/**
+ * WHAT THE PREVIEW WILL DO, in three answers: what is fixed, what remains, and how the model as
+ * it is now compares with the candidate. Read from the two analyses the worker ran on exactly
+ * these two meshes — never from a list of operations. The numbers and meanings are decided in
+ * `repair-preview-summary.ts`; this only lays them out.
+ *
+ * "Current model" and "After repair" are labelled as such because the remaining counts describe
+ * the CANDIDATE: the committed model, and the Health line above, are unchanged until Apply.
+ */
+function PreviewSummaryBlock({
+  validation,
+  localRepair,
+}: {
+  readonly validation: RepairValidation;
+  readonly localRepair: LocalRepairOutcome | undefined;
+}): ReactNode {
+  const summary = derivePreviewSummary({
+    before: validation.before,
+    after: validation.after,
+    local: localRepair,
+  });
+  return (
+    <div className="repair-summary" data-testid="repair-summary" data-outcome={summary.outcome}>
+      <p className="repair-summary__headline" data-testid="repair-summary-headline">
+        {summary.headline}
+      </p>
+      <p className="repair-summary__support" data-testid="repair-summary-support">
+        {summary.support}
+      </p>
+      <div className="repair-summary__columns">
+        <div>
+          <p className="repair-summary__heading">Fixed</p>
+          <ul
+            className={`repair-summary__list${summary.fixed.length === 0 ? ' repair-summary__list--none' : ''}`}
+            data-testid="repair-summary-fixed"
+          >
+            {summary.fixed.length === 0 ? <li>No issue counts change</li> : null}
+            {summary.fixed.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="repair-summary__heading">Remains</p>
+          <ul
+            className={`repair-summary__list${summary.remaining.length === 0 ? ' repair-summary__list--none' : ''}`}
+            data-testid="repair-summary-remaining"
+          >
+            {summary.remaining.length === 0 ? <li>No detected issues</li> : null}
+            {summary.remaining.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <dl className="repair-summary__compare" data-testid="repair-summary-compare">
+        <dt>Current model</dt>
+        <dd data-testid="repair-summary-current">
+          {describeIssueTypeCount(summary.currentIssueTypes)}
+        </dd>
+        <dt>After repair</dt>
+        <dd data-testid="repair-summary-after">
+          {describeIssueTypeCount(summary.afterIssueTypes)}
+        </dd>
+      </dl>
+      {summary.geometry.length === 0 ? null : (
+        <p className="repair-preview__qualifier" data-testid="repair-summary-geometry">
+          Geometry changes: {summary.geometry.join(' · ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* -------------------------------------------------------- candidate review -- */
 
 function CandidateReview({
@@ -632,6 +719,8 @@ function CandidateReview({
   counts,
   boundaryFill,
   samples,
+  localRepair,
+  localChange,
   unit,
   previewMode,
   overlays,
@@ -642,6 +731,8 @@ function CandidateReview({
   readonly counts: RepairChangeCounts;
   readonly boundaryFill: BoundaryFillOutcome | undefined;
   readonly samples: RepairChangeSamples;
+  readonly localRepair: LocalRepairOutcome | undefined;
+  readonly localChange: LocalRepairChange | undefined;
   readonly unit: string | undefined;
   readonly previewMode: RepairPreviewMode;
   readonly overlays: Readonly<Record<ChangeOverlayId, boolean>>;
@@ -661,6 +752,8 @@ function CandidateReview({
       <p className="repair-preview__qualifier" data-testid="repair-candidate-qualifier">
         {presented.qualifier}
       </p>
+
+      <PreviewSummaryBlock validation={validation} localRepair={localRepair} />
 
       {/* Before / After. Radios, because exactly one view is shown. */}
       <fieldset className="repair-preview__view" data-testid="preview-mode">
@@ -825,6 +918,7 @@ function CandidateReview({
         <ChangeOverlayControls
           counts={counts}
           samples={samples}
+          localChange={localChange}
           visible={overlays}
           previewMode={previewMode}
           onToggle={onOverlayToggle}
@@ -889,12 +983,14 @@ interface ChangeOverlayDescriptor {
 function ChangeOverlayControls({
   counts,
   samples,
+  localChange,
   visible,
   previewMode,
   onToggle,
 }: {
   readonly counts: RepairChangeCounts;
   readonly samples: RepairChangeSamples;
+  readonly localChange: LocalRepairChange | undefined;
   readonly visible: Readonly<Record<ChangeOverlayId, boolean>>;
   readonly previewMode: RepairPreviewMode;
   readonly onToggle: (overlay: ChangeOverlayId, next: boolean) => void;
@@ -926,12 +1022,28 @@ function ChangeOverlayControls({
     {
       id: 'flippedFaces',
       label: 'Reversed triangles',
-      exact: counts.flippedFaces,
-      drawn: samples.flippedFaces.length,
+      exact: counts.flippedFaces + (localChange?.reversedCount ?? 0),
+      drawn: samples.flippedFaces.length + (localChange?.reversedSourceFaces.length ?? 0),
       // A flip reorders corners and moves no vertex, so these triangles occupy
       // the same coordinates in both views. The direction marker changes; the
       // highlight does not.
       availableInView: true,
+    },
+    // REPAIR-CORE-06B: the local repair's own edit, from the exact patch the candidate was built
+    // from. Replaced triangles exist only in the current model; added ones only in the candidate.
+    {
+      id: 'localRemoved',
+      label: 'Replaced triangles',
+      exact: localChange?.removedCount ?? 0,
+      drawn: localChange?.removedSourceFaces.length ?? 0,
+      availableInView: !showingAfter,
+    },
+    {
+      id: 'localAdded',
+      label: 'Added triangles',
+      exact: localChange?.addedCount ?? 0,
+      drawn: localChange === undefined ? 0 : localChange.addedPositions.length / 9,
+      availableInView: showingAfter,
     },
   ];
 

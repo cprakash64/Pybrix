@@ -151,6 +151,25 @@ export function WorkspaceOutcome({
 }
 
 /**
+ * A NEUTRAL RESULT in full — a decision, not a failure. `role="status"`, never an alert: "Pybrix
+ * left these areas unchanged" is information the user asked for, and announcing it as an error
+ * would teach people to read a safety feature as a fault.
+ */
+export function OutcomeNote({
+  testId,
+  children,
+}: {
+  readonly testId: string;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <p className="workspace-outcome__note" role="status" data-testid={testId}>
+      {children}
+    </p>
+  );
+}
+
+/**
  * A failure, in full. `role="alert"` lives HERE and only here: the footer's
  * headline is the same event, and announcing it twice would be noise.
  */

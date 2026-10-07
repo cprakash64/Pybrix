@@ -21,6 +21,7 @@ import {
 import { useGeometryClient } from '../runtime/client-context';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { presentAcceptance, RESOURCE_LIMIT_DETAIL } from './repair-presentation';
+import { describeNoSafeChange, NO_SAFE_CHANGE_CODE } from './repair-preview-summary';
 import {
   describeAppliedActivity,
   describeAppliedChanges,
@@ -149,6 +150,9 @@ export function useConservativeRepair(): ConservativeRepairControls {
         client,
         requested: selection,
         fillOpenings,
+        // ALWAYS ON, never a user option: Repair asks for every qualified safe automatic
+        // capability and the worker decides what it may do. Production budgets only.
+        localRepair: true,
         memoryBudgetBytes: memoryCeiling.bytes,
         onProgress: (progress) => {
           store.reportRepairProgress(token, progress.fraction, progress.phase);
@@ -159,7 +163,13 @@ export function useConservativeRepair(): ConservativeRepairControls {
       session.promise.then(
         (outcome) => {
           sessionRef.current = undefined;
-          store.commitRepairPlan(token, outcome.handle, outcome.plan, outcome.boundaryFill);
+          store.commitRepairPlan(
+            token,
+            outcome.handle,
+            outcome.plan,
+            outcome.boundaryFill,
+            outcome.localRepair,
+          );
         },
         (cause: unknown) => {
           sessionRef.current = undefined;
@@ -283,7 +293,11 @@ export function useConservativeRepair(): ConservativeRepairControls {
       fillableOpeningCount(repair.fillPlan) > 0
         ? { planHash: repair.fillPlan.planHash }
         : undefined;
-    if (plan === undefined || (plan.noOp && fill === undefined)) return;
+    const local =
+      repair.localPlan !== undefined && repair.localPlan.eligible > 0
+        ? { planHash: repair.localPlan.planHash }
+        : undefined;
+    if (plan === undefined || (plan.noOp && fill === undefined && local === undefined)) return;
     /*
      * THE CANDIDATE IS BUILT FOR THE PART THE PLAN WAS BUILT FOR. If the user
      * switched parts since planning, the slice was re-bound and there is no plan
@@ -310,6 +324,7 @@ export function useConservativeRepair(): ConservativeRepairControls {
       memoryBudgetBytes: memoryCeiling.bytes,
       sampleLimit: CHANGE_SAMPLE_LIMIT,
       ...(fill === undefined ? {} : { fill }),
+      ...(local === undefined ? {} : { localRepair: local }),
       onProgress: (progress) => {
         store.reportRepairProgress(token, progress.fraction, progress.phase);
       },
@@ -343,6 +358,19 @@ export function useConservativeRepair(): ConservativeRepairControls {
             });
             return;
           }
+          // Issues were detected, the local repair looked, and nothing safe exists to change: a
+          // neutral decision, not a failure.
+          if (
+            outcome.validation.acceptance === RepairAcceptance.NoOp &&
+            (outcome.localRepair !== undefined || outcome.localRepairNotRun !== undefined)
+          ) {
+            store.failRepairCandidate(token, {
+              message: describeNoSafeChange(outcome.localRepair?.kind, outcome.localRepairNotRun),
+              code: NO_SAFE_CHANGE_CODE,
+              retryable: false,
+            });
+            return;
+          }
           const presented = presentAcceptance(
             outcome.validation.acceptance,
             outcome.validation.regressions,
@@ -368,6 +396,11 @@ export function useConservativeRepair(): ConservativeRepairControls {
           undoRetainedBytes: outcome.undoRetainedBytes,
           boundaryFill: outcome.boundaryFill,
           ...(outcome.patchRender === undefined ? {} : { patchRender: outcome.patchRender }),
+          ...(outcome.localRepair === undefined ? {} : { localRepair: outcome.localRepair }),
+          ...(outcome.localRepairNotRun === undefined
+            ? {}
+            : { localRepairNotRun: outcome.localRepairNotRun }),
+          ...(outcome.localChange === undefined ? {} : { localChange: outcome.localChange }),
         });
 
         if (!installed) {
@@ -409,6 +442,7 @@ export function useConservativeRepair(): ConservativeRepairControls {
     releaseCandidate,
     repair.fillOpenings,
     repair.fillPlan,
+    repair.localPlan,
     repair.partId,
     repair.plan,
     repair.selection,
@@ -474,6 +508,8 @@ export function useConservativeRepair(): ConservativeRepairControls {
           appliedOperations: result.appliedOperations,
           counts: preview.counts,
           filledOpenings: preview.boundaryFill?.filledCount ?? 0,
+          localRepaired: preview.localRepair?.repaired ?? 0,
+          localReversed: preview.localRepair?.facesReversed ?? 0,
           undoable: result.undoable,
           render: result.render,
           parts: result.parts,
@@ -511,7 +547,10 @@ export function useConservativeRepair(): ConservativeRepairControls {
         store.pushStatus(
           StatusSeverity.Info,
           describeAppliedActivity(
-            describeAppliedChanges(preview.counts, preview.boundaryFill?.filledCount ?? 0),
+            describeAppliedChanges(preview.counts, preview.boundaryFill?.filledCount ?? 0, {
+              repaired: preview.localRepair?.repaired ?? 0,
+              reversed: preview.localRepair?.facesReversed ?? 0,
+            }),
           ),
         );
       },

@@ -10,7 +10,9 @@ import {
 import {
   LocalRepairOutcomeKind,
   LocalRepairWorkPhase,
+  LOCAL_CHANGE_FACE_LIMIT,
   LOCAL_REPAIR_REASON_LIMIT,
+  type LocalRepairChange,
   type LocalRepairOutcome,
   type LocalRepairPlan,
   type ProtocolPort,
@@ -139,6 +141,64 @@ export interface LocalRepairStageResult {
   readonly outcome: LocalRepairOutcome;
   /** Source faces of `input.mesh` per surviving candidate face, for overlays. */
   readonly candidateToInputFace: Uint32Array | undefined;
+  /**
+   * The bounded change delta, with removed and reversed faces named in faces of `input.mesh`
+   * (the caller maps them to source faces). Undefined when nothing changed.
+   */
+  readonly change: LocalRepairChange | undefined;
+}
+
+/** At most `limit` entries of `values`, by a deterministic stride across the whole list. */
+function strided(values: Uint32Array, limit: number): Uint32Array {
+  if (values.length <= limit) return values.slice();
+  const out = new Uint32Array(limit);
+  const step = values.length / limit;
+  for (let i = 0; i < limit; i += 1) out[i] = values[Math.floor(i * step)] ?? 0;
+  return out;
+}
+
+/**
+ * The delta of one built candidate. Added faces are the LAST `appendedFaceCount` faces of the
+ * candidate, because the rebuild places survivors first; their positions are copied out, so the
+ * candidate itself never leaves the worker.
+ */
+function describeChange(
+  patch: {
+    readonly removedSourceFaces: Uint32Array;
+    readonly flippedSourceFaces: Uint32Array;
+  },
+  candidate: CanonicalMesh,
+  appendedFaceCount: number,
+  limit: number,
+): LocalRepairChange {
+  const firstAppended = candidate.indices.length / 3 - appendedFaceCount;
+  const picked = Math.min(appendedFaceCount, limit);
+  const step = appendedFaceCount / Math.max(picked, 1);
+  const addedPositions = new Float32Array(picked * 9);
+  for (let i = 0; i < picked; i += 1) {
+    const face = firstAppended + Math.floor(i * step);
+    for (let corner = 0; corner < 3; corner += 1) {
+      const vertex = candidate.indices[face * 3 + corner] ?? 0;
+      for (let axis = 0; axis < 3; axis += 1) {
+        addedPositions[i * 9 + corner * 3 + axis] = candidate.positions[vertex * 3 + axis] ?? 0;
+      }
+    }
+  }
+  const removed = strided(patch.removedSourceFaces, limit);
+  const reversed = strided(patch.flippedSourceFaces, limit);
+  return {
+    removedSourceFaces: removed,
+    reversedSourceFaces: reversed,
+    addedPositions,
+    removedCount: patch.removedSourceFaces.length,
+    reversedCount: patch.flippedSourceFaces.length,
+    addedCount: appendedFaceCount,
+    truncated:
+      removed.length < patch.removedSourceFaces.length ||
+      reversed.length < patch.flippedSourceFaces.length ||
+      picked < appendedFaceCount,
+    sampleLimit: limit,
+  };
 }
 
 /**
@@ -215,6 +275,7 @@ export async function runLocalRepairStage(
       after: undefined,
       outcome: noRunOutcome(LocalRepairOutcomeKind.NoChange),
       candidateToInputFace: undefined,
+      change: undefined,
     };
   }
   input.throwIfCancelled();
@@ -286,6 +347,7 @@ export async function runLocalRepairStage(
       facesReversed: 0,
     },
     candidateToInputFace: undefined,
+    change: undefined,
   });
   if (wire.cancelled) throw operationCancelled('Repair was cancelled.');
   if (patch === undefined) {
@@ -294,6 +356,7 @@ export async function runLocalRepairStage(
       after: undefined,
       outcome: outcomeBase,
       candidateToInputFace: undefined,
+      change: undefined,
     };
   }
 
@@ -324,6 +387,7 @@ export async function runLocalRepairStage(
     after,
     outcome: outcomeBase,
     candidateToInputFace: built.candidateToSourceFace,
+    change: describeChange(patch, built.mesh, built.appendedFaceCount, LOCAL_CHANGE_FACE_LIMIT),
   };
 }
 

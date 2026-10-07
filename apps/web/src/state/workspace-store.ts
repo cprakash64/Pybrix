@@ -2,6 +2,10 @@ import type {
   BoundaryFillOutcome,
   BoundaryFillPlan,
   ConservativeRepairPlan,
+  LocalRepairChange,
+  LocalRepairNotRun,
+  LocalRepairOutcome,
+  LocalRepairPlan,
   DocumentRenderSnapshot,
   EditCommitResult,
   SplitCommitResult,
@@ -819,6 +823,11 @@ export interface RepairPreview {
   readonly boundaryFill: BoundaryFillOutcome | undefined;
   /** Patch triangles only, for a fill-only candidate; `render` is then undefined. */
   readonly patchRender?: RenderSnapshot;
+  /** What the local pinch repair did — REPAIR-CORE-06B. Typed; a limit is data, not an error. */
+  readonly localRepair?: LocalRepairOutcome;
+  readonly localRepairNotRun?: LocalRepairNotRun;
+  /** The bounded S -> C delta the overlay draws, from the exact patch the candidate was built from. */
+  readonly localChange?: LocalRepairChange;
 }
 
 /** A repair that has actually been applied, and what it takes to reverse it. */
@@ -833,6 +842,9 @@ export interface AppliedRepair {
   readonly counts: RepairChangeCounts;
   /** Openings the applied candidate closed. Zero when none. */
   readonly filledOpenings: number;
+  /** Non-manifold vertices the local repair separated, and triangles it reversed. REPAIR-CORE-06B. */
+  readonly localRepaired?: number;
+  readonly localReversed?: number;
   readonly undoable: boolean;
 }
 
@@ -850,6 +862,9 @@ export interface ChangeOverlayVisibility {
   readonly removedRepeatedPosition: boolean;
   readonly removedZeroArea: boolean;
   readonly flippedFaces: boolean;
+  /** REPAIR-CORE-06B: triangles the local repair replaces, and those it adds. */
+  readonly localRemoved: boolean;
+  readonly localAdded: boolean;
 }
 
 export type ChangeOverlayId = keyof ChangeOverlayVisibility;
@@ -859,6 +874,8 @@ const CHANGE_OVERLAYS_SHOWN: ChangeOverlayVisibility = {
   removedRepeatedPosition: true,
   removedZeroArea: true,
   flippedFaces: true,
+  localRemoved: true,
+  localAdded: true,
 };
 
 export interface RepairSnapshot {
@@ -875,6 +892,11 @@ export interface RepairSnapshot {
   readonly fillOpenings: boolean;
   /** What filling would attempt, from the worker. Belongs to `plan`'s revision. */
   readonly fillPlan: BoundaryFillPlan | undefined;
+  /**
+   * What the local pinch repair would attempt, from topology alone — REPAIR-CORE-06B. There is no
+   * option for it: Repair always asks, and the worker decides. `limitLikely` inside is ADVISORY.
+   */
+  readonly localPlan: LocalRepairPlan | undefined;
   readonly candidateState: RepairCandidateState;
   readonly candidate: RepairPreview | undefined;
   readonly candidateError: RepairFailure | undefined;
@@ -918,6 +940,7 @@ const EMPTY_REPAIR: RepairSnapshot = {
   // the user reviews the preview and presses Apply.
   fillOpenings: true,
   fillPlan: undefined,
+  localPlan: undefined,
   candidateState: RepairCandidateState.Idle,
   candidate: undefined,
   candidateError: undefined,
@@ -1843,6 +1866,7 @@ export class WorkspaceStore {
     handle: DocumentHandle,
     plan: ConservativeRepairPlan,
     fillPlan?: BoundaryFillPlan,
+    localPlan?: LocalRepairPlan,
   ): boolean {
     if (!this.isCurrentRepair(token)) return false;
     if (!sameHandle(this.state.model?.handle, handle)) return false;
@@ -1851,6 +1875,7 @@ export class WorkspaceStore {
       repair: {
         ...this.state.repair,
         fillPlan,
+        localPlan,
         handle,
         planState: RepairPlanState.Ready,
         plan,
@@ -1975,7 +2000,9 @@ export class WorkspaceStore {
     // REPAIR-CORE-02: a plan with no conservative work is still work when
     // filling is selected and the fill plan admitted at least one opening.
     const fills = repair.fillOpenings && fillableOpeningCount(repair.fillPlan) > 0;
-    if (repair.plan.noOp && !fills) return undefined;
+    // REPAIR-CORE-06B: pinched vertices the local repair can attempt are work too.
+    const pinches = (repair.localPlan?.eligible ?? 0) > 0;
+    if (repair.plan.noOp && !fills && !pinches) return undefined;
 
     const token = this.nextRepairToken as RepairToken;
     this.nextRepairToken += 1;
@@ -2250,6 +2277,8 @@ export class WorkspaceStore {
     readonly appliedOperations: readonly RepairOperation[];
     readonly counts: RepairChangeCounts;
     readonly filledOpenings?: number;
+    readonly localRepaired?: number;
+    readonly localReversed?: number;
     readonly undoable: boolean;
     readonly partId: string;
     readonly render: RenderSnapshot;
@@ -2337,6 +2366,8 @@ export class WorkspaceStore {
           appliedOperations: result.appliedOperations,
           counts: result.counts,
           filledOpenings: result.filledOpenings ?? 0,
+          localRepaired: result.localRepaired ?? 0,
+          localReversed: result.localReversed ?? 0,
           undoable: result.undoable,
         },
       },

@@ -606,6 +606,18 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
       : fillBase === resolved || conservativeMap === undefined
         ? local.candidateToInputFace
         : local.candidateToInputFace.map((inputFace) => conservativeMap[inputFace] ?? 0);
+  // The delta names removed and reversed faces in SOURCE faces, so the page can index the render
+  // snapshot it already holds. Only the sampled entries are mapped.
+  const toSourceFace = (face: number): number =>
+    fillBase === resolved || conservativeMap === undefined ? face : (conservativeMap[face] ?? 0);
+  const localChange =
+    local?.candidate === undefined || local.change === undefined
+      ? undefined
+      : {
+          ...local.change,
+          removedSourceFaces: local.change.removedSourceFaces.map(toSourceFace),
+          reversedSourceFaces: local.change.reversedSourceFaces.map(toSourceFace),
+        };
   const fill =
     fillRequested && afterLocal !== undefined && afterLocalReport !== undefined
       ? await runFillStage({
@@ -692,6 +704,7 @@ const runRepairCreateCandidate: OperationHandler<'repair/create-candidate'> = as
       render,
       boundaryFill: fill?.outcome,
       ...(local === undefined ? {} : { localRepair: local.outcome }),
+      ...(localChange === undefined ? {} : { localChange }),
       ...(localNotRun === undefined ? {} : { localRepairNotRun: localNotRun }),
       patchRender,
     },

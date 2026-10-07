@@ -57,6 +57,33 @@ const _kindMatches: Exactly<LocalRepairOutcomeKind, EngineLocalRepairKind> = tru
 const _phaseMatches: Exactly<LocalRepairWorkPhase, EngineRepairWorkPhase> = true;
 export const LOCAL_REPAIR_CONTRACT_CHECKED = [_kindMatches, _phaseMatches] as const;
 
+/** Faces of each kind a local repair's change delta carries to the page. Counts are never capped. */
+export const LOCAL_CHANGE_FACE_LIMIT = 2_048;
+
+/**
+ * WHAT A LOCAL REPAIR CHANGED, for the preview's overlay — REPAIR-CORE-06B.
+ *
+ * Derived from the exact S -> C patch the candidate was BUILT from, never from operation labels,
+ * and bounded: the page receives at most `sampleLimit` faces of each kind, chosen by a
+ * deterministic stride across the whole change so a sampled overlay is spread over every
+ * affected area rather than clustered at the start. The exact totals are separate and never
+ * sampled; `truncated` says whether the three arrays are complete.
+ *
+ * Removed and reversed faces are SOURCE face indices, so they index the render snapshot the page
+ * already holds. Added faces are carried as positions (nine floats a face), because they exist
+ * only in the candidate.
+ */
+export interface LocalRepairChange {
+  readonly removedSourceFaces: Uint32Array;
+  readonly reversedSourceFaces: Uint32Array;
+  readonly addedPositions: Float32Array;
+  readonly removedCount: number;
+  readonly reversedCount: number;
+  readonly addedCount: number;
+  readonly truncated: boolean;
+  readonly sampleLimit: number;
+}
+
 /** Rows of a reason table that cross the wire. The counts are never capped. */
 export const LOCAL_REPAIR_REASON_LIMIT = 16;
 

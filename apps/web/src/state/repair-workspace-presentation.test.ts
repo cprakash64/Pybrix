@@ -7,6 +7,7 @@ import {
   RepairReason,
   type BoundaryFillPlan,
   type ConservativeRepairPlan,
+  type LocalRepairPlan,
   type RepairOperationDecision,
 } from '@cadfixer/geometry-runtime';
 import { IssueSeverity, RepairIssueId, type RepairIssue } from './repair-issues';
@@ -253,16 +254,38 @@ describe('issue fixability', () => {
     expect(status.text).toMatch(/review recommended/i);
   });
 
-  it('reports non-manifold geometry and self-intersections as not automatically repairable', () => {
-    for (const id of [
-      RepairIssueId.NonManifoldEdges,
-      RepairIssueId.NonManifoldVertices,
-      RepairIssueId.SelfIntersections,
-    ]) {
+  it('reports non-manifold edges and self-intersections as not automatically repairable', () => {
+    for (const id of [RepairIssueId.NonManifoldEdges, RepairIssueId.SelfIntersections]) {
       expect(deriveIssueStatus(issue(id, 155, IssueSeverity.Error), context()).fixability).toBe(
         Fixability.NotRepairable,
       );
     }
+  });
+
+  it('reads non-manifold VERTICES from the local repair plan, and says "can attempt" not "will fix" (06B)', () => {
+    const row = issue(RepairIssueId.NonManifoldVertices, 10, IssueSeverity.Error);
+    const plan = (eligible: number): LocalRepairPlan => ({
+      requested: true,
+      pinchedVertices: 10,
+      eligible,
+      unsupportedNonManifoldEdge: 10 - eligible,
+      byClass: {},
+      workLimit: { primary: 1, residual: 1 },
+      estimatedWorkLowerBound: 0,
+      limitLikely: false,
+      planHash: 'lr-x',
+    });
+    // A plan that offers no local repair says nothing can be attempted: never a guess.
+    expect(deriveIssueStatus(row, context()).fixability).toBe(Fixability.NotRepairable);
+    expect(deriveIssueStatus(row, context({ localRepair: plan(10) })).fixability).toBe(
+      Fixability.Repairable,
+    );
+    expect(deriveIssueStatus(row, context({ localRepair: plan(4) })).fixability).toBe(
+      Fixability.Partial,
+    );
+    expect(deriveIssueStatus(row, context({ localRepair: plan(0) })).fixability).toBe(
+      Fixability.NotRepairable,
+    );
   });
 
   it('never presents an UNVERIFIED admitted count as fillable (REPAIR-RC-03)', () => {
