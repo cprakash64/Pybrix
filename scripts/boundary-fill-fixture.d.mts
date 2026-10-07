@@ -11,5 +11,10 @@ export function gridForTriangles(target: number): number;
 
 export function holedCubeStl(
   n: number,
-  options?: { readonly simple?: number; readonly branched?: number },
+  options?: {
+    readonly simple?: number;
+    readonly branched?: number;
+    /** A separate closed tetrahedron: a second component Repair reports and never repairs. */
+    readonly extraPiece?: boolean;
+  },
 ): HoledCube;

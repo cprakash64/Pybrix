@@ -250,7 +250,7 @@ function repairFailures(
       repair.candidateError !== undefined
         ? repair.candidateError.message
         : undefined,
-    notice: neutral ? repair.candidateError?.message : undefined,
+    notice: neutral ? repair.candidateError.message : undefined,
     commit: repair.commitError?.message,
   };
 }

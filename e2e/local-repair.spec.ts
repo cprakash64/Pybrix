@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { tetrahedronStl, nonManifoldEdgeStl } from './stl-fixtures';
 import { pinchedPairsStl, refusedPinchStl, residualPinchStl } from './local-repair-fixtures';
 import { enter, pick } from './ui-fixtures';
@@ -40,7 +40,7 @@ async function open(page: Page, name: string, bytes: Buffer, url = '/'): Promise
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 }
 
-const count = (page: Page, id: string) => page.getByTestId(`issue-count-${id}`);
+const count = (page: Page, id: string): Locator => page.getByTestId(`issue-count-${id}`);
 
 /** Records whether a test id was EVER in the document — a fast stage may come and go. */
 async function watchAppearance(page: Page, testId: string): Promise<void> {
