@@ -39,7 +39,7 @@ export async function auditConsole(page: Page): Promise<ConsoleAudit> {
       const text = message.text().slice(0, 300);
       // The browser's own GL driver diagnostics (a bare WebGL canvas read back by Playwright
       // produces the same line) are not application output. They are recorded, never hidden.
-      if (/GL Driver Message/.test(text)) {
+      if (text.includes('GL Driver Message')) {
         driver.push(text);
         return;
       }
@@ -119,7 +119,24 @@ export async function openDrawerIfNeeded(page: Page): Promise<void> {
 export type Source =
   { readonly name: string; readonly mime: string; readonly buffer: Buffer } | string;
 
+async function closeDrawerIfOpen(page: Page): Promise<void> {
+  const toggle = page.getByTestId('toggle-tool-drawer');
+  if (
+    (await toggle.isVisible()) &&
+    (await page.locator('.app').getAttribute('data-tool-drawer')) === 'open'
+  ) {
+    // The open drawer sits under a scrim, which is how a phone user dismisses it: tap outside.
+    const size = page.viewportSize();
+    await page.mouse.click((size?.width ?? 390) - 4, (size?.height ?? 800) / 2);
+    await expect(page.locator('.app')).toHaveAttribute('data-tool-drawer', 'closed', {
+      timeout: 5_000,
+    });
+  }
+}
+
 export async function importModel(page: Page, source: Source, mime = 'model/stl'): Promise<void> {
+  // On a phone the open drawer covers the top bar, exactly as it would for a person.
+  await closeDrawerIfOpen(page);
   const chooser = page.waitForEvent('filechooser');
   await page.getByTestId('browse-button').click();
   const handle = await chooser;
@@ -130,9 +147,12 @@ export async function importModel(page: Page, source: Source, mime = 'model/stl'
       mimeType: source.mime || mime,
       buffer: source.buffer,
     });
+  // Reopen the tools the way a person would, so what follows can read the workspace.
+  await openDrawerIfNeeded(page);
 }
 
 export async function enterRepair(page: Page): Promise<void> {
+  await closeDrawerIfOpen(page);
   const tab = page.getByTestId('workflow-repair');
   if (await tab.isVisible()) await tab.click();
   else {
@@ -146,11 +166,29 @@ export async function enterRepair(page: Page): Promise<void> {
 export async function settled(page: Page, timeout = 300_000): Promise<'ready' | 'nothing'> {
   const ready = page.getByTestId('preview-repair');
   const nothing = page.getByTestId('repair-no-repairs');
-  await expect(ready.or(nothing)).toBeVisible({ timeout });
+  await expect(ready.or(nothing).first()).toBeVisible({ timeout });
+  // A model that was just replaced may still be showing the previous model's state for a moment;
+  // an answer only counts once it has HELD, unchanged, across a short window.
+  let last = '';
+  let since = 0;
   await expect
-    .poll(async () => (await ready.isEnabled()) || (await nothing.isVisible()), { timeout })
+    .poll(
+      async () => {
+        const now = (await ready.isEnabled())
+          ? 'ready'
+          : (await nothing.isVisible())
+            ? 'nothing'
+            : '';
+        if (now !== last) {
+          last = now;
+          since = Date.now();
+        }
+        return now !== '' && Date.now() - since >= 700;
+      },
+      { timeout, intervals: [150] },
+    )
     .toBe(true);
-  return (await ready.isEnabled()) ? 'ready' : 'nothing';
+  return last === 'ready' ? 'ready' : 'nothing';
 }
 
 export async function waitForResult(
