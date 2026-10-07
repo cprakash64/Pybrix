@@ -193,30 +193,6 @@ export function resolveRepairMemoryCeiling(search: string): RepairMemoryCeiling 
   return { bytes, narrowed: bytes < productCeiling };
 }
 
-/**
- * The automatic-repair WORK ceiling this session will ask the worker to honour — REPAIR-CORE-06B.
- *
- * NARROWING ONLY, exactly like the memory ceiling above and for the same reason: the worker takes
- * the smaller of this and the product's budget, so a URL can make Pybrix stop sooner and never
- * later. It exists so the typed "too complex for this pass" outcome can be exercised in a real
- * browser with a small model instead of a thirty-second one, and the repair panel says so
- * whenever it is in force. It is not a setting: there is no control for it.
- */
-export const REPAIR_WORK_CEILING_PARAM = 'repairWorkCeiling';
-
-export function resolveRepairWorkCeiling(search: string): number | undefined {
-  try {
-    const raw = new URLSearchParams(search).get(REPAIR_WORK_CEILING_PARAM);
-    if (raw === null || raw.length === 0) return undefined;
-    const value = Number(raw);
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
-  } catch (cause) {
-    // A malformed query string is not a reason to fail; no ceiling is the product default.
-    void cause;
-    return undefined;
-  }
-}
-
 /* ------------------------------------------------------------------ plan -- */
 
 export interface RepairPlanRequest {

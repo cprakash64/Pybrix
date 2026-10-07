@@ -164,32 +164,19 @@ test('RESIDUAL: a pinch that needs more than the first pass is repaired through 
   await expect(count(page, 'non-manifold-vertices')).toHaveText('0', { timeout: 60_000 });
 });
 
-test('LIMIT: a complex model reaches the safe limit, shown as a partial result, and can be applied', async ({
+test('NO PUBLIC LIMIT CONTROL: a work-limit URL option does nothing in the product', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  // A narrowed limit (URL option, narrowing only) so a small model reaches the typed limit.
+  // Narrowing the limit was a URL option in 06B and is an internal harness seam now. The same
+  // link on the shipped application must repair exactly as it would without it.
   await open(page, 'many.stl', pinchedPairsStl(120), '/?repairWorkCeiling=1500');
-  await expect(count(page, 'non-manifold-vertices')).toHaveText('120');
-  await expect(page.getByTestId('repair-work-ceiling-note')).toBeVisible();
+  await expect(page.getByTestId('repair-work-ceiling-note')).toHaveCount(0);
   await ready(page);
   await page.getByTestId('preview-repair').click();
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByTestId('repair-summary')).toHaveAttribute('data-outcome', 'partial-limit');
-  await expect(page.getByTestId('repair-summary-support')).toContainText(
-    'too complex for this automatic repair pass',
-  );
-  await expect(page.locator('[role="alert"]')).toHaveCount(0);
-  await page.getByTestId('apply-repair').click();
-  await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
-  // Some, not all, are repaired: the model is valid and the rest is still reported.
-  await expect
-    .poll(async () => Number(await count(page, 'non-manifold-vertices').textContent()), {
-      timeout: 60_000,
-    })
-    .toBeGreaterThan(0);
-  expect(Number(await count(page, 'non-manifold-vertices').textContent())).toBeLessThan(120);
-  await expect(page.getByTestId('preview-repair')).toBeEnabled();
+  await expect(page.getByTestId('repair-summary')).toHaveAttribute('data-outcome', 'complete');
+  await expect(page.getByTestId('repair-summary-fixed')).toContainText('120 non-manifold vertices');
 });
 
 test('CANCEL: cancelling a long repair leaves the model unchanged and Repair available', async ({

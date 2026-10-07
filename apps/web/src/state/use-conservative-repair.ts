@@ -13,13 +13,13 @@ import {
   discardRepairCandidate,
   planConservativeRepair,
   resolveRepairMemoryCeiling,
-  resolveRepairWorkCeiling,
   undoRepair,
   type RepairCapableClient,
   type RepairMemoryCeiling,
   type RepairSession,
 } from '../runtime/repair-service';
 import { useGeometryClient } from '../runtime/client-context';
+import { useRepairWorkCeiling } from './repair-limits-context';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { presentAcceptance, RESOURCE_LIMIT_DETAIL } from './repair-presentation';
 import { describeNoSafeChange, NO_SAFE_CHANGE_CODE } from './repair-preview-summary';
@@ -112,7 +112,8 @@ export function useConservativeRepair(): ConservativeRepairControls {
   >(undefined);
 
   const memoryCeiling = useMemo(() => resolveRepairMemoryCeiling(globalThis.location.search), []);
-  const workCeiling = useMemo(() => resolveRepairWorkCeiling(globalThis.location.search), []);
+  // Only the harness can provide a (narrower) ceiling; the product always uses its own budget.
+  const workCeiling = useRepairWorkCeiling();
 
   /* ------------------------------------------------------------- release -- */
 

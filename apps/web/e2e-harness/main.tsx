@@ -21,6 +21,7 @@ import {
   type RepairSession,
 } from '../src/runtime/repair-service';
 import { HarnessBar } from './harness-bar';
+import { RepairWorkCeilingProvider } from '../src/state/repair-limits-context';
 import type {
   GeometryEditCandidateHandle,
   RepairCandidateHandle,
@@ -1084,6 +1085,18 @@ function setIngestion(
   });
 }
 
+/**
+ * A NARROWER automatic-repair work limit for a harness page, from `?repairWorkCeiling=N`. Read
+ * HERE — in the never-shipped harness entry — and handed to the application through an internal
+ * context; the shipped entry point provides nothing, so no public URL can change the limit.
+ */
+function harnessWorkCeiling(): number | undefined {
+  const raw = new URLSearchParams(globalThis.location.search).get('repairWorkCeiling');
+  if (raw === null) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
 window.cadfixerHarness = {
   digest: requestDigest,
   chunkBenchmark,
@@ -1185,8 +1198,10 @@ createRoot(container).render(
   <StrictMode>
     <WorkspaceProvider store={store}>
       <GeometryClientProvider client={geometryClient}>
-        <HarnessBar />
-        <App />
+        <RepairWorkCeilingProvider ceiling={harnessWorkCeiling()}>
+          <HarnessBar />
+          <App />
+        </RepairWorkCeilingProvider>
       </GeometryClientProvider>
     </WorkspaceProvider>
   </StrictMode>,

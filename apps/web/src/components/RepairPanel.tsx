@@ -223,8 +223,8 @@ export function RepairPanel(): ReactNode {
 
         {controls.workCeiling === undefined ? null : (
           <p className="panel__note" data-testid="repair-work-ceiling-note">
-            A reduced automatic repair limit is in force for this session, set by a URL option. It
-            can only make automatic repair stop sooner, never later.
+            A reduced automatic repair limit is in force for this session. It can only make
+            automatic repair stop sooner, never later.
           </p>
         )}
 

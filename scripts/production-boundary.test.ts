@@ -1950,3 +1950,18 @@ describe('6E-A2: streamed 3MF ingestion is productionised and OFF by default', (
     expect(inflater).toContain('createSlicedInflater(openDecompressor)');
   });
 });
+
+describe('no public control can change the repair work limit — REPAIR-CORE-07', () => {
+  it('no shipped source reads a work-limit URL option; only the never-shipped harness does', () => {
+    const offenders = sourceFilesUnder(join(REPO_ROOT, 'apps', 'web', 'src'))
+      .filter((file) => !/\.test\.(ts|tsx)$/.test(file))
+      .filter((file) => /repairWorkCeiling|WORK_CEILING_PARAM/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(REPO_ROOT, file));
+    expect(offenders).toEqual([]);
+  });
+
+  it('the shipped entry point provides no work ceiling', () => {
+    const entry = readFileSync(join(REPO_ROOT, 'apps', 'web', 'src', 'main.tsx'), 'utf8');
+    expect(entry).not.toMatch(/RepairWorkCeilingProvider/);
+  });
+});
