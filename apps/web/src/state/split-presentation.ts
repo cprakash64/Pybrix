@@ -306,7 +306,7 @@ export const SPLIT_COPY = Object.freeze({
     'One flat cut per split. To cut further, select a piece after applying and split it again.',
   resetPlane: 'Reset plane',
   viewGroup: 'Show',
-  piecesValidated: 'Both pieces closed and consistently wound; the cut faces are capped',
+  piecesValidated: 'Both pieces closed; cut faces capped',
   flipPlane: 'Swap sides',
   flipHint: 'Swaps Piece A and Piece B. The cut itself does not move.',
   connectorsSection: 'Connectors',

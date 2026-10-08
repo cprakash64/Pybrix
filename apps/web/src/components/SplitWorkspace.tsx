@@ -248,6 +248,10 @@ function ConnectorSection({ split }: { readonly split: SplitControls }): ReactNo
       meta={SPLIT_COPY.connectorsMeta}
       testId="split-connectors"
     >
+      <UnitInterpretationPrompt
+        reason="Connector sizes are physical, so Pybrix needs to know what this model’s numbers mean."
+        testId="split-unit-interpretation"
+      />
       <div
         className="connector-grid"
         role="radiogroup"
@@ -294,10 +298,6 @@ function ConnectorSection({ split }: { readonly split: SplitControls }): ReactNo
           {SPLIT_COPY.connectorsNeedMillimetres}
         </p>
       )}
-      <UnitInterpretationPrompt
-        reason="Connector sizes are physical, so Pybrix needs to know what this model’s numbers mean."
-        testId="split-unit-interpretation"
-      />
       {connector.kind === 'none' ? null : (
         <ConnectorParameters split={split} connector={connector} disabled={disabled} />
       )}

@@ -27,13 +27,10 @@ export function UnitInterpretationPrompt({
   return (
     <fieldset className="format-options__field unit-chooser" data-testid={testId}>
       <legend className="format-options__label" id={headingId}>
-        {UNIT_INTERPRETATION_COPY.groupLabel}
-      </legend>
-      <p className="format-options__value">
         {unit === undefined
           ? UNIT_INTERPRETATION_COPY.heading
           : `Reading dimensions as ${unitWord(unit).toLowerCase()}`}
-      </p>
+      </legend>
       <p className="convert-workspace__note" data-testid={`${testId}-reason`}>
         {unit === undefined ? `${reason} ${UNIT_INTERPRETATION_COPY.question}` : reason}
       </p>

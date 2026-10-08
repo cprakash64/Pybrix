@@ -4377,3 +4377,18 @@
     transition: none;
   }
 }
+
+/* PYBRIX-08A: Reset plane and Swap sides share one row, each taking half. */
+.split-workspace__plane-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.split-workspace__plane-actions > .secondary-action {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+.split-workspace__plane-actions > .secondary-action[aria-pressed='true'] {
+  border-color: var(--cad-accent, currentColor);
+}
