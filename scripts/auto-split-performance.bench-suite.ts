@@ -48,7 +48,7 @@ const deflate: Deflate = async (raw) => {
 
 /** A closed, indexed UV sphere with about `target` triangles. */
 function sphere(target: number): CanonicalMesh {
-  const rings = Math.max(4, Math.round(Math.sqrt(target / 2)));
+  const rings = Math.max(4, Math.round(Math.sqrt(target / 4)));
   const segments = rings * 2;
   const vertexTotal = 2 + (rings - 1) * segments;
   const triangleTotal = segments * 2 + (rings - 2) * segments * 2;
