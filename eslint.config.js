@@ -54,6 +54,8 @@ export default tseslint.config(
       // The end-to-end harness's own build output. Its SOURCE, under
       // apps/web/e2e-harness/, IS linted; only the emitted bundle is not.
       '**/dist-e2e-harness/**',
+      // Auto Split's test-server build (git-ignored, never shipped). Its SOURCE is linted.
+      '**/dist-test/**',
       '**/node_modules/**',
       'playwright-report/**',
       'test-results/**',
@@ -186,6 +188,8 @@ export default tseslint.config(
       'apps/web/src/runtime/auto-split-transport.ts',
       'apps/auto-split-api/src/openai-provider.ts',
       'apps/auto-split-api/src/*.test.ts',
+      // Manual, key-gated: calls its own in-process service on loopback and nothing else.
+      'scripts/auto-split-live.live-suite.ts',
     ],
     languageOptions: {
       globals: globals.node,

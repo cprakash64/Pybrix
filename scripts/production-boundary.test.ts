@@ -759,7 +759,7 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
 
   it('can be reached only from the analysis session, and the worker cannot reach it', () => {
     const importers = webSources
-      .filter((file) => /auto-split-transport/.test(readFileSync(file, 'utf8')))
+      .filter((file) => readFileSync(file, 'utf8').includes('auto-split-transport'))
       .map((file) => relative(REPO_ROOT, file))
       .filter((file) => file !== AUTO_SPLIT_TRANSPORT)
       .sort();
@@ -769,7 +769,7 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
         join('apps', 'web', 'src', 'state', 'use-auto-split.ts'),
       ].sort(),
     );
-    for (const file of webSources.filter((f) => f.includes(`${join('src', 'workers')}`)))
+    for (const file of webSources.filter((f) => f.includes(join('src', 'workers'))))
       expect(readFileSync(file, 'utf8'), relative(REPO_ROOT, file)).not.toContain(
         'auto-split-transport',
       );
@@ -777,7 +777,7 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
 
   it("keeps the service's own provider call in one file, and the mock out of the production entry", () => {
     const serviceFiles = sourceFilesUnder(join(REPO_ROOT, 'apps', 'auto-split-api', 'src')).filter(
-      (file) => !/\.test\.ts$/.test(file),
+      (file) => !file.endsWith('.test.ts'),
     );
     const fetching = serviceFiles
       .filter((file) => NAMES_FETCH.test(codeOf(file)))
@@ -800,7 +800,7 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
           !file.includes('test-fixtures'),
       ),
       ...sourceFilesUnder(join(REPO_ROOT, 'apps', 'auto-split-api', 'src')).filter(
-        (file) => !/\.test\.ts$/.test(file) && !file.endsWith('test-server.ts'),
+        (file) => !file.endsWith('.test.ts') && !file.endsWith('test-server.ts'),
       ),
     ];
     const offenders = shipped
