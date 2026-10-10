@@ -153,8 +153,20 @@ export function describeStatus(suggestion: Suggestion, sourceReady: boolean): Su
   }
 }
 
-/** Why a suggestion has the status it has, as a sentence. Never a number. */
-export function describeReason(reason: SuggestionReason): string {
+/**
+ * Why a suggestion has the status it has, as a sentence. Never a number. When the model cannot be split
+ * yet the sentence says that instead: "found a clear match, preview it" beside a disabled Preview would
+ * be a promise the part cannot keep.
+ */
+export function describeReason(reason: SuggestionReason, sourceReady = true): string {
+  if (
+    !sourceReady &&
+    reason !== SuggestionReason.CutDoesNotIsolate &&
+    reason !== SuggestionReason.FusedIntoBody &&
+    reason !== SuggestionReason.WholeModel &&
+    reason !== SuggestionReason.NotLocated
+  )
+    return 'Found, but it can be previewed only once the model can be split.';
   switch (reason) {
     case SuggestionReason.Clear:
       return 'Found a clear match. Preview it before applying.';
@@ -285,7 +297,8 @@ export function allAutoSplitCopy(): readonly string[] {
   for (const kind of MODEL_KIND_ORDER) phrases.push(describeModelKind(kind), describeScope(kind));
   for (const operation of Object.values(SuggestionOperation))
     phrases.push(describeOperation(operation));
-  for (const reason of Object.values(SuggestionReason)) phrases.push(describeReason(reason));
+  for (const reason of Object.values(SuggestionReason))
+    phrases.push(describeReason(reason), describeReason(reason, false));
   for (const phase of Object.values(AutoSplitPhase)) phrases.push(describePhase(phase, ''));
   for (const code of [
     'OPEN_BOUNDARIES',

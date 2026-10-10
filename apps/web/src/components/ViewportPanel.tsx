@@ -245,9 +245,9 @@ export function ViewportPanel(): ReactNode {
   }, [activePartId, model, splitPreview]);
 
   useEffect(() => {
-    viewportRef.current?.setEditPlane(splitPlane);
+    viewportRef.current?.setEditPlane(autoSplit.planeVisible ? splitPlane : undefined);
     // Re-pushed after a preview is installed or removed: `setModel` hides it.
-  }, [splitPlane, model, splitPreview]);
+  }, [autoSplit.planeVisible, splitPlane, model, splitPreview]);
 
   /*
    * Auto Split's highlight of the components a suggestion would take out. Presentation only, drawn in

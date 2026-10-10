@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { SPLIT_COPY, describeCut, describeSection } from '../state/split-presentation';
-import { useSplitControls } from '../state/workflow-controllers';
+import { useAutoSplitControls, useSplitControls } from '../state/workflow-controllers';
 import { SplitPhase } from '../state/use-split-workflow';
 
 /**
@@ -15,7 +15,9 @@ import { SplitPhase } from '../state/use-split-workflow';
  */
 export function SplitHud(): ReactNode {
   const split = useSplitControls();
-  if (split.part === undefined) return null;
+  const auto = useAutoSplitControls();
+  // A cut capsule for a cut nobody has chosen, or for components that need no cut, would mislead.
+  if (split.part === undefined || !auto.planeVisible) return null;
   const section = split.preview?.section ?? split.applied?.section;
   const showingPieces = split.preview !== undefined || split.applied !== undefined;
 

@@ -479,7 +479,7 @@ function Row({
         <span>{row.status.label}</span>
       </p>
       <p className="auto-row__reason" id={reasonId}>
-        {describeReason(row.suggestion.reason)}
+        {describeReason(row.suggestion.reason, auto.sourceReady)}
       </p>
       <div className="auto-row__actions">
         <button

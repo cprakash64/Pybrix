@@ -10,6 +10,7 @@ import {
 } from '../state/split-presentation';
 import { useWorkspaceState } from '../state/store-context';
 import { useSplitControls } from '../state/workflow-controllers';
+import { SplitSource } from '../state/use-split-workflow';
 import { PropertyRow } from './shell/primitives';
 
 /**
@@ -51,7 +52,11 @@ export function SplitInspector(): ReactNode {
         <PropertyRow
           label="Plane"
           mono={false}
-          value={describeCut(split.plane, split.offset, split.unit)}
+          value={
+            split.source === SplitSource.Components
+              ? 'None — separate components'
+              : describeCut(split.plane, split.offset, split.unit)
+          }
           testId="split-inspector-plane"
         />
         <PropertyRow
@@ -60,7 +65,7 @@ export function SplitInspector(): ReactNode {
           value={describeConnectorResult(connector.kind)}
           testId="split-inspector-connector"
         />
-        {section === undefined ? null : (
+        {section === undefined || (section.loopCount === 0 && section.area === 0) ? null : (
           <>
             <PropertyRow
               label={split.preview === undefined ? 'Last cut face' : 'Cut face'}

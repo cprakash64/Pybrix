@@ -54,7 +54,15 @@ async function openMesh(page: Page, name: string, mesh: CanonicalMesh): Promise<
 }
 
 async function enter(page: Page): Promise<void> {
-  await page.getByTestId('workflow-split').click();
+  // Wide windows have the workspace tabs; narrower ones a switcher, and the tool panel is a drawer.
+  const direct = page.getByTestId('workflow-split');
+  if (await direct.isVisible()) await direct.click();
+  else {
+    await page.getByTestId('workspace-switcher').click();
+    await page.getByTestId('workspace-option-split').click();
+  }
+  if (!(await page.getByTestId('tool-panel').isVisible()))
+    await page.getByTestId('toggle-tool-drawer').click();
   await page.getByTestId('split-tab-auto').click();
 }
 

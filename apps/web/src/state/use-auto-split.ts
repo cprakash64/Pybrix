@@ -106,6 +106,12 @@ export interface AutoSplitControls {
   readonly unsafeCut: boolean;
   /** Why the footer's Preview cannot be used in the Auto tab, or undefined. */
   readonly footerBlock: string | undefined;
+  /**
+   * Whether the manual cut plane (the orange gizmo and the cut capsule) is drawn. In Manual Split it
+   * always is. In Auto Split it is drawn only for a selected CUT suggestion: before one is chosen, and
+   * for a suggestion that takes out components, a plane on the model would invite a cut nobody asked for.
+   */
+  readonly planeVisible: boolean;
   /** Faces the viewport highlights, tied to the revision they were computed for. */
   readonly highlight: { readonly faces: Uint32Array; readonly revision: number } | undefined;
 }
@@ -476,6 +482,7 @@ export function useAutoSplit(
     planeApproximate: approximate && selected?.operation === SuggestionOperation.Plane,
     unsafeCut: tab === 'auto' && selected !== undefined && splitError !== undefined,
     footerBlock,
+    planeVisible: tab === 'manual' || selected?.operation === SuggestionOperation.Plane,
     highlight,
   };
 }

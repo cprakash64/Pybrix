@@ -22,6 +22,7 @@ import type {
   DocumentRenderSnapshot,
   PartDescriptor,
 } from '@cadfixer/geometry-runtime';
+import { SplitHud } from './SplitHud';
 import { SplitWorkspace } from './SplitWorkspace';
 import { ShellLayoutProvider } from './shell/shell-layout';
 import { GeometryClientProvider } from '../runtime/client-context';
@@ -274,6 +275,7 @@ function render_(
         <ShellLayoutProvider>
           <SplitControlsProvider autoSplit={{ transport: { analyze: transport }, newRequestId }}>
             <SplitWorkspace />
+            <SplitHud />
           </SplitControlsProvider>
         </ShellLayoutProvider>
       </GeometryClientProvider>
@@ -511,6 +513,31 @@ describe('a suggestion is a setting of Manual Split, and a preview is asked for,
     expect(spies.createComponentSplit.mock.calls[0]?.[2]).toEqual([1, 2]);
     expect(spies.createSplit).not.toHaveBeenCalled();
     expect(spies.commitSplit).not.toHaveBeenCalled();
+  });
+});
+
+describe('the manual cut plane is drawn only for a cut someone chose', () => {
+  it('shows the cut capsule in Manual Split, hides it in Auto Split until a cut suggestion is chosen, and not for components', async () => {
+    mount({ suggestions: [HEAD, WHEEL] });
+    expect(screen.getByTestId('split-hud')).toBeInTheDocument();
+    await findParts('human');
+    expect(screen.queryByTestId('split-hud')).toBeNull();
+    click('auto-edit-head');
+    await settle();
+    expect(screen.getByTestId('split-hud')).toBeInTheDocument();
+    click('auto-edit-wheel:wheel_1');
+    await settle();
+    expect(screen.queryByTestId('split-hud')).toBeNull();
+    click('split-tab-manual');
+    await settle();
+    expect(screen.getByTestId('split-hud')).toBeInTheDocument();
+  });
+
+  it('does not tell a part that cannot be split that it found a clear match', async () => {
+    mount({ sourceReasons: ['OPEN_BOUNDARIES'] });
+    await findParts('human');
+    expect(screen.getByTestId('auto-row-head')).not.toHaveTextContent(/clear match/i);
+    expect(screen.getByTestId('auto-row-head')).toHaveTextContent(/once the model can be split/i);
   });
 });
 

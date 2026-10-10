@@ -283,7 +283,10 @@ export class AutoSplitSession {
       if (client === undefined) throw operationCancelled('The geometry worker is not ready.');
       // 1. Six local renders. Nothing leaves the device in this step.
       const render = client.renderAutoSplitViews(target.handle, target.partId, (update) => {
-        if (current()) this.set({ note: update.note ?? 'Rendering views on this device…' });
+        // A progress message can be delivered after the render has finished: it must not write over the
+        // note of the phase that followed.
+        if (current() && this.snapshot.run === 'preparing')
+          this.set({ note: update.note ?? 'Rendering views on this device…' });
       });
       this.render = render;
       const views = await render.promise;

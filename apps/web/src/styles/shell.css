@@ -4750,6 +4750,11 @@
   .auto-component__label {
     min-height: 40px;
   }
+
+  /* The shared section header was 37 px here; every Auto Split section is under one, and the floor is 40. */
+  .panel-section__toggle {
+    min-height: 40px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

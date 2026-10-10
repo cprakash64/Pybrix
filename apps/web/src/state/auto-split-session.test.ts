@@ -109,6 +109,7 @@ interface Rig {
   readonly signals: AbortSignal[];
   readonly cancelled: { render: number };
   render: ReturnType<typeof deferred<AutoSplitRenderResult>>;
+  progress: ((update: { fraction: number; note?: string }) => void) | undefined;
   transport: ReturnType<typeof deferred<ParsedResponse>>;
   suggest: ReturnType<typeof deferred<AutoSplitSuggestResult>>;
   raws: unknown[];
@@ -124,10 +125,12 @@ function rig(): Rig {
     transport: deferred(),
     suggest: deferred(),
     raws: [],
+    progress: undefined,
     session: undefined as unknown as AutoSplitSession,
   };
   const client: AutoSplitClient = {
-    renderAutoSplitViews: () => {
+    renderAutoSplitViews: (_source, _part, onProgress) => {
+      r.progress = onProgress;
       r.calls.render += 1;
       return {
         promise: r.render.promise,
@@ -270,6 +273,23 @@ describe('a normal analysis', () => {
     expect(r.session.analyze(target())).toBe(true);
     expect(r.session.analyze(target())).toBe(false);
     expect(r.calls.render).toBe(1);
+  });
+});
+
+describe('progress', () => {
+  it('writes the render note while rendering, and a late one never overwrites the next phase', async () => {
+    const r = rig();
+    ready(r);
+    r.session.analyze(target());
+    r.progress?.({ fraction: 0.5, note: 'Rendered view 3 of 6' });
+    expect(r.session.getSnapshot().note).toBe('Rendered view 3 of 6');
+    r.render.resolve(VIEWS);
+    await flush();
+    const analysing = r.session.getSnapshot().note;
+    expect(r.session.getSnapshot().run).toBe('analyzing');
+    // The coordinator can deliver a progress message after the result.
+    r.progress?.({ fraction: 1, note: 'Rendered view 6 of 6' });
+    expect(r.session.getSnapshot().note).toBe(analysing);
   });
 });
 
