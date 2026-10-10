@@ -168,6 +168,25 @@ export default tseslint.config(
     },
   },
 
+  /*
+   * THE AUTO SPLIT SERVICE (Stage 08B-PROD-A1, ADR 0020).
+   *
+   * The ONE place outside the browser's own same-origin asset loading where this repository makes a
+   * network request: the same-origin analysis service calls the model provider with `fetch`, from
+   * `openai-provider.ts` ONLY, and its tests call their own local server. Nothing under `apps/web` or
+   * `packages/**` is exempt, and `scripts/production-boundary.test.ts` asserts that no other file in
+   * the service names a network API. The service never receives a model file.
+   */
+  {
+    files: ['apps/auto-split-api/src/openai-provider.ts', 'apps/auto-split-api/src/*.test.ts'],
+    languageOptions: {
+      globals: globals.node,
+    },
+    rules: {
+      'no-restricted-globals': 'off',
+    },
+  },
+
   // Plain JS and .mjs live outside any tsconfig, so type-aware rules cannot run
   // against them. `.mjs` is included because the Stage 3A-2 experiment scripts
   // must be runnable by a bare `node` with no build step.

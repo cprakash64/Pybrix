@@ -8,9 +8,13 @@
     "build": "vite build",
     "build:test-server": "vite build --config vite.test-server.config.ts",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start:test-server": "node dist-test/test-server.js"
   },
   "dependencies": {
     "@cadfixer/auto-split-contract": "*"
+  },
+  "devDependencies": {
+    "@cadfixer/auto-split": "*"
   }
 }

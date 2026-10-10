@@ -36,7 +36,7 @@ export type Visibility = (typeof VISIBILITY)[number];
 
 export const WHEEL_IDS = Array.from(
   { length: MAX_WHEELS },
-  (_, i) => `wheel_${i + 1}`,
+  (_, i) => `wheel_${String(i + 1)}`,
 ) as readonly string[];
 export const GROUPING = ['single_wheel', 'wheel_group'] as const;
 export type Grouping = (typeof GROUPING)[number];
@@ -132,12 +132,12 @@ export function usableBox(b: readonly number[]): Box4 | null {
 function viewBoxes(v: unknown, path: string, errors: string[]): ViewBox[] {
   const out: ViewBox[] = [];
   if (!Array.isArray(v) || v.length !== VEHICLE_VIEW_ORDER.length) {
-    errors.push(`${path} must hold exactly ${VEHICLE_VIEW_ORDER.length} entries`);
+    errors.push(`${path} must hold exactly ${String(VEHICLE_VIEW_ORDER.length)} entries`);
     return out;
   }
   const seen = new Set<string>();
   v.forEach((e: unknown, i: number) => {
-    const w = `${path}[${i}]`;
+    const w = `${path}[${String(i)}]`;
     if (!isRecord(e)) {
       errors.push(`${w} must be an object`);
       return;
@@ -212,11 +212,11 @@ export function validateVehicle(raw: unknown): VehicleValidation {
   }
   const wheels: WheelReading[] = [];
   if (!Array.isArray(raw.wheels) || raw.wheels.length > MAX_WHEELS)
-    errors.push(`$.wheels must be a list of at most ${MAX_WHEELS}`);
+    errors.push(`$.wheels must be a list of at most ${String(MAX_WHEELS)}`);
   else {
     const ids = new Set<string>();
     raw.wheels.forEach((w: unknown, i: number) => {
-      const where = `$.wheels[${i}]`;
+      const where = `$.wheels[${String(i)}]`;
       if (!isRecord(w)) {
         errors.push(`${where} must be an object`);
         return;
@@ -272,11 +272,11 @@ export function validateVehicle(raw: unknown): VehicleValidation {
     const segs: { view: ViewName; segment: Box4 | null }[] = [];
     if (!Array.isArray(b.segments) || b.segments.length !== VEHICLE_VIEW_ORDER.length)
       errors.push(
-        `$.cab_bed_boundary.segments must hold exactly ${VEHICLE_VIEW_ORDER.length} entries`,
+        `$.cab_bed_boundary.segments must hold exactly ${String(VEHICLE_VIEW_ORDER.length)} entries`,
       );
     else
       b.segments.forEach((s: unknown, i: number) => {
-        const w = `$.cab_bed_boundary.segments[${i}]`;
+        const w = `$.cab_bed_boundary.segments[${String(i)}]`;
         if (!isRecord(s)) {
           errors.push(`${w} must be an object`);
           return;

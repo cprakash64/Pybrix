@@ -53,3 +53,4 @@ experiments/self-intersection/artifacts/
 # it claims to describe. `site/` is the deployable tree; the manifest beside it
 # describes that tree and is deliberately never part of it.
 artifacts/release/
+dist-test/

@@ -150,6 +150,9 @@ function failureCode(kind: ProviderFailureKind): AnalyzeErrorCode {
   }
 }
 
+/** `signal.aborted` read through a call, so a check after an await is not narrowed away by an earlier one. */
+const isAborted = (signal: AbortSignal): boolean => signal.aborted;
+
 const pause = (ms: number, signal: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
     if (ms <= 0 || signal.aborted) {
@@ -193,7 +196,7 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
         if (signal.aborted) throw new ProviderFailure(ProviderFailureKind.Cancelled);
         if (!failure.transient || attempts > config.providerRetries) throw failure;
         await pause(config.retryDelayMs, signal);
-        if (signal.aborted) throw new ProviderFailure(ProviderFailureKind.Cancelled);
+        if (isAborted(signal)) throw new ProviderFailure(ProviderFailureKind.Cancelled);
       }
     }
   }
@@ -214,38 +217,54 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
       fail(res, error);
     };
 
-    if (!sameOrigin(req)) return refuse(analyzeError(AnalyzeErrorCode.InvalidRequest));
+    if (!sameOrigin(req)) {
+      refuse(analyzeError(AnalyzeErrorCode.InvalidRequest));
+      return;
+    }
     const type = req.headers['content-type'];
-    if (typeof type !== 'string' || !/^application\/json\s*(;|$)/i.test(type))
-      return refuse(analyzeError(AnalyzeErrorCode.InvalidRequest));
+    if (typeof type !== 'string' || !/^application\/json\s*(;|$)/i.test(type)) {
+      refuse(analyzeError(AnalyzeErrorCode.InvalidRequest));
+      return;
+    }
     const declared = Number(req.headers['content-length']);
-    if (Number.isFinite(declared) && declared > MAX_REQUEST_BODY_BYTES)
-      return refuse(analyzeError(AnalyzeErrorCode.PayloadTooLarge));
+    if (Number.isFinite(declared) && declared > MAX_REQUEST_BODY_BYTES) {
+      refuse(analyzeError(AnalyzeErrorCode.PayloadTooLarge));
+      return;
+    }
     const early = limiter.wouldRefuse(client);
-    if (early !== undefined)
-      return refuse(analyzeError(AnalyzeErrorCode.RateLimited, early.retryAfterSeconds));
+    if (early !== undefined) {
+      refuse(analyzeError(AnalyzeErrorCode.RateLimited, early.retryAfterSeconds));
+      return;
+    }
 
     let body: Buffer;
     try {
       body = await readBody(req, MAX_REQUEST_BODY_BYTES);
     } catch (error) {
-      if (error instanceof BodyTooLarge)
-        return refuse(analyzeError(AnalyzeErrorCode.PayloadTooLarge));
-      return refuse(analyzeError(AnalyzeErrorCode.InvalidRequest));
+      if (error instanceof BodyTooLarge) {
+        refuse(analyzeError(AnalyzeErrorCode.PayloadTooLarge));
+        return;
+      }
+      refuse(analyzeError(AnalyzeErrorCode.InvalidRequest));
+      return;
     }
     let json: unknown;
     try {
       json = JSON.parse(body.toString('utf8'));
     } catch {
-      return refuse(analyzeError(AnalyzeErrorCode.InvalidRequest), undefined, body.length);
+      refuse(analyzeError(AnalyzeErrorCode.InvalidRequest), undefined, body.length);
+      return;
     }
     const validated = validateAnalyzeRequest(json);
-    if (!validated.ok) return refuse(analyzeError(validated.code), undefined, body.length);
+    if (!validated.ok) {
+      refuse(analyzeError(validated.code), undefined, body.length);
+      return;
+    }
     const { request } = validated;
 
     const admission = limiter.admit(client);
-    if (!admission.allowed)
-      return refuse(
+    if (!admission.allowed) {
+      refuse(
         analyzeError(
           admission.reason === 'rate' ? AnalyzeErrorCode.RateLimited : AnalyzeErrorCode.Busy,
           admission.retryAfterSeconds,
@@ -253,6 +272,8 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
         request.requestId,
         body.length,
       );
+      return;
+    }
 
     const controller = new AbortController();
     const onClose = (): void => {
@@ -325,18 +346,23 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
     const url = new URL(req.url ?? '/', 'http://service.invalid');
     if (deps.extraRoutes?.(req, res, url) === true) return;
     if (url.pathname === HEALTH_PATH) {
-      if (req.method !== 'GET') return fail(res, analyzeError(AnalyzeErrorCode.MethodNotAllowed));
+      if (req.method !== 'GET') {
+        fail(res, analyzeError(AnalyzeErrorCode.MethodNotAllowed));
+        return;
+      }
       send(res, 200, { ok: true, inFlight: limiter.inFlight });
       return;
     }
     if (url.pathname === ANALYZE_PATH) {
-      if (req.method !== 'POST')
-        return void send(
+      if (req.method !== 'POST') {
+        send(
           res,
           405,
           { ok: false, error: analyzeError(AnalyzeErrorCode.MethodNotAllowed) },
           { allow: 'POST' },
         );
+        return;
+      }
       analyze(req, res).catch(() => {
         // Nothing here is logged with its message: an unexpected error may have touched a payload.
         logger.log({

@@ -68,7 +68,12 @@ interface Harness {
 }
 const open: Server[] = [];
 afterEach(async () => {
-  for (const s of open.splice(0)) await new Promise<void>((r) => s.close(() => r()));
+  for (const s of open.splice(0))
+    await new Promise<void>((r) =>
+      s.close(() => {
+        r();
+      }),
+    );
 });
 
 async function start(provider: Provider, over: Partial<ServerConfig> = {}): Promise<Harness> {
@@ -302,7 +307,7 @@ describe('the analysis route', () => {
   });
 
   it('aborts the provider call when the browser goes away', async () => {
-    let aborted = false;
+    const seen = { aborted: false };
     let started!: () => void;
     const begun = new Promise<void>((r) => (started = r));
     const provider: Provider = {
@@ -310,7 +315,7 @@ describe('the analysis route', () => {
         new Promise((_resolve, reject) => {
           started();
           signal.addEventListener('abort', () => {
-            aborted = true;
+            seen.aborted = true;
             reject(new ProviderFailure(ProviderFailureKind.Cancelled));
           });
         }),
@@ -326,8 +331,8 @@ describe('the analysis route', () => {
     await begun;
     controller.abort();
     await pending;
-    for (let i = 0; i < 50 && !aborted; i += 1) await new Promise((r) => setTimeout(r, 10));
-    expect(aborted).toBe(true);
+    for (let i = 0; i < 50 && !seen.aborted; i += 1) await new Promise((r) => setTimeout(r, 10));
+    expect(seen.aborted).toBe(true);
     // The slot is released: the same client may start another.
     for (let i = 0; i < 50 && h.logs.every((l) => l.outcome !== AnalyzeErrorCode.Cancelled); i += 1)
       await new Promise((r) => setTimeout(r, 10));
@@ -572,7 +577,9 @@ describe('the OpenAI provider', () => {
       timeoutMs: 5000,
     });
     const pending = slowProvider.analyze(input(), controller.signal).catch((e: unknown) => e);
-    setTimeout(() => controller.abort(), 50);
+    setTimeout(() => {
+      controller.abort();
+    }, 50);
     expect(((await pending) as ProviderFailure).kind).toBe(ProviderFailureKind.Cancelled);
   });
 });
@@ -581,7 +588,7 @@ async function createServerThatNeverAnswers(): Promise<string> {
   const server = createHttpServer(() => undefined);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   open.push(server);
-  server.closeAllConnections?.();
+  server.closeAllConnections();
   return `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
 }
 
@@ -666,7 +673,7 @@ describe('the pinned protocols', () => {
       const n = node as Record<string, unknown>;
       if (n.type === 'object') {
         expect([...((n.required as string[] | undefined) ?? [])].sort(), path).toEqual(
-          Object.keys((n.properties ?? {}) as object).sort(),
+          Object.keys(n.properties ?? {}).sort(),
         );
         expect(n.additionalProperties, path).toBe(false);
       }

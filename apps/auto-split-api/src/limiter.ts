@@ -75,7 +75,7 @@ export class AnalysisLimiter {
     const held = state;
     return {
       allowed: true,
-      release: () => {
+      release: (): void => {
         if (released) return;
         released = true;
         held.running -= 1;

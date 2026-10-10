@@ -114,6 +114,8 @@ function unexpectedKey(
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
+const inExtent = (v: unknown): v is number => finite(v) && v >= 0 && v <= MAX_EXTENT;
+
 function invalid(code: AnalyzeErrorCode = AnalyzeErrorCode.InvalidRequest): ValidatedRequest {
   return { ok: false, code };
 }
@@ -139,7 +141,8 @@ export function validateAnalyzeRequest(raw: unknown): ValidatedRequest {
     const problem = unexpectedKey(entry, VIEW_KEYS);
     if (problem !== null) return invalid(problem);
     const expected = VIEW_NAMES[i];
-    if (entry.view !== expected || typeof entry.png !== 'string') return invalid();
+    if (expected === undefined || entry.view !== expected || typeof entry.png !== 'string')
+      return invalid();
     if (entry.png.length > Math.ceil((MAX_VIEW_PNG_BYTES * 4) / 3) + 8)
       return invalid(AnalyzeErrorCode.PayloadTooLarge);
     const bytes = decodeBase64(entry.png);
@@ -154,20 +157,19 @@ export function validateAnalyzeRequest(raw: unknown): ValidatedRequest {
     )
       return invalid();
     pngs.push(bytes);
-    viewList.push({ view: expected as ViewName, png: entry.png });
+    viewList.push({ view: expected, png: entry.png });
   }
 
   if (!isRecord(summary)) return invalid();
   const summaryProblem = unexpectedKey(summary, SUMMARY_KEYS);
   if (summaryProblem !== null) return invalid(summaryProblem);
   const { extents, shells, radius } = summary;
-  if (
-    !Array.isArray(extents) ||
-    extents.length !== 3 ||
-    !extents.every((x): x is number => finite(x) && x >= 0 && x <= MAX_EXTENT)
-  )
-    return invalid();
-  if (!Number.isInteger(shells) || (shells as number) < 1 || (shells as number) > MAX_SHELLS)
+  if (!Array.isArray(extents) || extents.length !== 3) return invalid();
+  const ex: unknown = extents[0];
+  const ey: unknown = extents[1];
+  const ez: unknown = extents[2];
+  if (!inExtent(ex) || !inExtent(ey) || !inExtent(ez)) return invalid();
+  if (typeof shells !== 'number' || !Number.isInteger(shells) || shells < 1 || shells > MAX_SHELLS)
     return invalid();
   if (!finite(radius) || radius <= 0 || radius > MAX_RADIUS) return invalid();
 
@@ -180,8 +182,8 @@ export function validateAnalyzeRequest(raw: unknown): ValidatedRequest {
       protocolVersion,
       views: viewList,
       summary: {
-        extents: [extents[0] as number, extents[1] as number, extents[2] as number],
-        shells: shells as number,
+        extents: [ex, ey, ez],
+        shells,
         radius,
       },
     },

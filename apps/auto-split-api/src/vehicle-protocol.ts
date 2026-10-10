@@ -64,10 +64,12 @@ export function buildUserText(anonymousId: string, summary: VehicleSummary): str
   );
   lines.push('');
   lines.push(
-    `You are given ${VEHICLE_VIEW_ORDER.length} images, each 512 by 512 pixels, in this order:`,
+    `You are given ${String(VEHICLE_VIEW_ORDER.length)} images, each 512 by 512 pixels, in this order:`,
   );
   VEHICLE_VIEW_ORDER.forEach((v, i) => {
-    lines.push(`Image ${i + 1}: ${v} view, shaded grey rendering — ${VIEW_SPECS[v].description}.`);
+    lines.push(
+      `Image ${String(i + 1)}: ${v} view, shaded grey rendering — ${VIEW_SPECS[v].description}.`,
+    );
   });
   lines.push('');
   lines.push(
@@ -217,7 +219,7 @@ export function vehicleJsonSchema(): Record<string, unknown> {
       },
       wheels: {
         type: 'array',
-        description: `Every wheel or wheel group the model can see, at most ${MAX_WHEELS}.`,
+        description: `Every wheel or wheel group the model can see, at most ${String(MAX_WHEELS)}.`,
         maxItems: MAX_WHEELS,
         items: wheelSchema(),
       },

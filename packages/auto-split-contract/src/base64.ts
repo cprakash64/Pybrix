@@ -4,7 +4,7 @@
  * a payload that is not exactly base64 is not an image.
  */
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-const LOOKUP: Int16Array = (() => {
+const LOOKUP: Int16Array = ((): Int16Array => {
   const table = new Int16Array(128).fill(-1);
   for (let i = 0; i < ALPHABET.length; i += 1) table[ALPHABET.charCodeAt(i)] = i;
   return table;
