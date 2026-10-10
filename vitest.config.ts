@@ -24,6 +24,14 @@ export default defineConfig({
         },
       },
       {
+        // The same-origin Auto Split analysis service: Node, no DOM.
+        test: {
+          name: 'service',
+          environment: 'node',
+          include: ['apps/auto-split-api/src/**/*.test.ts'],
+        },
+      },
+      {
         // Repository tooling: the Node version guard and anything else that has
         // to run before a build exists.
         test: {

@@ -1,0 +1,16 @@
+{
+  "name": "@cadfixer/auto-split-contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "The Auto Split wire contract shared by the browser and the same-origin analysis service: request and response shapes, strict validators, the six canonical cameras and the limits. Platform-free; it holds no prompt, no key and no geometry.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-fixtures": "./src/test-fixtures.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "//exports": "./test-fixtures builds a real clean PNG and a complete valid request for tests. Test-only: no production path imports it, and the production boundary scan checks that."
+}

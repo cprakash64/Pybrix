@@ -1,0 +1,16 @@
+{
+  "name": "@cadfixer/auto-split-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The same-origin Auto Split analysis service. It holds the provider key, the pinned prompts and the limits; it receives six rendered views and bounded metadata, never a model file.",
+  "scripts": {
+    "build": "vite build",
+    "build:test-server": "vite build --config vite.test-server.config.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cadfixer/auto-split-contract": "*"
+  }
+}
