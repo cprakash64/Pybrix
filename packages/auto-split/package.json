@@ -1,0 +1,22 @@
+{
+  "name": "@cadfixer/auto-split",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "description": "The Auto Split engine, run inside the geometry worker: the six deterministic renders a semantic request needs, the local matching of a semantic answer to a part's real geometry, and the editable suggestions that come out of it. Suggests; never mutates.",
+  "//exports": "./fixtures builds the human, vehicle and truck test models (and the scenarios that describe them) so unit, service and browser suites exercise the SAME geometry. Test-only: no production path imports it, and the production boundary scan checks that.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fixtures": "./src/fixtures/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cadfixer/auto-split-contract": "*",
+    "@cadfixer/mesh-core": "*",
+    "@cadfixer/mesh-topology": "*",
+    "@cadfixer/shared": "*"
+  }
+}
