@@ -24,6 +24,7 @@ import {
   type SplitPlaneSettings,
   type SplitRange,
 } from './split-presentation';
+import { planeSettingsFor } from './auto-split-plane';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import type { LengthUnit } from '@cadfixer/shared';
 import { millimetresToCoordinates, unitWord } from './unit-interpretation';
@@ -77,6 +78,8 @@ export const DEFAULT_CONNECTOR: ConnectorSettings = Object.freeze({
   dovetailAngle: 0,
 });
 
+const NO_RANKS: readonly number[] = Object.freeze([]);
+
 const DEFAULT_PLANE: SplitPlaneSettings = Object.freeze(resetPlaneSettings('Z'));
 
 export interface AppliedSplit {
@@ -98,8 +101,31 @@ export const SplitExportState = {
 } as const;
 export type SplitExportState = (typeof SplitExportState)[keyof typeof SplitExportState];
 
+/**
+ * WHAT THE NEXT PREVIEW CUTS WITH. A flat plane (Manual Split, and a suggested cut once loaded into
+ * it), or a set of components that are already separate shells (an Auto Split component suggestion).
+ * Either way the result is one split candidate: Apply is `split/commit`, Undo is `repair/undo`.
+ */
+export const SplitSource = {
+  Plane: 'plane',
+  Components: 'components',
+} as const;
+export type SplitSource = (typeof SplitSource)[keyof typeof SplitSource];
+
 export interface SplitControls {
   readonly part: PartDescriptor | undefined;
+  /** What the next preview is made from. Editing the plane returns it to `plane`. */
+  readonly source: SplitSource;
+  /** The component ranks a `components` preview takes out. Empty for a plane. */
+  readonly componentRanks: readonly number[];
+  /**
+   * Loads a suggested plane into Manual Split's own settings. Returns false, changing nothing, when
+   * there is no part. `exact` says whether the controls reproduce the suggestion; when they cannot,
+   * the nearest plane is loaded and the caller says so.
+   */
+  readonly loadSuggestedPlane: (plane: SplitPlane) => { readonly exact: boolean } | undefined;
+  /** Makes the next preview a component split, or (with undefined) returns to the plane. */
+  readonly setComponentSource: (ranks: readonly number[] | undefined) => void;
   readonly unit: string | undefined;
   readonly plane: SplitPlaneSettings;
   readonly range: SplitRange;
@@ -240,6 +266,14 @@ export function useSplitWorkflow(): SplitControls {
   }>({ key: '', settings: DEFAULT_PLANE });
   const plane = planeState.key === partKey ? planeState.settings : DEFAULT_PLANE;
   const [connectorState, setConnectorState] = useState<ConnectorSettings>(DEFAULT_CONNECTOR);
+  /* Which components a component preview takes out, stored with the part like the plane is. */
+  const [componentState, setComponentState] = useState<
+    { readonly key: string; readonly ranks: readonly number[] } | undefined
+  >(undefined);
+  const componentRanks: readonly number[] =
+    componentState?.key === partKey ? componentState.ranks : NO_RANKS;
+  const source: SplitSource =
+    componentRanks.length > 0 ? SplitSource.Components : SplitSource.Plane;
   /*
    * WORK IS SCOPED TO A SESSION: this part, while the workspace is shown.
    * Phase, progress, preview and error are stored with the session they were
@@ -391,6 +425,7 @@ export function useSplitWorkflow(): SplitControls {
     (next: (current: SplitPlaneSettings) => SplitPlaneSettings): void => {
       invalidate();
       setError(undefined);
+      setComponentState(undefined);
       setPlane(next);
     },
     [invalidate, setError, setPlane],
@@ -430,8 +465,29 @@ export function useSplitWorkflow(): SplitControls {
     edit((current) => resetPlaneSettings(current.axis));
   }, [edit]);
 
+  const loadSuggestedPlane = useCallback(
+    (suggested: SplitPlane): { readonly exact: boolean } | undefined => {
+      if (part === undefined) return undefined;
+      const mapped = planeSettingsFor(suggested, part.bounds);
+      edit(() => mapped.settings);
+      return { exact: mapped.exact };
+    },
+    [edit, part],
+  );
+  const setComponentSource = useCallback(
+    (ranks: readonly number[] | undefined): void => {
+      invalidate();
+      setError(undefined);
+      setComponentState(
+        ranks === undefined || ranks.length === 0 ? undefined : { key: partKey, ranks },
+      );
+    },
+    [invalidate, partKey, setError],
+  );
+
   const beginPlaneDrag = useCallback(() => {
     invalidate();
+    setComponentState(undefined);
     dragStart.current = offset;
   }, [invalidate, offset]);
   const dragPlane = useCallback(
@@ -456,18 +512,29 @@ export function useSplitWorkflow(): SplitControls {
 
   const updatePreview = useCallback((): void => {
     if (client === undefined || model === undefined || part === undefined) return;
-    if (connector.kind !== 'none' && (!available || connectorProblem !== undefined)) return;
+    const byComponents = componentRanks.length > 0;
+    // Components are separate shells: there is no cut face to put a connector on, so the connector
+    // settings are neither read nor validated for them.
+    if (
+      !byComponents &&
+      connector.kind !== 'none' &&
+      (!available || connectorProblem !== undefined)
+    )
+      return;
     invalidate();
     setError(undefined);
-    setPhase(SplitPhase.Computing, 'Checking split…');
-    const operation = client.createSplit(
-      model.handle,
-      part.partId,
-      { plane: splitPlane, connector: connectorRequest(connector, unitValue) },
-      (update) => {
-        setProgress(update.note ?? 'Computing…');
-      },
-    );
+    setPhase(SplitPhase.Computing, byComponents ? 'Checking selection…' : 'Checking split…');
+    const onProgress = (update: { readonly note?: string }): void => {
+      setProgress(update.note ?? 'Computing…');
+    };
+    const operation = byComponents
+      ? client.createComponentSplit(model.handle, part.partId, componentRanks, onProgress)
+      : client.createSplit(
+          model.handle,
+          part.partId,
+          { plane: splitPlane, connector: connectorRequest(connector, unitValue) },
+          onProgress,
+        );
     running.current = operation;
     operation.promise.then(
       (result) => {
@@ -490,6 +557,7 @@ export function useSplitWorkflow(): SplitControls {
   }, [
     available,
     client,
+    componentRanks,
     connector,
     connectorProblem,
     unitValue,
@@ -550,6 +618,7 @@ export function useSplitWorkflow(): SplitControls {
     setError(undefined);
     setPlaneState({ key: '', settings: DEFAULT_PLANE });
     setConnectorState(DEFAULT_CONNECTOR);
+    setComponentState(undefined);
     store.selectWorkflow(undefined);
   }, [invalidate, setError, store]);
 
@@ -625,6 +694,10 @@ export function useSplitWorkflow(): SplitControls {
 
   return {
     part,
+    source,
+    componentRanks,
+    loadSuggestedPlane,
+    setComponentSource,
     unit: unitValue,
     plane,
     range,

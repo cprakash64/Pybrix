@@ -701,11 +701,114 @@ describe('no network API reaches production', () => {
     for (const file of files) {
       const contents = readFileSync(file, 'utf8');
       for (const api of BANNED) {
-        if (contents.includes(api)) offenders.push(`${relative(REPO_ROOT, file)}: ${api}`);
+        if (contents.includes(api)) {
+          // ADR 0020: the browser's ONE request is the Auto Split analysis POST, in one file, and
+          // the other four network APIs stay banned there too.
+          if (api === 'fetch(' && relative(REPO_ROOT, file) === AUTO_SPLIT_TRANSPORT) continue;
+          offenders.push(`${relative(REPO_ROOT, file)}: ${api}`);
+        }
       }
     }
 
     expect(offenders, 'a network API reached shipped code').toEqual([]);
+  });
+});
+
+const AUTO_SPLIT_TRANSPORT = join('apps', 'web', 'src', 'runtime', 'auto-split-transport.ts');
+
+describe('Auto Split sends one same-origin request and nothing else (ADR 0020)', () => {
+  const webSources = sourceFilesUnder(join(REPO_ROOT, 'apps', 'web', 'src')).filter(
+    (file) => !/\.test\.(ts|tsx)$/.test(file),
+  );
+  const transportSource = readFileSync(join(REPO_ROOT, AUTO_SPLIT_TRANSPORT), 'utf8');
+
+  it('has exactly one fetch in the whole browser application, and it is in the transport', () => {
+    const using = webSources.filter((file) => readFileSync(file, 'utf8').includes('fetch('));
+    expect(using.map((file) => relative(REPO_ROOT, file))).toEqual([AUTO_SPLIT_TRANSPORT]);
+    expect(transportSource.match(/fetch\(/g)).toHaveLength(1);
+  });
+
+  it('names no absolute URL, host, query string or second endpoint', () => {
+    const code = transportSource
+      .split('\n')
+      .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+      .join('\n');
+    expect(code).not.toMatch(/https?:/i);
+    expect(code).not.toContain('://');
+    expect(code).not.toMatch(/\?[a-z]+=/i);
+    expect(code.match(/'\/api\//g)).toHaveLength(1);
+    expect(code).toContain("'/api/auto-split/analyze'");
+  });
+
+  it('sends no credentials, no referrer, and keeps nothing', () => {
+    expect(transportSource).toContain("credentials: 'omit'");
+    expect(transportSource).toContain("referrerPolicy: 'no-referrer'");
+    expect(transportSource).toContain("cache: 'no-store'");
+    for (const storage of ['localStorage', 'sessionStorage', 'indexedDB', 'document.cookie'])
+      expect(transportSource).not.toContain(storage);
+  });
+
+  it('can be reached only from the analysis session, and the worker cannot reach it', () => {
+    const importers = webSources
+      .filter((file) => /auto-split-transport/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(REPO_ROOT, file))
+      .filter((file) => file !== AUTO_SPLIT_TRANSPORT)
+      .sort();
+    expect(importers).toEqual(
+      [
+        join('apps', 'web', 'src', 'state', 'auto-split-session.ts'),
+        join('apps', 'web', 'src', 'state', 'use-auto-split.ts'),
+      ].sort(),
+    );
+    for (const file of webSources.filter((f) => f.includes(`${join('src', 'workers')}`)))
+      expect(readFileSync(file, 'utf8'), relative(REPO_ROOT, file)).not.toContain(
+        'auto-split-transport',
+      );
+  });
+
+  it("keeps the service's own provider call in one file, and the mock out of the production entry", () => {
+    const serviceFiles = sourceFilesUnder(join(REPO_ROOT, 'apps', 'auto-split-api', 'src')).filter(
+      (file) => !/\.test\.ts$/.test(file),
+    );
+    const fetching = serviceFiles
+      .filter((file) => readFileSync(file, 'utf8').includes('fetch('))
+      .map((file) => relative(REPO_ROOT, file));
+    expect(fetching).toEqual([join('apps', 'auto-split-api', 'src', 'openai-provider.ts')]);
+
+    const entry = readFileSync(join(REPO_ROOT, 'apps', 'auto-split-api', 'src', 'main.ts'), 'utf8');
+    for (const forbidden of ['test-server', 'fixtures', 'allowMock: true', "'mock'"])
+      expect(entry, forbidden).not.toContain(forbidden);
+    expect(entry).toContain('allowMock: false');
+  });
+
+  it('keeps the test models and mock scenarios out of everything that ships', () => {
+    const shipped = [
+      ...webSources,
+      ...sourceFilesUnder(join(REPO_ROOT, 'packages')).filter(
+        (file) =>
+          !/\.test\.(ts|tsx)$/.test(file) &&
+          !file.includes(join('packages', 'auto-split', 'src', 'fixtures')) &&
+          !file.includes('test-fixtures'),
+      ),
+      ...sourceFilesUnder(join(REPO_ROOT, 'apps', 'auto-split-api', 'src')).filter(
+        (file) => !/\.test\.ts$/.test(file) && !file.endsWith('test-server.ts'),
+      ),
+    ];
+    const offenders = shipped
+      .filter((file) =>
+        /auto-split\/fixtures|auto-split-contract\/test-fixtures/.test(readFileSync(file, 'utf8')),
+      )
+      .map((file) => relative(REPO_ROOT, file));
+    expect(offenders).toEqual([]);
+  });
+
+  it('puts no provider key, provider name or API host in anything the browser build reads', () => {
+    for (const file of webSources) {
+      const contents = readFileSync(file, 'utf8');
+      for (const forbidden of ['OPENAI_API_KEY', 'api.openai.com', 'Authorization', 'Bearer ']) {
+        expect(contents, `${relative(REPO_ROOT, file)}: ${forbidden}`).not.toContain(forbidden);
+      }
+    }
   });
 });
 

@@ -41,6 +41,7 @@ import {
   type ChangeOverlayView,
   type ChangeOverlayVisibility,
 } from './create-change-overlays';
+import { createFaceHighlight, type FaceHighlightHandle } from './create-face-highlight';
 import {
   createHoleFillOverlays,
   type HoleFillOverlayData,
@@ -261,6 +262,14 @@ export interface ViewportHandle {
    * the user can see how the two meet.
    */
   setHoleFillOverlays(data: ViewportHoleFillData | undefined): void;
+  /**
+   * Highlights some of the active part's faces, by index into the part's render buffer. `revision` must
+   * be the model on screen: a highlight computed for another revision is dropped, not drawn. Cleared
+   * by a model change and by a change of active part. Display only.
+   */
+  setFaceHighlight(
+    data: { readonly faces: Uint32Array; readonly revision: number } | undefined,
+  ): void;
   /** Frames the current model. No-op when the workspace is empty. */
   fitView(): void;
   /**
@@ -306,6 +315,8 @@ export interface ViewportHandle {
   readonly changeOverlayObjectCount: number;
   /** Rim and patch objects currently in the scene. For leak tests. */
   readonly holeFillOverlayObjectCount: number;
+  /** Auto Split's face highlight: 0 or 1. For leak tests. */
+  readonly faceHighlightObjectCount: number;
   /** Cumulative rim/patch uploads and disposals. For double-dispose tests. */
   readonly holeFillOverlayLifecycle: { readonly created: number; readonly disposed: number };
   /** Distinct GPU geometries currently uploaded. For sharing and leak tests. */
@@ -509,6 +520,8 @@ export function createViewport(
   // to agree.
   const holeFillOverlays: HoleFillOverlayHandle = createHoleFillOverlays();
   activePartGroup.add(holeFillOverlays.group);
+  const faceHighlight: FaceHighlightHandle = createFaceHighlight();
+  activePartGroup.add(faceHighlight.group);
 
   /*
    * THE SPLIT PLANE, ITS ARROW AND THE CUT OUTLINE. Created before the orbit
@@ -789,6 +802,7 @@ export function createViewport(
      * them.
      */
     canvas.dataset.holeFillOverlayObjects = String(holeFillOverlays.objectCount);
+    canvas.dataset.faceHighlightObjects = String(faceHighlight.objectCount);
     canvas.dataset.holeFillOverlaysCreated = String(holeFillOverlays.lifecycle.created);
     canvas.dataset.holeFillOverlaysDisposed = String(holeFillOverlays.lifecycle.disposed);
   };
@@ -1030,6 +1044,7 @@ export function createViewport(
     // a model change or a part change; carrying either across would draw the
     // previous selection's opening on geometry that does not have it.
     holeFillOverlays.setData(undefined);
+    faceHighlight.setFaces(undefined, undefined);
     marker.visible = false;
     hideEditPlane();
     currentModel = model;
@@ -1110,6 +1125,7 @@ export function createViewport(
     // a model change or a part change; carrying either across would draw the
     // previous selection's opening on geometry that does not have it.
     holeFillOverlays.setData(undefined);
+    faceHighlight.setFaces(undefined, undefined);
     marker.visible = false;
     hideEditPlane();
     applyPartTints();
@@ -1344,6 +1360,19 @@ export function createViewport(
     render();
   };
 
+  const setFaceHighlight = (
+    data: { readonly faces: Uint32Array; readonly revision: number } | undefined,
+  ): void => {
+    const positions = activePartPositions();
+    if (data === undefined || positions === undefined || data.revision !== currentModel?.revision) {
+      faceHighlight.setFaces(undefined, undefined);
+      render();
+      return;
+    }
+    faceHighlight.setFaces(data.faces, positions);
+    render();
+  };
+
   const setHoleFillOverlays = (data: ViewportHoleFillData | undefined): void => {
     if (data === undefined || currentModel === undefined) {
       holeFillOverlays.setData(undefined);
@@ -1378,6 +1407,7 @@ export function createViewport(
     setPreview,
     setChangeOverlays,
     setHoleFillOverlays,
+    setFaceHighlight,
     fitView,
     viewFrom,
     zoomToFit,
@@ -1395,6 +1425,9 @@ export function createViewport(
     },
     get changeOverlayObjectCount(): number {
       return changeOverlays.objectCount;
+    },
+    get faceHighlightObjectCount(): number {
+      return faceHighlight.objectCount;
     },
     get holeFillOverlayObjectCount(): number {
       return holeFillOverlays.objectCount;
@@ -1425,6 +1458,7 @@ export function createViewport(
       overlays.dispose();
       changeOverlays.dispose();
       holeFillOverlays.dispose();
+      faceHighlight.dispose();
       if (scheduledFrame !== 0) cancelAnimationFrame(scheduledFrame);
       splitGizmo.dispose();
       textureFootprint?.geometry.dispose();
