@@ -105,6 +105,15 @@ export function AutoSplitSections({
   readonly onOpenManual: () => void;
   readonly editor: ReactNode;
 }): ReactNode {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const selectedId = auto.selected?.id;
+  // Choosing a cut to edit brings the manual controls that edit it into view: they sit below the list,
+  // and a person who pressed Edit should not have to find them.
+  useEffect(() => {
+    const node = editorRef.current;
+    if (selectedId !== undefined && node !== null && typeof node.scrollIntoView === 'function')
+      node.scrollIntoView({ block: 'nearest' });
+  }, [selectedId]);
   if (!hasPart)
     return (
       <PanelSection title={AUTO_SPLIT_COPY.name} testId="auto-split-panel">
@@ -142,7 +151,7 @@ export function AutoSplitSections({
               {AUTO_SPLIT_COPY.approximateCut}
             </p>
           ) : null}
-          {editor}
+          <div ref={editorRef}>{editor}</div>
         </>
       ) : null}
       {auto.unsafeCut ? (

@@ -107,6 +107,7 @@ export function SplitWorkspace(): ReactNode {
         split={split}
         exportMode={exportMode}
         previewBlock={auto.tab === 'auto' ? auto.footerBlock : undefined}
+        {...(auto.tab === 'auto' && auto.busy ? { onCancelAnalysis: auto.cancel } : {})}
       />
     </div>
   );
@@ -721,9 +722,12 @@ function SplitFooter({
   split,
   exportMode,
   previewBlock,
+  onCancelAnalysis,
 }: {
   readonly split: SplitControls;
   readonly exportMode: ExportMode;
+  /** While an Auto Split analysis runs, the footer's Cancel cancels THAT, not the whole split. */
+  readonly onCancelAnalysis?: () => void;
   /** Why Preview cannot be asked for in the Auto Split tab, or undefined. Never blocks Apply or Undo. */
   readonly previewBlock: string | undefined;
 }): ReactNode {
@@ -814,12 +818,23 @@ function SplitFooter({
           <button
             type="button"
             className="secondary-action convert-footer__cancel"
-            onClick={split.phase === SplitPhase.Preview ? split.discardPreview : split.cancel}
-            data-testid={split.phase === SplitPhase.Preview ? 'split-discard' : 'split-cancel'}
+            onClick={
+              onCancelAnalysis ??
+              (split.phase === SplitPhase.Preview ? split.discardPreview : split.cancel)
+            }
+            data-testid={
+              onCancelAnalysis
+                ? 'split-cancel-analysis'
+                : split.phase === SplitPhase.Preview
+                  ? 'split-discard'
+                  : 'split-cancel'
+            }
           >
-            {split.phase === SplitPhase.Preview
-              ? SPLIT_COPY.discardButton
-              : SPLIT_COPY.cancelButton}
+            {onCancelAnalysis
+              ? 'Cancel analysis'
+              : split.phase === SplitPhase.Preview
+                ? SPLIT_COPY.discardButton
+                : SPLIT_COPY.cancelButton}
           </button>
           {split.phase === SplitPhase.Preview || split.phase === SplitPhase.Applying ? (
             <button

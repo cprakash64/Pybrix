@@ -427,6 +427,21 @@ describe('an analysis', () => {
     expect(spies.commitSplit).not.toHaveBeenCalled();
   });
 
+  it('the footer says what its Cancel cancels while an analysis runs, and it cancels only that', async () => {
+    const pending = new Promise<ParsedResponse>(() => undefined);
+    const spies = mount({ response: () => pending });
+    await findParts('human');
+    expect(screen.queryByTestId('split-cancel')).toBeNull();
+    expect(screen.getByTestId('split-cancel-analysis')).toHaveTextContent('Cancel analysis');
+    click('split-cancel-analysis');
+    await settle();
+    expect(spies.signals[0]?.aborted).toBe(true);
+    // The split workspace is still open: only the analysis was cancelled.
+    expect(screen.getByTestId('split-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('auto-cancelled')).toBeInTheDocument();
+    expect(screen.getByTestId('split-cancel')).toBeInTheDocument();
+  });
+
   it('turns a failure into a decision with our own sentence and a way forward', async () => {
     mount({
       response: () =>

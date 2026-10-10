@@ -294,7 +294,7 @@ export class AutoSplitSession {
       this.render = undefined;
 
       // 2. One request: six PNGs and three bounded numbers.
-      this.set({ run: 'analyzing', note: 'Finding parts. This can take up to a minute or more…' });
+      this.set({ run: 'analyzing', note: 'Finding parts…' });
       const request: AnalyzeRequest = {
         requestId: this.deps.newRequestId(),
         mode,
