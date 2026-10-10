@@ -1,0 +1,575 @@
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  AUTO_SPLIT_COPY,
+  MODEL_KIND_ORDER,
+  describeModelKind,
+  describeReason,
+  describeScope,
+} from '../state/auto-split-presentation';
+import { SuggestionOperation } from '@cadfixer/auto-split';
+import { AutoSplitPhase, ModelKind } from '../state/auto-split-session';
+import type { AutoSplitControls, AutoSplitRow, SplitTab } from '../state/use-auto-split';
+import { Icon } from './shell/Icon';
+import { PanelSection } from './shell/primitives';
+
+/**
+ * AUTO SPLIT — PRESENTATION of `useAutoSplit`.
+ *
+ * It decides nothing. Every sentence comes from `auto-split-presentation.ts`, every state from the
+ * controller, and the only things a button here can do are the controller's: choose a model type,
+ * accept the disclosure, find parts, cancel, show a suggestion, load one into Manual Split's own
+ * controls and ask for its preview. Nothing here applies a split: Apply is the manual footer's.
+ *
+ * ACCESSIBLE WITHOUT COLOUR. A status is a word beside an icon, never a tint alone; the progress
+ * region is a polite live region that is written only when its sentence changes; focus moves to the
+ * heading of whatever replaces the control the user just used (the disclosure, an error), and keyboard
+ * order follows reading order.
+ */
+
+export function SplitModeTabs({
+  tab,
+  onTab,
+}: {
+  readonly tab: SplitTab;
+  readonly onTab: (tab: SplitTab) => void;
+}): ReactNode {
+  const refs = useRef<Record<SplitTab, HTMLButtonElement | null>>({ auto: null, manual: null });
+  const order: readonly SplitTab[] = ['auto', 'manual'];
+  const onKey = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    const index = order.indexOf(tab);
+    let next: SplitTab | undefined;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = order[(index + 1) % 2];
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = order[(index + 1) % 2];
+    else if (event.key === 'Home') next = 'auto';
+    else if (event.key === 'End') next = 'manual';
+    if (next === undefined) return;
+    event.preventDefault();
+    onTab(next);
+    refs.current[next]?.focus();
+  };
+  const tabs: readonly { id: SplitTab; label: string }[] = [
+    { id: 'auto', label: AUTO_SPLIT_COPY.autoTab },
+    { id: 'manual', label: AUTO_SPLIT_COPY.manualTab },
+  ];
+  return (
+    <div
+      className="split-mode-tabs"
+      role="tablist"
+      aria-label={AUTO_SPLIT_COPY.tabsLabel}
+      data-testid="split-mode-tabs"
+    >
+      {tabs.map((entry) => (
+        <button
+          key={entry.id}
+          ref={(node) => {
+            refs.current[entry.id] = node;
+          }}
+          type="button"
+          role="tab"
+          id={`split-tab-${entry.id}`}
+          aria-selected={tab === entry.id}
+          aria-controls={`split-tabpanel-${entry.id}`}
+          tabIndex={tab === entry.id ? 0 : -1}
+          className="split-mode-tabs__tab"
+          onClick={() => {
+            onTab(entry.id);
+          }}
+          onKeyDown={onKey}
+          data-testid={`split-tab-${entry.id}`}
+        >
+          {entry.label}
+          {entry.id === 'auto' ? (
+            <span className="beta-badge" data-testid="auto-beta-badge">
+              {AUTO_SPLIT_COPY.badge}
+            </span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The Auto Split sections. `editor` is Manual Split's own plane and connector controls, shown here when
+ * a CUT suggestion is selected: editing a suggestion is editing the manual plane, so there is no second
+ * editor to drift from the first.
+ */
+export function AutoSplitSections({
+  auto,
+  hasPart,
+  onOpenManual,
+  editor,
+}: {
+  readonly auto: AutoSplitControls;
+  readonly hasPart: boolean;
+  readonly onOpenManual: () => void;
+  readonly editor: ReactNode;
+}): ReactNode {
+  if (!hasPart)
+    return (
+      <PanelSection title={AUTO_SPLIT_COPY.name} testId="auto-split-panel">
+        <p className="panel__empty" data-testid="auto-empty">
+          {AUTO_SPLIT_COPY.noModel}
+        </p>
+      </PanelSection>
+    );
+  const showKinds = auto.phase === AutoSplitPhase.Idle || auto.kind === undefined;
+  return (
+    <>
+      <PanelSection
+        title={AUTO_SPLIT_COPY.name}
+        meta={AUTO_SPLIT_COPY.badge}
+        testId="auto-split-panel"
+      >
+        <p className="convert-workspace__note" data-testid="auto-tagline">
+          {AUTO_SPLIT_COPY.tagline}
+        </p>
+        <KindChoice auto={auto} disabled={auto.busy} compact={!showKinds} />
+        {auto.kind === ModelKind.Other ? <OtherKind onOpenManual={onOpenManual} /> : null}
+        {auto.needsDisclosure ? <Disclosure auto={auto} /> : null}
+        <Start auto={auto} />
+        <Progress auto={auto} />
+        <Failure auto={auto} />
+      </PanelSection>
+      <Results auto={auto} />
+      {auto.selected?.operation === SuggestionOperation.Component ? (
+        <Components auto={auto} />
+      ) : null}
+      {auto.selected?.operation === SuggestionOperation.Plane ? (
+        <>
+          {auto.planeApproximate ? (
+            <p className="convert-workspace__caution" data-testid="auto-approximate">
+              {AUTO_SPLIT_COPY.approximateCut}
+            </p>
+          ) : null}
+          {editor}
+        </>
+      ) : null}
+      {auto.unsafeCut ? (
+        <p className="convert-footer__failure" role="alert" data-testid="auto-unsafe">
+          {AUTO_SPLIT_COPY.unsafeCut}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------ model kind -- */
+
+function KindChoice({
+  auto,
+  disabled,
+  compact,
+}: {
+  readonly auto: AutoSplitControls;
+  readonly disabled: boolean;
+  readonly compact: boolean;
+}): ReactNode {
+  const labelId = useId();
+  const hintId = useId();
+  return (
+    <div className="auto-kinds" data-compact={compact ? 'true' : 'false'}>
+      <p className="format-options__label" id={labelId}>
+        {AUTO_SPLIT_COPY.kindHeading}
+      </p>
+      <div
+        className="auto-kinds__chips"
+        role="radiogroup"
+        aria-labelledby={labelId}
+        aria-describedby={hintId}
+      >
+        {MODEL_KIND_ORDER.map((kind) => (
+          <label
+            key={kind}
+            className="auto-chip"
+            data-selected={auto.kind === kind ? 'true' : 'false'}
+            data-disabled={disabled ? 'true' : 'false'}
+          >
+            <input
+              type="radio"
+              name="auto-split-kind"
+              className="auto-chip__input"
+              value={kind}
+              checked={auto.kind === kind}
+              disabled={disabled}
+              onChange={() => {
+                auto.chooseKind(kind);
+              }}
+              data-testid={`auto-kind-${kind}`}
+            />
+            <span className="auto-chip__label">{describeModelKind(kind)}</span>
+          </label>
+        ))}
+      </div>
+      <p className="auto-kinds__hint" id={hintId}>
+        {auto.kind === undefined || auto.kind === ModelKind.Other
+          ? AUTO_SPLIT_COPY.kindHint
+          : describeScope(auto.kind)}
+      </p>
+    </div>
+  );
+}
+
+function OtherKind({ onOpenManual }: { readonly onOpenManual: () => void }): ReactNode {
+  return (
+    <div className="auto-card" data-testid="auto-other">
+      <p className="auto-card__title">{AUTO_SPLIT_COPY.otherHeading}</p>
+      <p className="auto-card__body">{AUTO_SPLIT_COPY.otherBody}</p>
+      <button
+        type="button"
+        className="secondary-action auto-card__action"
+        onClick={onOpenManual}
+        data-testid="auto-open-manual"
+      >
+        {AUTO_SPLIT_COPY.openManual}
+      </button>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------- disclosure -- */
+
+function Disclosure({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
+  const headingId = useId();
+  const bodyId = useId();
+  const heading = useRef<HTMLParagraphElement>(null);
+  // Focus lands on the disclosure when it appears, so a keyboard or screen-reader user meets it
+  // before anything that would send data.
+  useEffect(() => {
+    heading.current?.focus();
+  }, []);
+  return (
+    <div
+      className="auto-card auto-card--disclosure"
+      role="group"
+      aria-labelledby={headingId}
+      aria-describedby={bodyId}
+      data-testid="auto-disclosure"
+    >
+      <p className="auto-card__title" id={headingId} tabIndex={-1} ref={heading}>
+        {AUTO_SPLIT_COPY.disclosureHeading}
+      </p>
+      <p className="auto-card__body" id={bodyId} data-testid="auto-disclosure-text">
+        {AUTO_SPLIT_COPY.disclosure}
+      </p>
+      <div className="auto-card__actions">
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={auto.declineDisclosure}
+          data-testid="auto-disclosure-cancel"
+        >
+          {AUTO_SPLIT_COPY.disclosureCancel}
+        </button>
+        <button
+          type="button"
+          className="primary-action auto-card__primary"
+          onClick={auto.acceptDisclosure}
+          data-testid="auto-disclosure-continue"
+        >
+          {AUTO_SPLIT_COPY.disclosureContinue}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- start -- */
+
+function Start({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
+  const ready =
+    auto.kind !== undefined &&
+    auto.kind !== ModelKind.Other &&
+    !auto.needsDisclosure &&
+    !auto.busy &&
+    !auto.hasResult &&
+    auto.error === undefined;
+  if (!ready) return null;
+  return (
+    <div className="auto-start">
+      {auto.phase === AutoSplitPhase.Cancelled ? (
+        <p className="convert-workspace__note" role="status" data-testid="auto-cancelled">
+          {auto.statusText}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="primary-action auto-start__button"
+        disabled={!auto.canAnalyze}
+        onClick={auto.analyze}
+        data-testid="auto-analyze"
+      >
+        <Icon name="scan" size={16} />
+        <span>{AUTO_SPLIT_COPY.analyze}</span>
+      </button>
+      <p className="auto-start__note">{AUTO_SPLIT_COPY.localNote}</p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ progress -- */
+
+function Progress({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
+  if (!auto.busy) return null;
+  return (
+    <div className="auto-progress" data-testid="auto-progress" aria-busy="true">
+      {/* A polite live region, written when the phase sentence changes, never per tick. */}
+      <p className="auto-progress__line" role="status" aria-live="polite" data-testid="auto-status">
+        <Icon name="loader" size={14} className="spin" />
+        <span>{auto.statusText}</span>
+      </p>
+      <p className="auto-progress__hint">{AUTO_SPLIT_COPY.waitHint}</p>
+      <button
+        type="button"
+        className="secondary-action auto-progress__cancel"
+        onClick={auto.cancel}
+        data-testid="auto-cancel"
+      >
+        {AUTO_SPLIT_COPY.cancel}
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- failure -- */
+
+function Failure({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
+  const heading = useRef<HTMLParagraphElement>(null);
+  const message = auto.error?.message;
+  useEffect(() => {
+    if (message !== undefined) heading.current?.focus();
+  }, [message]);
+  if (auto.error === undefined) return null;
+  return (
+    <div className="auto-card auto-card--failure" role="alert" data-testid="auto-error">
+      <p className="auto-card__title" tabIndex={-1} ref={heading} data-testid="auto-error-message">
+        {auto.error.message}
+      </p>
+      {auto.error.detail === undefined ? null : (
+        <p className="auto-card__body" data-testid="auto-error-detail">
+          {auto.error.detail}
+        </p>
+      )}
+      <div className="auto-card__actions">
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={auto.reset}
+          data-testid="auto-start-over"
+        >
+          {AUTO_SPLIT_COPY.startOver}
+        </button>
+        {auto.error.canRetry ? (
+          <button
+            type="button"
+            className="primary-action auto-card__primary"
+            onClick={auto.reanalyze}
+            data-testid="auto-try-again"
+          >
+            {AUTO_SPLIT_COPY.tryAgain}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- results -- */
+
+function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
+  if (!auto.hasResult) return null;
+  return (
+    <PanelSection
+      title={AUTO_SPLIT_COPY.resultsHeading}
+      meta={String(auto.rows.length)}
+      testId="auto-results"
+    >
+      {auto.stale ? (
+        <div className="auto-card auto-card--stale" role="status" data-testid="auto-stale">
+          <p className="auto-card__body">
+            {auto.appliedSinceAnalysis ? AUTO_SPLIT_COPY.afterApply : AUTO_SPLIT_COPY.stale}
+          </p>
+          <button
+            type="button"
+            className="secondary-action auto-card__action"
+            disabled={!auto.canAnalyze}
+            onClick={auto.reanalyze}
+            data-testid="auto-reanalyze"
+          >
+            {AUTO_SPLIT_COPY.reanalyze}
+          </button>
+        </div>
+      ) : null}
+      {!auto.stale && !auto.sourceReady ? (
+        <div className="auto-card auto-card--repair" data-testid="auto-source-not-ready">
+          <p className="auto-card__title">{AUTO_SPLIT_COPY.needsRepairHeading}</p>
+          <p className="auto-card__body">{auto.sourceNotReadyText}</p>
+          {auto.canRunRepair ? (
+            <button
+              type="button"
+              className="secondary-action auto-card__action"
+              onClick={auto.openRepair}
+              data-testid="auto-run-repair"
+            >
+              {AUTO_SPLIT_COPY.runRepair}
+            </button>
+          ) : (
+            <p className="auto-card__body">{AUTO_SPLIT_COPY.needsRepairOther}</p>
+          )}
+        </div>
+      ) : null}
+      {auto.rows.length === 0 ? (
+        <p className="panel__empty" data-testid="auto-none">
+          {AUTO_SPLIT_COPY.noSuggestions}
+        </p>
+      ) : (
+        <>
+          <ul className="auto-list" aria-label={AUTO_SPLIT_COPY.resultsHeading}>
+            {auto.rows.map((row) => (
+              <Row key={row.id} row={row} auto={auto} />
+            ))}
+          </ul>
+          <p className="auto-start__note">{AUTO_SPLIT_COPY.oneAtATime}</p>
+        </>
+      )}
+      {!auto.stale ? (
+        <button
+          type="button"
+          className="secondary-action auto-card__action"
+          disabled={!auto.canAnalyze}
+          onClick={auto.reanalyze}
+          data-testid="auto-reanalyze-fresh"
+        >
+          {AUTO_SPLIT_COPY.reanalyze}
+        </button>
+      ) : null}
+    </PanelSection>
+  );
+}
+
+function Row({
+  row,
+  auto,
+}: {
+  readonly row: AutoSplitRow;
+  readonly auto: AutoSplitControls;
+}): ReactNode {
+  const reasonId = useId();
+  const canToggle = !auto.stale && row.suggestion.operation !== SuggestionOperation.None;
+  return (
+    <li
+      className="auto-row"
+      data-selected={row.selected ? 'true' : 'false'}
+      data-tone={row.status.tone}
+      data-testid={`auto-row-${row.id}`}
+    >
+      <div className="auto-row__head">
+        <span className="auto-row__name" data-testid={`auto-row-name-${row.id}`}>
+          {row.label}
+        </span>
+        <span className="auto-row__op">{row.operationLabel}</span>
+      </div>
+      <p className="auto-row__status" data-testid={`auto-row-status-${row.id}`}>
+        <Icon
+          name={
+            row.status.tone === 'ready' ? 'ok' : row.status.tone === 'unavailable' ? 'x' : 'alert'
+          }
+          size={13}
+        />
+        <span>{row.status.label}</span>
+      </p>
+      <p className="auto-row__reason" id={reasonId}>
+        {describeReason(row.suggestion.reason)}
+      </p>
+      <div className="auto-row__actions">
+        <button
+          type="button"
+          className="auto-row__icon"
+          aria-pressed={row.shown}
+          aria-label={`${row.shown ? AUTO_SPLIT_COPY.hide : AUTO_SPLIT_COPY.show}: ${row.label}`}
+          disabled={!canToggle || !row.executable}
+          onClick={() => {
+            auto.toggleShown(row.id);
+          }}
+          data-testid={`auto-show-${row.id}`}
+        >
+          <Icon name={row.shown ? 'target' : 'cube'} size={15} />
+        </button>
+        <button
+          type="button"
+          className="secondary-action auto-row__button"
+          disabled={!row.executable}
+          aria-describedby={reasonId}
+          onClick={() => {
+            auto.edit(row.id);
+          }}
+          data-testid={`auto-edit-${row.id}`}
+        >
+          {AUTO_SPLIT_COPY.edit}
+        </button>
+        <button
+          type="button"
+          className="primary-action auto-row__button"
+          disabled={!row.executable}
+          aria-describedby={reasonId}
+          onClick={() => {
+            auto.preview(row.id);
+          }}
+          data-testid={`auto-preview-${row.id}`}
+        >
+          {AUTO_SPLIT_COPY.preview}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+/* ---------------------------------------------------------- components -- */
+
+function Components({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
+  const hintId = useId();
+  const count = auto.components.filter((component) => component.selected).length;
+  return (
+    <PanelSection
+      title={AUTO_SPLIT_COPY.componentsHeading}
+      meta={String(count)}
+      testId="auto-components"
+    >
+      <p className="convert-workspace__note" id={hintId}>
+        {AUTO_SPLIT_COPY.componentsHint}
+      </p>
+      <ul className="auto-list auto-list--components" aria-describedby={hintId}>
+        {auto.components.map((component) => (
+          <li key={component.rank} className="auto-component">
+            <label className="auto-component__label">
+              <input
+                type="checkbox"
+                checked={component.selected}
+                onChange={() => {
+                  auto.toggleComponent(component.rank);
+                }}
+                data-testid={`auto-component-${String(component.rank)}`}
+              />
+              <span>
+                {component.label}
+                <span className="auto-component__faces">
+                  {` · ${component.faces.toLocaleString('en-US')} triangles`}
+                </span>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        className="primary-action auto-card__action"
+        disabled={count === 0}
+        onClick={auto.previewSelection}
+        data-testid="auto-preview-selection"
+      >
+        {AUTO_SPLIT_COPY.previewSelection}
+      </button>
+      <p className="auto-start__note">{AUTO_SPLIT_COPY.componentsNoConnectors}</p>
+    </PanelSection>
+  );
+}

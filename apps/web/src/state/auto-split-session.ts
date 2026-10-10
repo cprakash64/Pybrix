@@ -14,7 +14,7 @@ import type {
   DocumentHandle,
   ProgressUpdate,
 } from '@cadfixer/geometry-runtime';
-import { isAppError, AppErrorCode } from '@cadfixer/shared';
+import { isAppError, AppErrorCode, operationCancelled } from '@cadfixer/shared';
 import type { AnalysisTransport } from '../runtime/auto-split-transport';
 
 /**
@@ -135,7 +135,8 @@ export interface AutoSplitClient {
 }
 
 export interface AutoSplitDeps {
-  readonly client: AutoSplitClient;
+  /** The geometry reads. May be attached later, once the worker exists. */
+  readonly client?: AutoSplitClient;
   readonly transport: AnalysisTransport;
   readonly newRequestId: () => string;
 }
@@ -167,8 +168,16 @@ export class AutoSplitSession {
   private render: OperationLike<AutoSplitRenderResult> | undefined;
   private running: { readonly key: string; readonly documentId: string } | undefined;
 
+  private client: AutoSplitClient | undefined;
+
   public constructor(deps: AutoSplitDeps) {
     this.deps = deps;
+    this.client = deps.client;
+  }
+
+  /** Points the session at the geometry client that exists now, or at none. Takes effect on the next run. */
+  public attachClient(client: AutoSplitClient | undefined): void {
+    this.client = client;
   }
 
   /* ------------------------------------------------------------- store -- */
@@ -267,14 +276,12 @@ export class AutoSplitSession {
       selection: undefined,
     });
     try {
+      const client = this.client;
+      if (client === undefined) throw operationCancelled('The geometry worker is not ready.');
       // 1. Six local renders. Nothing leaves the device in this step.
-      const render = this.deps.client.renderAutoSplitViews(
-        target.handle,
-        target.partId,
-        (update) => {
-          if (current()) this.set({ note: update.note ?? 'Rendering views on this device…' });
-        },
-      );
+      const render = client.renderAutoSplitViews(target.handle, target.partId, (update) => {
+        if (current()) this.set({ note: update.note ?? 'Rendering views on this device…' });
+      });
       this.render = render;
       const views = await render.promise;
       if (!current()) return;
@@ -305,7 +312,7 @@ export class AutoSplitSession {
 
       // 3. The answer is data. The worker validates it again and turns it into suggestions.
       this.set({ note: 'Preparing editable suggestions…' });
-      const suggested = await this.deps.client.suggestAutoSplit(
+      const suggested = await client.suggestAutoSplit(
         target.handle,
         target.partId,
         mode,

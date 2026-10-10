@@ -4392,3 +4392,368 @@
 .split-workspace__plane-actions > .secondary-action[aria-pressed='true'] {
   border-color: var(--cad-accent, currentColor);
 }
+
+/* ------------------------------------------------------ auto split (08B) -- */
+
+/*
+ * Auto Split lives inside the Split workspace as a second tab. It reuses the workspace's sections,
+ * notes and footer; what is new is the tab strip, the model-type chips, the disclosure and failure
+ * cards and the suggestion list. A status is always a word beside an icon, never a tint alone.
+ */
+.split-mode-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 2px;
+  background: var(--cad-well);
+  border: 1px solid var(--cad-border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.split-mode-tabs__tab {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--cad-text-muted);
+  font: 600 var(--fs-ui) var(--font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.split-mode-tabs__tab:hover {
+  color: var(--cad-text-strong);
+}
+
+.split-mode-tabs__tab[aria-selected='true'] {
+  background: #2e3d4c;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  color: var(--cad-text-strong);
+}
+
+.split-mode-tabs__tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.beta-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--cad-border-strong);
+  border-radius: 999px;
+  color: var(--cad-text);
+  font: 600 10px/1.4 var(--font-body);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.auto-kinds__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+
+.auto-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--cad-border-control);
+  border-radius: 999px;
+  background: var(--cad-control);
+  color: var(--cad-text);
+  font: 500 var(--fs-ui) var(--font-body);
+  cursor: pointer;
+}
+
+.auto-chip[data-selected='true'] {
+  border-color: var(--cad-accent);
+  background: var(--cad-accent-soft);
+  color: var(--cad-text-strong);
+}
+
+.auto-chip[data-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* The radio is the control; the pill is its label. Visually hidden, never display:none. */
+.auto-chip__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.auto-chip:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.auto-kinds__hint,
+.auto-start__note,
+.auto-progress__hint {
+  margin: 0 0 8px;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+
+.auto-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid var(--cad-border);
+  border-radius: var(--radius-control);
+  background: var(--cad-well);
+}
+
+.auto-card--failure {
+  border-color: var(--cad-error);
+  background: var(--cad-error-soft);
+}
+
+.auto-card--repair,
+.auto-card--stale {
+  border-left: 3px solid var(--cad-warning);
+  background: var(--cad-warning-soft);
+}
+
+.auto-card__title {
+  margin: 0;
+  color: var(--cad-text-strong);
+  font: 600 var(--fs-ui) var(--font-body);
+  line-height: 1.4;
+}
+
+.auto-card__title:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.auto-card__body {
+  margin: 0;
+  color: var(--cad-text);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+
+.auto-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.auto-card__actions > button {
+  flex: 1 1 120px;
+  width: auto;
+}
+
+.auto-card__action {
+  width: auto;
+  align-self: flex-start;
+  margin: 2px 0 0;
+  padding: 0 12px;
+}
+
+.auto-start {
+  margin-top: 8px;
+}
+
+.auto-start__button {
+  margin-bottom: 8px;
+}
+
+.auto-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.auto-progress__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--cad-text-strong);
+  font-size: var(--fs-ui);
+}
+
+.auto-progress__cancel {
+  width: auto;
+  align-self: flex-start;
+}
+
+.auto-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.auto-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--cad-border);
+  border-radius: var(--radius-control);
+  background: var(--cad-control);
+}
+
+.auto-row[data-selected='true'] {
+  border-color: var(--cad-accent);
+  background: var(--cad-accent-soft);
+}
+
+.auto-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.auto-row__name {
+  color: var(--cad-text-strong);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.auto-row__op {
+  flex: none;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.auto-row__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--cad-text);
+  font: 600 var(--fs-secondary) var(--font-body);
+}
+
+.auto-row[data-tone='ready'] .auto-row__status {
+  color: var(--cad-success);
+}
+
+.auto-row[data-tone='review'] .auto-row__status,
+.auto-row[data-tone='repair'] .auto-row__status {
+  color: var(--cad-warning);
+}
+
+.auto-row[data-tone='unavailable'] .auto-row__status {
+  color: var(--cad-text-muted);
+}
+
+.auto-row__reason {
+  margin: 0;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.4;
+}
+
+.auto-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.auto-row__button {
+  flex: 1;
+  width: auto;
+  height: 30px;
+  padding: 0 10px;
+}
+
+.auto-row__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--cad-border-control);
+  border-radius: var(--radius-control);
+  background: var(--cad-control-raised);
+  color: var(--cad-text);
+  cursor: pointer;
+}
+
+.auto-row__icon[aria-pressed='true'] {
+  border-color: var(--cad-accent);
+  color: var(--cad-accent);
+}
+
+.auto-row__icon:focus-visible,
+.auto-component__label input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.auto-row__icon:disabled,
+.auto-row__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.auto-component__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--cad-text);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+.auto-component__faces {
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+}
+
+/* Touch-sized targets on a phone (UI-06): 40 px, the same floor the rest of the shell holds. */
+@media (width < 600px) {
+  .split-mode-tabs__tab,
+  .auto-chip,
+  .auto-row__button,
+  .auto-row__icon,
+  .auto-card__actions > button,
+  .auto-card__action,
+  .auto-start__button,
+  .auto-progress__cancel {
+    min-height: 40px;
+  }
+
+  .auto-row__icon {
+    width: 40px;
+  }
+
+  .auto-component__label {
+    min-height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auto-progress .spin {
+    animation: none;
+  }
+}

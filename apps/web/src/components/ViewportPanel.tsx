@@ -14,7 +14,11 @@ import {
 } from '../state/workspace-store';
 import { overlayForIssue } from '../state/repair-issues';
 import { useIssueNavigation } from '../state/use-issue-navigation';
-import { useSplitControls, useTextureControls } from '../state/workflow-controllers';
+import {
+  useAutoSplitControls,
+  useSplitControls,
+  useTextureControls,
+} from '../state/workflow-controllers';
 import { WorkflowId } from '../state/workflows';
 import { analysisKey } from '../state/workspace-store';
 import { IssueHud } from './IssueHud';
@@ -60,6 +64,7 @@ export function ViewportPanel(): ReactNode {
   } = useWorkspaceState();
   const navigation = useIssueNavigation();
   const split = useSplitControls();
+  const autoSplit = useAutoSplitControls();
   const splitWorkspace = selectedWorkflow === WorkflowId.Split;
   /*
    * Read through refs by callbacks the viewport was created with once: the
@@ -243,6 +248,16 @@ export function ViewportPanel(): ReactNode {
     viewportRef.current?.setEditPlane(splitPlane);
     // Re-pushed after a preview is installed or removed: `setModel` hides it.
   }, [splitPlane, model, splitPreview]);
+
+  /*
+   * Auto Split's highlight of the components a suggestion would take out. Presentation only, drawn in
+   * the Split workspace, and re-pushed after a model or preview change because installing either
+   * clears it.
+   */
+  const faceHighlight = splitWorkspace ? autoSplit.highlight : undefined;
+  useEffect(() => {
+    viewportRef.current?.setFaceHighlight(faceHighlight);
+  }, [faceHighlight, model, splitPreview]);
 
   /*
    * The engine's cross-section outline and the Piece A / Piece B colours, in

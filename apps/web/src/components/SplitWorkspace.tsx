@@ -21,13 +21,14 @@ import {
   type SplitPieceView,
 } from '../state/split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
-import { useSplitControls } from '../state/workflow-controllers';
+import { useAutoSplitControls, useSplitControls } from '../state/workflow-controllers';
 import {
   SplitExportState,
   SplitPhase,
   type ConnectorSettings,
   type SplitControls,
 } from '../state/use-split-workflow';
+import { AutoSplitSections, SplitModeTabs } from './AutoSplitPanel';
 import { useOpenConvertWorkspace } from './shell/open-convert';
 import {
   ActionFooter,
@@ -56,6 +57,7 @@ import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/pr
 export function SplitWorkspace(): ReactNode {
   const { model } = useWorkspaceState();
   const split = useSplitControls();
+  const auto = useAutoSplitControls();
   /*
    * OWNED HERE — WORKSPACE-UX-03. The choice is made in the scrolling content
    * and acted on from the footer; when both lived in the footer the applied
@@ -66,23 +68,46 @@ export function SplitWorkspace(): ReactNode {
   return (
     <div className="convert-workspace split-workspace" data-testid="split-workspace">
       <div className="convert-workspace__sections">
+        <SplitModeTabs tab={auto.tab} onTab={auto.setTab} />
         {model === undefined || split.part === undefined ? (
           <PanelSection title={SPLIT_COPY.planeSection}>
             <p className="panel__empty" data-testid="split-empty">
               {SPLIT_COPY.noPart}
             </p>
           </PanelSection>
-        ) : (
-          <>
+        ) : auto.tab === 'manual' ? (
+          <div role="tabpanel" id="split-tabpanel-manual" aria-labelledby="split-tab-manual">
             <CutPlaneSection split={split} />
             <ConnectorSection split={split} />
             <ResultSection split={split} />
             <ExportSection split={split} mode={exportMode} onMode={setExportMode} />
-          </>
+          </div>
+        ) : (
+          <div role="tabpanel" id="split-tabpanel-auto" aria-labelledby="split-tab-auto">
+            <AutoSplitSections
+              auto={auto}
+              hasPart
+              onOpenManual={() => {
+                auto.setTab('manual');
+              }}
+              editor={
+                <>
+                  <CutPlaneSection split={split} />
+                  <ConnectorSection split={split} />
+                </>
+              }
+            />
+            <ResultSection split={split} />
+            <ExportSection split={split} mode={exportMode} onMode={setExportMode} />
+          </div>
         )}
         <SplitOutcome split={split} />
       </div>
-      <SplitFooter split={split} exportMode={exportMode} />
+      <SplitFooter
+        split={split}
+        exportMode={exportMode}
+        previewBlock={auto.tab === 'auto' ? auto.footerBlock : undefined}
+      />
     </div>
   );
 }
@@ -695,9 +720,12 @@ function SplitOutcome({ split }: { readonly split: SplitControls }): ReactNode {
 function SplitFooter({
   split,
   exportMode,
+  previewBlock,
 }: {
   readonly split: SplitControls;
   readonly exportMode: ExportMode;
+  /** Why Preview cannot be asked for in the Auto Split tab, or undefined. Never blocks Apply or Undo. */
+  readonly previewBlock: string | undefined;
 }): ReactNode {
   const { model } = useWorkspaceState();
   const store = useWorkspaceStore();
@@ -714,11 +742,14 @@ function SplitFooter({
     split.connector.kind !== 'none' &&
     (!split.connectorsAvailable || split.connectorProblem !== undefined);
 
+  const previewBlocked = previewBlock !== undefined && split.phase === SplitPhase.Idle;
   const hint = !hasPart
     ? SPLIT_COPY.noPart
-    : connectorBlocked
-      ? (split.connectorProblem ?? SPLIT_COPY.connectorsNeedMillimetres)
-      : undefined;
+    : previewBlocked
+      ? previewBlock
+      : connectorBlocked
+        ? (split.connectorProblem ?? SPLIT_COPY.connectorsNeedMillimetres)
+        : undefined;
   const working = split.phase === SplitPhase.Computing || split.phase === SplitPhase.Applying;
   const failureLine =
     split.error !== undefined
@@ -806,7 +837,12 @@ function SplitFooter({
             <button
               type="button"
               className="primary-action convert-footer__primary"
-              disabled={!hasPart || connectorBlocked || split.phase === SplitPhase.Computing}
+              disabled={
+                !hasPart ||
+                connectorBlocked ||
+                previewBlocked ||
+                split.phase === SplitPhase.Computing
+              }
               aria-busy={split.phase === SplitPhase.Computing}
               {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
               onClick={split.updatePreview}

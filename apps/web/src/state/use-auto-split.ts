@@ -1,0 +1,479 @@
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { SuggestionOperation, SuggestionStatus, type Suggestion } from '@cadfixer/auto-split';
+import { useGeometryClient } from '../runtime/client-context';
+import { createAnalysisTransport, type AnalysisTransport } from '../runtime/auto-split-transport';
+import {
+  AUTO_SPLIT_COPY,
+  describeError,
+  describeOperation,
+  describePhase,
+  describeSourceNotReady,
+  describeStatus,
+  repairCanHelp,
+  type ErrorGuidance,
+  type SuggestionStatusView,
+} from './auto-split-presentation';
+import {
+  AutoSplitPhase,
+  AutoSplitSession,
+  ModelKind,
+  type AutoSplitTarget,
+} from './auto-split-session';
+import { useWorkspaceState, useWorkspaceStore } from './store-context';
+import { SplitPhase, SplitSource, type SplitControls } from './use-split-workflow';
+import { WorkflowId } from './workflows';
+
+/**
+ * AUTO SPLIT, BOUND TO THE STORE AND TO MANUAL SPLIT.
+ *
+ * This hook owns no geometry and no editor. It follows the model the workspace shows, runs the
+ * analysis session, and turns a suggestion into a setting of the CONTROLS MANUAL SPLIT ALREADY HAS: a
+ * suggested plane is loaded into the manual plane, a suggested component set becomes the manual split's
+ * component source. Preview, Apply and Undo are then the manual workflow's own, so one Apply is one
+ * document transaction and one Undo undoes it.
+ *
+ * NOTHING HERE APPLIES ANYTHING. The only action that can reach `split/commit` is the manual footer's
+ * Apply, on a preview the user asked for.
+ */
+
+export type SplitTab = 'auto' | 'manual';
+
+export interface AutoSplitRow {
+  readonly id: string;
+  readonly label: string;
+  readonly operation: SuggestionOperation;
+  readonly operationLabel: string;
+  readonly status: SuggestionStatusView;
+  /** True when Preview and Edit may be used: the part is splittable and the suggestion has a split to offer. */
+  readonly executable: boolean;
+  readonly shown: boolean;
+  readonly selected: boolean;
+  readonly suggestion: Suggestion;
+}
+
+export interface AutoSplitComponentRow {
+  readonly rank: number;
+  readonly label: string;
+  readonly selected: boolean;
+  readonly faces: number;
+}
+
+export interface AutoSplitControls {
+  readonly tab: SplitTab;
+  readonly setTab: (tab: SplitTab) => void;
+
+  readonly phase: AutoSplitPhase;
+  /** One honest sentence about what is happening or why nothing is. Never a percentage. */
+  readonly statusText: string;
+  readonly kind: ModelKind | undefined;
+  readonly chooseKind: (kind: ModelKind) => void;
+  /** The first-use disclosure is showing: a model type is chosen and the disclosure is not accepted. */
+  readonly needsDisclosure: boolean;
+  readonly acceptDisclosure: () => void;
+  readonly declineDisclosure: () => void;
+
+  readonly canAnalyze: boolean;
+  readonly analyze: () => void;
+  readonly reanalyze: () => void;
+  readonly cancel: () => void;
+  readonly reset: () => void;
+  readonly busy: boolean;
+
+  readonly error: ErrorGuidance | undefined;
+  readonly rows: readonly AutoSplitRow[];
+  readonly hasResult: boolean;
+  readonly stale: boolean;
+  readonly appliedSinceAnalysis: boolean;
+
+  readonly sourceReady: boolean;
+  readonly sourceNotReadyText: string;
+  readonly canRunRepair: boolean;
+  readonly openRepair: () => void;
+
+  readonly selected: AutoSplitRow | undefined;
+  readonly components: readonly AutoSplitComponentRow[];
+  readonly toggleComponent: (rank: number) => void;
+  readonly toggleShown: (id: string) => void;
+  /** Loads the suggestion into Manual Split's controls and asks for its preview. */
+  readonly preview: (id: string) => void;
+  /** Loads the suggestion into Manual Split's controls for editing; no preview is made. */
+  readonly edit: (id: string) => void;
+  /** A selected suggestion's component set changed: preview it again. */
+  readonly previewSelection: () => void;
+  /** True when the loaded plane is not exactly what the suggestion was (the controls cannot express it). */
+  readonly planeApproximate: boolean;
+  /** A preview from a suggestion failed local validation. */
+  readonly unsafeCut: boolean;
+  /** Why the footer's Preview cannot be used in the Auto tab, or undefined. */
+  readonly footerBlock: string | undefined;
+  /** Faces the viewport highlights, tied to the revision they were computed for. */
+  readonly highlight: { readonly faces: Uint32Array; readonly revision: number } | undefined;
+}
+
+export interface AutoSplitOptions {
+  /** Test seam: the one thing the session would otherwise reach the network with. */
+  readonly transport?: AnalysisTransport;
+  readonly newRequestId?: () => string;
+}
+
+const randomRequestId = (): string => {
+  const id = globalThis.crypto.randomUUID();
+  return `req-${id}`;
+};
+
+export function useAutoSplit(
+  split: SplitControls,
+  options: AutoSplitOptions = {},
+): AutoSplitControls {
+  const {
+    source: splitSource,
+    setComponentSource,
+    loadSuggestedPlane,
+    updatePreview,
+    discardPreview,
+    phase: splitPhase,
+    error: splitError,
+  } = split;
+  const { model, activePartId } = useWorkspaceState();
+  const store = useWorkspaceStore();
+  const geometry = useGeometryClient();
+  const [tab, setTabState] = useState<SplitTab>('manual');
+
+  // ONE SESSION for the app: it outlives a tab switch and dies with the page.
+  const [session] = useState<AutoSplitSession>(
+    () =>
+      new AutoSplitSession({
+        transport: options.transport ?? createAnalysisTransport(),
+        newRequestId: options.newRequestId ?? randomRequestId,
+      }),
+  );
+  // The geometry client is handed to the session whenever there is one; a run reads it when it STARTS.
+  useEffect(() => {
+    session.attachClient(geometry);
+  }, [geometry, session]);
+  useEffect(
+    () => (): void => {
+      session.dispose();
+    },
+    [session],
+  );
+  const snap = useSyncExternalStore(session.subscribe, session.getSnapshot);
+
+  const part = model?.parts.find((candidate) => candidate.partId === activePartId);
+  const target: AutoSplitTarget | undefined = useMemo(
+    () =>
+      model === undefined || part === undefined
+        ? undefined
+        : { handle: model.handle, partId: part.partId },
+    [model, part],
+  );
+
+  // The session follows the model the workspace shows: a revision change stales the list, another
+  // document or part clears it, and a run in flight for anything else is cancelled.
+  useEffect(() => {
+    session.follow(target);
+  }, [session, target]);
+
+  /* ------------------------------------------------------------ rows -- */
+
+  const result = snap.result;
+  const sourceReasons = result?.sourceReasons ?? [];
+  const sourceReady = sourceReasons.length === 0;
+  const stale = snap.stale;
+
+  const rows: readonly AutoSplitRow[] = useMemo(
+    () =>
+      (result?.suggestions ?? []).map((suggestion) => ({
+        id: suggestion.id,
+        label: suggestion.label,
+        operation: suggestion.operation,
+        operationLabel: describeOperation(suggestion.operation),
+        status: describeStatus(suggestion, sourceReady),
+        executable:
+          sourceReady &&
+          !stale &&
+          suggestion.status !== SuggestionStatus.Unavailable &&
+          suggestion.operation !== SuggestionOperation.None,
+        shown: snap.shownId === suggestion.id,
+        selected: snap.selectedId === suggestion.id,
+        suggestion,
+      })),
+    [result, snap.selectedId, snap.shownId, sourceReady, stale],
+  );
+  const selected = rows.find((row) => row.selected);
+
+  const components: readonly AutoSplitComponentRow[] = useMemo(() => {
+    if (selected?.operation !== SuggestionOperation.Component || result === undefined) return [];
+    const chosen = new Set(snap.selection ?? []);
+    return result.components.map((component) => ({
+      rank: component.rank,
+      label: component.rank === 0 ? 'Largest component' : `Component ${String(component.rank + 1)}`,
+      selected: chosen.has(component.rank),
+      faces: component.faces,
+    }));
+  }, [result, selected, snap.selection]);
+
+  /* ----------------------------------------------------------- phase -- */
+
+  const derived: AutoSplitPhase = ((): AutoSplitPhase => {
+    switch (snap.run) {
+      case 'idle':
+        return AutoSplitPhase.Idle;
+      case 'preparing':
+        return AutoSplitPhase.PreparingViews;
+      case 'analyzing':
+        return AutoSplitPhase.Analyzing;
+      case 'error':
+        return AutoSplitPhase.Error;
+      case 'cancelled':
+        return AutoSplitPhase.Cancelled;
+      case 'ready':
+        if (splitPhase === SplitPhase.Applying) return AutoSplitPhase.Applying;
+        if (
+          selected !== undefined &&
+          (splitPhase === SplitPhase.Computing || splitPhase === SplitPhase.Preview)
+        )
+          return AutoSplitPhase.Previewing;
+        return sourceReady ? AutoSplitPhase.SuggestionsReady : AutoSplitPhase.SourceNotReady;
+    }
+  })();
+
+  /* --------------------------------------------------- loading a cut -- */
+
+  // A preview is asked for AFTER the suggestion is loaded: the tick makes the next render, whose
+  // `updatePreview` closes over the loaded plane or components, the one that starts it.
+  const [previewTick, setPreviewTick] = useState(0);
+  const handledTick = useRef(0);
+  const [approximate, setApproximate] = useState(false);
+  useEffect(() => {
+    if (previewTick === handledTick.current) return;
+    handledTick.current = previewTick;
+    updatePreview();
+  }, [previewTick, updatePreview]);
+
+  const load = useCallback(
+    (id: string, thenPreview: boolean): void => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (!row?.executable) return;
+      session.select(id);
+      setApproximate(false);
+      if (row.suggestion.operation === SuggestionOperation.Plane && row.suggestion.plane !== null) {
+        const loaded = loadSuggestedPlane({
+          origin: row.suggestion.plane.origin,
+          normal: row.suggestion.plane.normal,
+        });
+        setApproximate(loaded?.exact === false);
+      } else {
+        setComponentSource(row.suggestion.components);
+      }
+      if (thenPreview) setPreviewTick((tick) => tick + 1);
+    },
+    [loadSuggestedPlane, rows, session, setComponentSource],
+  );
+  const preview = useCallback(
+    (id: string): void => {
+      load(id, true);
+    },
+    [load],
+  );
+  const edit = useCallback(
+    (id: string): void => {
+      load(id, false);
+    },
+    [load],
+  );
+
+  const toggleComponent = useCallback(
+    (rank: number): void => {
+      session.toggleComponent(rank);
+    },
+    [session],
+  );
+  const previewSelection = useCallback((): void => {
+    const next = session.getSnapshot().selection;
+    if (next === undefined || next.length === 0) return;
+    setComponentSource(next);
+    setPreviewTick((tick) => tick + 1);
+  }, [session, setComponentSource]);
+
+  const toggleShown = useCallback(
+    (id: string): void => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (row === undefined || stale) return;
+      if (
+        row.operation === SuggestionOperation.Plane &&
+        row.executable &&
+        row.suggestion.plane !== null &&
+        !row.shown
+      ) {
+        // Showing a cut is loading it into the manual plane: that is where the plane is drawn.
+        session.select(id);
+        const loaded = loadSuggestedPlane({
+          origin: row.suggestion.plane.origin,
+          normal: row.suggestion.plane.normal,
+        });
+        setApproximate(loaded?.exact === false);
+        return;
+      }
+      session.toggleShown(id);
+    },
+    [loadSuggestedPlane, rows, session, stale],
+  );
+
+  /* ---------------------------------------------------------- tabs -- */
+
+  const setTab = useCallback(
+    (next: SplitTab): void => {
+      setTabState(next);
+      // The manual tab always cuts with a plane: a component source belongs to a suggestion.
+      if (next === 'manual' && splitSource === SplitSource.Components)
+        setComponentSource(undefined);
+    },
+    [setComponentSource, splitSource],
+  );
+
+  /* ------------------------------------------------------- analysis -- */
+
+  const kind = snap.kind;
+  const canAnalyze =
+    target !== undefined &&
+    snap.disclosureAccepted &&
+    (kind === ModelKind.Character || kind === ModelKind.Vehicle) &&
+    snap.run !== 'preparing' &&
+    snap.run !== 'analyzing';
+  const analyze = useCallback((): void => {
+    if (target !== undefined) session.analyze(target);
+  }, [session, target]);
+  const reanalyze = useCallback((): void => {
+    if (target !== undefined) session.analyze(target, true);
+  }, [session, target]);
+  const chooseKind = useCallback(
+    (next: ModelKind): void => {
+      session.chooseKind(next);
+    },
+    [session],
+  );
+
+  // Cancelling an analysis never touches a preview, and starting one does not either; but a preview
+  // made from a suggestion is released when the suggestion is dismissed.
+  const cancel = useCallback((): void => {
+    session.cancel();
+  }, [session]);
+  const reset = useCallback((): void => {
+    session.reset();
+    discardPreview();
+  }, [discardPreview, session]);
+
+  const openRepair = useCallback((): void => {
+    store.selectWorkflow(WorkflowId.Repair);
+  }, [store]);
+
+  /* ------------------------------------------------------ highlight -- */
+
+  const [highlightState, setHighlightState] = useState<
+    { readonly key: string; readonly faces: Uint32Array; readonly revision: number } | undefined
+  >(undefined);
+  const wantedRanks: readonly number[] | undefined =
+    selected?.shown === true &&
+    selected.operation === SuggestionOperation.Component &&
+    !stale &&
+    splitPhase === SplitPhase.Idle
+      ? (snap.selection ?? selected.suggestion.components)
+      : undefined;
+  const wantedKey =
+    wantedRanks === undefined || model === undefined || part === undefined
+      ? undefined
+      : `${model.handle.documentId}@${String(model.revision)}/${part.partId}/${wantedRanks.join(',')}`;
+  const wantedHandle = model?.handle;
+  const wantedPart = part?.partId;
+  useEffect(() => {
+    const client = geometry;
+    if (
+      wantedKey === undefined ||
+      wantedRanks === undefined ||
+      wantedHandle === undefined ||
+      wantedPart === undefined ||
+      client === undefined
+    )
+      return;
+    let current = true;
+    const operation = client.autoSplitComponentFaces(wantedHandle, wantedPart, wantedRanks);
+    operation.promise.then(
+      (out) => {
+        if (current)
+          setHighlightState({ key: wantedKey, faces: out.faces, revision: wantedHandle.revision });
+      },
+      () => {
+        if (current) setHighlightState(undefined);
+      },
+    );
+    return (): void => {
+      current = false;
+      operation.cancel();
+    };
+  }, [geometry, wantedHandle, wantedKey, wantedPart, wantedRanks]);
+  const highlight =
+    wantedKey !== undefined && highlightState?.key === wantedKey
+      ? { faces: highlightState.faces, revision: highlightState.revision }
+      : undefined;
+
+  /* ------------------------------------------------------- outputs -- */
+
+  const error = snap.error === undefined ? undefined : describeError(snap.error);
+  const statusText = describePhase(derived, snap.note);
+
+  const footerBlock: string | undefined =
+    result === undefined
+      ? 'Find parts first, or switch to Manual Split.'
+      : stale
+        ? AUTO_SPLIT_COPY.stale
+        : !sourceReady
+          ? AUTO_SPLIT_COPY.needsRepairHeading
+          : selected === undefined
+            ? 'Choose a suggestion to preview.'
+            : undefined;
+
+  return {
+    tab,
+    setTab,
+    phase: derived,
+    statusText,
+    kind,
+    chooseKind,
+    needsDisclosure: kind !== undefined && kind !== ModelKind.Other && !snap.disclosureAccepted,
+    acceptDisclosure: (): void => {
+      session.acceptDisclosure();
+    },
+    declineDisclosure: (): void => {
+      session.declineDisclosure();
+      session.chooseKind(undefined);
+      setTabState('manual');
+    },
+    canAnalyze,
+    analyze,
+    reanalyze,
+    cancel,
+    reset,
+    busy: snap.run === 'preparing' || snap.run === 'analyzing',
+    error,
+    rows,
+    hasResult: result !== undefined,
+    stale,
+    appliedSinceAnalysis: stale && split.applied !== undefined,
+    sourceReady,
+    sourceNotReadyText: describeSourceNotReady(sourceReasons),
+    canRunRepair: repairCanHelp(sourceReasons),
+    openRepair,
+    selected,
+    components,
+    toggleComponent,
+    toggleShown,
+    preview,
+    edit,
+    previewSelection,
+    planeApproximate: approximate && selected?.operation === SuggestionOperation.Plane,
+    unsafeCut: tab === 'auto' && selected !== undefined && splitError !== undefined,
+    footerBlock,
+    highlight,
+  };
+}

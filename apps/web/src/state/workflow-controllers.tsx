@@ -10,6 +10,7 @@ import {
 import type { RepairOperation } from '@cadfixer/geometry-runtime';
 import { useConservativeRepair, type ConservativeRepairControls } from './use-conservative-repair';
 import { useHoleFillWorkflow, type HoleFillControls } from './use-hole-fill-workflow';
+import { useAutoSplit, type AutoSplitControls, type AutoSplitOptions } from './use-auto-split';
 import { useSplitWorkflow, type SplitControls } from './use-split-workflow';
 import { useTextureWorkflow, type TextureControls } from './use-texture-workflow';
 import { useTopologyAnalysis, type TopologyAnalysisControls } from './use-topology-analysis';
@@ -36,6 +37,7 @@ const AnalysisContext = createContext<TopologyAnalysisControls | undefined>(unde
 const RepairContext = createContext<RepairControls | undefined>(undefined);
 const HoleFillContext = createContext<HoleFillControls | undefined>(undefined);
 const SplitContext = createContext<SplitControls | undefined>(undefined);
+const AutoSplitContext = createContext<AutoSplitControls | undefined>(undefined);
 const TextureContext = createContext<TextureControls | undefined>(undefined);
 
 export function AnalysisControlsProvider({
@@ -101,9 +103,43 @@ export function HoleFillControlsProvider({
  * The Split & Connect controller. It starts no automatic work; it is here so
  * the panel, the viewport's arrow, the HUD and the inspector share ONE cut.
  */
-export function SplitControlsProvider({ children }: { readonly children: ReactNode }): ReactNode {
+export function SplitControlsProvider({
+  children,
+  autoSplit,
+}: {
+  readonly children: ReactNode;
+  /** Test seam only: replaces the one thing Auto Split would reach the network with. */
+  readonly autoSplit?: AutoSplitOptions;
+}): ReactNode {
   const controls = useSplitWorkflow();
-  return <SplitContext.Provider value={controls}>{children}</SplitContext.Provider>;
+  return (
+    <SplitContext.Provider value={controls}>
+      <AutoSplitControlsProvider
+        split={controls}
+        {...(autoSplit === undefined ? {} : { options: autoSplit })}
+      >
+        {children}
+      </AutoSplitControlsProvider>
+    </SplitContext.Provider>
+  );
+}
+
+/**
+ * The Auto Split controller. It starts NOTHING by itself — no analysis, no request, no render — until
+ * the user has chosen a model type, accepted the disclosure and pressed Find parts. It sits inside the
+ * split provider because a suggestion is only ever a setting of the manual split's own controls.
+ */
+function AutoSplitControlsProvider({
+  split,
+  options,
+  children,
+}: {
+  readonly split: SplitControls;
+  readonly options?: AutoSplitOptions;
+  readonly children: ReactNode;
+}): ReactNode {
+  const controls = useAutoSplit(split, options);
+  return <AutoSplitContext.Provider value={controls}>{children}</AutoSplitContext.Provider>;
 }
 
 /**
@@ -153,6 +189,10 @@ export function useHoleFillControls(): HoleFillControls {
 
 export function useSplitControls(): SplitControls {
   return required(useContext(SplitContext), 'useSplitControls');
+}
+
+export function useAutoSplitControls(): AutoSplitControls {
+  return required(useContext(AutoSplitContext), 'useAutoSplitControls');
 }
 
 export function useTextureControls(): TextureControls {

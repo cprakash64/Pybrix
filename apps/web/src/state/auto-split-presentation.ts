@@ -80,6 +80,9 @@ export const AUTO_SPLIT_COPY = {
   stale: 'The model changed after this analysis, so these suggestions are out of date.',
   afterApply:
     'The split was applied. The remaining suggestions describe the earlier model, so re-analyze to find more parts.',
+  approximateCut:
+    'Manual Split can’t place this cut exactly, so the nearest cut it can place was loaded. Check it in the preview.',
+  noModel: 'Load a model to use Auto Split.',
   unsafeCut: 'This suggested cut isn’t safe on this model. Adjust the cut or use Manual Split.',
   unitlessNote:
     'This file doesn’t say what its units are, so connectors stay locked until you choose how to read them.',
