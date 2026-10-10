@@ -31,6 +31,18 @@ export default defineConfig({
     // Preview serves what production serves, CSP included, so the whole
     // end-to-end suite runs under the production policy (PR-01).
     headers: { ...crossOriginIsolationHeaders, ...PRODUCTION_SECURITY_HEADERS },
+    /*
+     * AUTO SPLIT'S SAME-ORIGIN SERVICE (ADR 0020). In production the reverse proxy forwards
+     * `/api/auto-split/` to the analysis service; preview does the same for the end-to-end suite, so
+     * the browser still makes only same-origin requests and `connect-src 'self'` is exercised as
+     * shipped. Nothing else is proxied, and nothing here is part of the static build.
+     */
+    proxy: {
+      '/api/auto-split': {
+        target: `http://127.0.0.1:${process.env.AUTO_SPLIT_PORT ?? '8787'}`,
+        changeOrigin: false,
+      },
+    },
   },
   worker: {
     // Geometry workers are authored as ES modules and import workspace packages.

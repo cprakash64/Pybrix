@@ -373,12 +373,14 @@ export function useAutoSplit(
   const [highlightState, setHighlightState] = useState<
     { readonly key: string; readonly faces: Uint32Array; readonly revision: number } | undefined
   >(undefined);
+  const shownRow = rows.find((row) => row.shown);
   const wantedRanks: readonly number[] | undefined =
-    selected?.shown === true &&
-    selected.operation === SuggestionOperation.Component &&
+    shownRow?.operation === SuggestionOperation.Component &&
     !stale &&
     splitPhase === SplitPhase.Idle
-      ? (snap.selection ?? selected.suggestion.components)
+      ? shownRow.selected
+        ? (snap.selection ?? shownRow.suggestion.components)
+        : shownRow.suggestion.components
       : undefined;
   const wantedKey =
     wantedRanks === undefined || model === undefined || part === undefined

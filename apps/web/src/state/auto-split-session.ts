@@ -88,6 +88,9 @@ export const targetKey = (target: AutoSplitTarget): string =>
 export interface AutoSplitResult {
   readonly key: string;
   readonly documentId: string;
+  /** The revision and part this result describes. A different revision stales it; another part clears it. */
+  readonly revision: number;
+  readonly partId: string;
   readonly mode: SemanticMode;
   readonly suggestions: readonly Suggestion[];
   readonly components: readonly ComponentSummary[];
@@ -322,6 +325,8 @@ export class AutoSplitSession {
       const result: AutoSplitResult = {
         key,
         documentId: target.handle.documentId,
+        revision: target.handle.revision,
+        partId: target.partId,
         mode,
         suggestions: suggested.suggestions,
         components: suggested.components,
@@ -429,11 +434,14 @@ export class AutoSplitSession {
     }
     const result = this.snapshot.result;
     if (result === undefined) return;
-    if (
-      documentId !== result.documentId ||
-      (current !== undefined && !sameStem(result.key, current))
-    ) {
-      // Another document or another part: nothing here describes it.
+    // Another document: nothing here describes it. The same document at the same revision but another
+    // part: the user chose a different part, and a list for the first is not a list for the second.
+    // The same document at ANOTHER revision is the model having moved on (an Apply, an Undo, a Repair),
+    // and the list is kept, stale, whichever part the workspace now shows.
+    const anotherDocument = documentId !== result.documentId;
+    const anotherPartSameRevision =
+      current?.handle.revision === result.revision && current.partId !== result.partId;
+    if (anotherDocument || anotherPartSameRevision) {
       this.set({
         run: 'idle',
         result: undefined,
@@ -490,16 +498,6 @@ export class AutoSplitSession {
     this.stop();
     this.listeners.clear();
   }
-}
-
-/** `document@revision/part` without the revision: same document and part, any revision. */
-function sameStem(resultKey: string, current: AutoSplitTarget): boolean {
-  const at = resultKey.indexOf('@');
-  const slash = resultKey.indexOf('/', at);
-  return (
-    resultKey.slice(0, at) === current.handle.documentId &&
-    resultKey.slice(slash + 1) === current.partId
-  );
 }
 
 /** The error the interface shows for a code, never a provider's words. */

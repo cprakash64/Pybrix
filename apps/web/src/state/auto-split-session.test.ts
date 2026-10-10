@@ -352,6 +352,16 @@ describe('a result belongs to its revision', () => {
     expect(r.calls.render).toBe(2);
   });
 
+  it('stays listed, stale, when the revision moves and the workspace shows another part (an Apply does this)', async () => {
+    const r = rig();
+    ready(r);
+    await completeHuman(r);
+    r.session.follow(target(2, 'doc-1', 'part-1-A'));
+    const snap = r.session.getSnapshot();
+    expect(snap.stale).toBe(true);
+    expect(snap.result?.suggestions).toHaveLength(1);
+  });
+
   it('is cleared by another part of the same document', async () => {
     const r = rig();
     ready(r);

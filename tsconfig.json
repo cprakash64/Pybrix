@@ -17,6 +17,8 @@
     "e2e-browser/**/*.ts",
     "e2e-harness/**/*.ts",
     "e2e-rc/**/*.ts",
+    "e2e-auto-split/**/*.ts",
+    "playwright.auto-split.config.ts",
     "experiments/**/*.spec.ts",
     "experiments/**/*.config.ts",
     "playwright.timing.config.ts",

@@ -157,6 +157,8 @@ export default tseslint.config(
       '*.config.ts',
       'e2e/**/*.ts',
       'e2e-browser/**/*.ts',
+      'e2e-auto-split/**/*.ts',
+      'playwright.*.config.ts',
       'experiments/**/*.spec.ts',
       'eslint.config.js',
     ],
