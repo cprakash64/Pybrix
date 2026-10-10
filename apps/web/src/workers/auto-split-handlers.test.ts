@@ -94,7 +94,7 @@ describe('the resource gate', () => {
     for (let f = 0; f < faces; f += 1) indices.set([0, 1, 2], f * 3);
     const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
     // Structurally irrelevant: the gate reads the face count and refuses before a single view is drawn.
-    const handle = install({ positions, indices, metadata: {} } as unknown as CanonicalMesh);
+    const handle = install({ positions, indices, metadata: {} });
     const render = await refusalOf(() =>
       autoSplitRenderHandler({ source: handle, partId: PART }, context()),
     );
