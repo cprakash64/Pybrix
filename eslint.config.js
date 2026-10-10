@@ -173,12 +173,18 @@ export default tseslint.config(
    *
    * The ONE place outside the browser's own same-origin asset loading where this repository makes a
    * network request: the same-origin analysis service calls the model provider with `fetch`, from
-   * `openai-provider.ts` ONLY, and its tests call their own local server. Nothing under `apps/web` or
+   * `openai-provider.ts` ONLY, and its tests call their own local server. Nothing else under `apps/web` or
    * `packages/**` is exempt, and `scripts/production-boundary.test.ts` asserts that no other file in
    * the service names a network API. The service never receives a model file.
    */
   {
-    files: ['apps/auto-split-api/src/openai-provider.ts', 'apps/auto-split-api/src/*.test.ts'],
+    files: [
+      // The browser's one same-origin request (ADR 0020): a relative path, a request type with no
+      // geometry field, and a boundary test that holds both.
+      'apps/web/src/runtime/auto-split-transport.ts',
+      'apps/auto-split-api/src/openai-provider.ts',
+      'apps/auto-split-api/src/*.test.ts',
+    ],
     languageOptions: {
       globals: globals.node,
     },

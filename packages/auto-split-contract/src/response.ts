@@ -33,12 +33,15 @@ export type ParsedAnalysis =
       readonly requestId: string;
       readonly protocolVersion: string;
       readonly human: HumanAnswer;
+      /** The answer exactly as it arrived (schema shape), for the worker to validate again. Data, never instructions. */
+      readonly raw: unknown;
     }
   | {
       readonly mode: 'vehicle';
       readonly requestId: string;
       readonly protocolVersion: string;
       readonly vehicle: VehicleAnswer;
+      readonly raw: unknown;
     };
 
 export type ParsedResponse =
@@ -86,11 +89,17 @@ export function parseAnalyzeResponse(
   if (mode === 'human') {
     const checked = validateHuman(analysis);
     return checked.ok
-      ? { ok: true, analysis: { mode, requestId, protocolVersion, human: checked.value } }
+      ? {
+          ok: true,
+          analysis: { mode, requestId, protocolVersion, human: checked.value, raw: analysis },
+        }
       : bad;
   }
   const checked = validateVehicle(analysis);
   return checked.ok
-    ? { ok: true, analysis: { mode, requestId, protocolVersion, vehicle: checked.value } }
+    ? {
+        ok: true,
+        analysis: { mode, requestId, protocolVersion, vehicle: checked.value, raw: analysis },
+      }
     : bad;
 }
