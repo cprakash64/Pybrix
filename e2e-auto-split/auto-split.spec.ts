@@ -416,3 +416,53 @@ test('Manual Split and Repair make no semantic request at all', async ({ page })
   await page.waitForTimeout(500);
   expect(api).toEqual([]);
 });
+
+test('keyboard only: type, disclosure, analysis and preview are all reachable, and focus is placed deliberately', async ({
+  page,
+}) => {
+  await openMesh(page, 'figure.stl', humanFigure().mesh);
+  await page.getByTestId('workflow-split').click();
+  await expect(page.getByTestId('split-workspace')).toBeVisible();
+
+  // The tabs are a roving tablist: Enter and arrows work, and the selected tab is the one in the order.
+  await page.getByTestId('split-tab-manual').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByTestId('split-tab-auto')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('split-tab-auto')).toBeFocused();
+
+  // A radio group: Space chooses, and choosing moves focus to the disclosure's heading, so a
+  // keyboard or screen-reader user meets what would send data before anything else.
+  await page.getByTestId('auto-kind-human').focus();
+  await page.keyboard.press('Space');
+  await expect(page.getByTestId('auto-disclosure')).toBeVisible();
+  // The heading takes focus, not the group: the active element is inside the disclosure.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.activeElement?.closest('[data-testid="auto-disclosure"]') !== null,
+      ),
+    )
+    .toBe(true);
+  await page.keyboard.press('Tab'); // Cancel
+  await page.keyboard.press('Tab'); // Continue
+  await expect(page.getByTestId('auto-disclosure-continue')).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  await page.getByTestId('auto-analyze').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+
+  // Every suggestion's controls are named for assistive technology, and statuses are words.
+  await expect(page.getByTestId('auto-show-head')).toHaveAttribute(
+    'aria-label',
+    /Show on model: Head/,
+  );
+  await expect(page.getByTestId('auto-row-status-head')).toHaveText('Suggested');
+  await expect(page.getByTestId('auto-preview-head')).toHaveAccessibleDescription(/clear match/i);
+
+  await page.getByTestId('auto-preview-head').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 120_000 });
+  // Nothing was applied by a key press that previewed.
+  await expect(page.getByTestId('split-undo')).toHaveCount(0);
+});

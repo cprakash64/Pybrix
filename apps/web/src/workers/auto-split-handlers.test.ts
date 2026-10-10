@@ -9,6 +9,7 @@ import {
   type SplitCreateResult,
 } from '@cadfixer/geometry-runtime';
 import { AppErrorCode, isAppError, uncancellable, type AppError } from '@cadfixer/shared';
+import { MAX_ANALYSIS_TRIANGLES } from '@cadfixer/auto-split';
 import {
   autoSplitComponentFacesHandler,
   autoSplitExtractCreateHandler,
@@ -83,6 +84,34 @@ describe('autosplit/render', () => {
       autoSplitRenderHandler({ source: stale, partId: PART }, context()),
     );
     expect(refusal.code).toBe(AppErrorCode.ModelUnavailable);
+  });
+});
+
+describe('the resource gate', () => {
+  it('refuses a part above the analysis ceiling, naming the metric, the value and the limit, before any work', async () => {
+    const faces = MAX_ANALYSIS_TRIANGLES + 1;
+    const indices = new Uint32Array(faces * 3);
+    for (let f = 0; f < faces; f += 1) indices.set([0, 1, 2], f * 3);
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    // Structurally irrelevant: the gate reads the face count and refuses before a single view is drawn.
+    const handle = install({ positions, indices, metadata: {} } as unknown as CanonicalMesh);
+    const render = await refusalOf(() =>
+      autoSplitRenderHandler({ source: handle, partId: PART }, context()),
+    );
+    expect(render.code).toBe(AppErrorCode.ResourceLimitExceeded);
+    expect(render.details).toMatchObject({
+      metric: 'triangles',
+      value: faces,
+      limit: MAX_ANALYSIS_TRIANGLES,
+    });
+    expect(render.message).toContain('1,500,001');
+    const suggest = await refusalOf(() =>
+      autoSplitSuggestHandler(
+        { source: handle, partId: PART, mode: 'human', analysis: scenarioAnswer('human-ok') },
+        context(),
+      ),
+    );
+    expect(suggest.code).toBe(AppErrorCode.ResourceLimitExceeded);
   });
 });
 
