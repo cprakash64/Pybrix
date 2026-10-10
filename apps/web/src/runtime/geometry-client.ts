@@ -34,6 +34,9 @@ import {
   type StlExportResult,
   type SplitCandidateHandle,
   type SplitRequest,
+  type AutoSplitRenderResult,
+  type AutoSplitSuggestResult,
+  type AutoSplitComponentFacesResult,
   type SplitCreateResult,
   type SplitCommitResult,
   type SplitDiscardResult,
@@ -533,6 +536,56 @@ export class GeometryClient {
 
   public discardSplit(candidate: SplitCandidateHandle): OperationHandle<SplitDiscardResult> {
     return this.coordinator.dispatch('split/discard', { candidate }, {});
+  }
+
+  /** Auto Split: six clean views and bounded metadata for a part. A READ; the document does not change. */
+  public renderAutoSplitViews(
+    source: DocumentHandle,
+    partId: string,
+    onProgress?: (update: ProgressUpdate) => void,
+  ): OperationHandle<AutoSplitRenderResult> {
+    return this.coordinator.dispatch(
+      'autosplit/render',
+      { source, partId },
+      onProgress === undefined ? {} : { onProgress },
+    );
+  }
+
+  /** Auto Split: turns a provider's answer (untrusted data) into editable suggestions. A READ. */
+  public suggestAutoSplit(
+    source: DocumentHandle,
+    partId: string,
+    mode: 'human' | 'vehicle',
+    analysis: unknown,
+  ): OperationHandle<AutoSplitSuggestResult> {
+    return this.coordinator.dispatch('autosplit/suggest', { source, partId, mode, analysis }, {});
+  }
+
+  /** Auto Split: the source faces of some components, for highlighting. A READ. */
+  public autoSplitComponentFaces(
+    source: DocumentHandle,
+    partId: string,
+    ranks: readonly number[],
+  ): OperationHandle<AutoSplitComponentFacesResult> {
+    return this.coordinator.dispatch('autosplit/component-faces', { source, partId, ranks }, {});
+  }
+
+  /**
+   * Auto Split: a split CANDIDATE that takes the chosen components out as their own part. It is the
+   * same kind of candidate `createSplit` makes: previewing changes nothing, and applying is
+   * `commitSplit`.
+   */
+  public createComponentSplit(
+    source: DocumentHandle,
+    partId: string,
+    ranks: readonly number[],
+    onProgress?: (update: ProgressUpdate) => void,
+  ): OperationHandle<SplitCreateResult> {
+    return this.coordinator.dispatch(
+      'autosplit/extract-create',
+      { source, partId, ranks },
+      onProgress === undefined ? {} : { onProgress },
+    );
   }
 
   public createSurfaceTexture(

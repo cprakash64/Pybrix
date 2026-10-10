@@ -1,0 +1,297 @@
+import {
+  validateHuman,
+  validateVehicle,
+  type HumanAnswer,
+  type VehicleAnswer,
+} from '@cadfixer/auto-split-contract';
+import {
+  componentPieces,
+  faceFacts,
+  labelComponents,
+  MAX_ANALYSIS_TRIANGLES,
+  normalizeGeometry,
+  prepareViews,
+  suggestFor,
+  type ComponentLabelling,
+  type SemanticAnswer,
+} from '@cadfixer/auto-split';
+import {
+  isPart,
+  meshVolume,
+  splitSourceReasons,
+  describeSplitSourceRefusal,
+  splitTolerance,
+  type DocumentHandle,
+  type OperationHandler,
+  type SplitSourceReason,
+  type SplitResult,
+} from '@cadfixer/geometry-runtime';
+import { partId, type CanonicalMesh } from '@cadfixer/mesh-core';
+import { analyseTopology } from '@cadfixer/mesh-topology';
+import { invalidState, resourceLimitExceeded, type CancellationToken } from '@cadfixer/shared';
+import {
+  buildDocumentRenderSnapshot,
+  describeParts,
+  documentRenderTransferables,
+  residentDocuments,
+  splitCandidates,
+} from './stl-handlers';
+
+/**
+ * AUTO SPLIT, THE LOCAL HALF OF THE GEOMETRY WORKER.
+ *
+ * NOTHING HERE MUTATES A DOCUMENT. `autosplit/render` and `autosplit/suggest` read a part and answer;
+ * `autosplit/extract-create` builds a split CANDIDATE through the same `SplitCandidateStore` that
+ * `split/create` uses, so applying it is `split/commit` and undoing it is `repair/undo` — the one
+ * transaction and the one undo the manual workflow already has. There is no commit here, and a
+ * boundary test asserts that this module reaches no `replace`.
+ *
+ * AN ANSWER FROM THE PROVIDER IS DATA. It arrives as `unknown`, is validated again here by the same
+ * validators the service ran, and can only ever become a list of suggestions: it cannot name a part, a
+ * revision, an operation or a handle.
+ */
+
+/** zlib-wrapped deflate, which is what a PNG's IDAT carries. The platform compressor, off the page's thread. */
+async function deflate(raw: Uint8Array): Promise<Uint8Array> {
+  const stream = new CompressionStream('deflate');
+  const writer = stream.writable.getWriter();
+  const written = writer.write(new Uint8Array(raw)).then(() => writer.close());
+  const reader = stream.readable.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (value !== undefined) {
+      parts.push(value);
+      total += value.length;
+    }
+    if (done) break;
+  }
+  await written;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
+function resolveMesh(source: DocumentHandle, id: string): CanonicalMesh {
+  const part = residentDocuments.resolvePart(source, partId(id));
+  if (!isPart(part)) throw part;
+  return part.mesh;
+}
+
+function refuseIfTooLarge(mesh: CanonicalMesh): void {
+  const faces = Math.floor(mesh.indices.length / 3);
+  if (faces > MAX_ANALYSIS_TRIANGLES)
+    throw resourceLimitExceeded(
+      `This part has ${faces.toLocaleString('en-US')} triangles; Auto Split analyses parts of up to ${MAX_ANALYSIS_TRIANGLES.toLocaleString('en-US')}.`,
+      { metric: 'triangles', value: faces, limit: MAX_ANALYSIS_TRIANGLES },
+    );
+}
+
+/** The closed-solid reasons for a mesh, empty when it is splittable. The same predicate Manual Split enforces. */
+function sourceReasonsOf(
+  mesh: CanonicalMesh,
+  documentRevision: number,
+  label: string,
+  cancellation: CancellationToken,
+): readonly SplitSourceReason[] {
+  const { report } = analyseTopology(mesh, {
+    documentId: 'autosplit',
+    documentRevision,
+    partId: label,
+    cancellation,
+    sampleLimit: 0,
+    componentSummaryLimit: 8,
+  });
+  return splitSourceReasons(report);
+}
+
+/** The last labelling, keyed by document, revision and part, so selecting components does not relabel. */
+let lastLabelling:
+  | { readonly key: string; readonly mesh: CanonicalMesh; readonly labelling: ComponentLabelling }
+  | undefined;
+
+function labellingFor(source: DocumentHandle, id: string, mesh: CanonicalMesh): ComponentLabelling {
+  const key = `${source.documentId}@${String(source.revision)}/${id}`;
+  if (lastLabelling?.key === key && lastLabelling.mesh === mesh) return lastLabelling.labelling;
+  const labelling = labelComponents(
+    mesh,
+    faceFacts(normalizeGeometry(mesh.positions, mesh.indices)),
+  );
+  lastLabelling = { key, mesh, labelling };
+  return labelling;
+}
+
+export const autoSplitRenderHandler: OperationHandler<'autosplit/render'> = async (
+  payload,
+  context,
+) => {
+  context.throwIfCancelled();
+  const mesh = resolveMesh(payload.source, payload.partId);
+  refuseIfTooLarge(mesh);
+  const prepared = await prepareViews(mesh, deflate, (_view, index) => {
+    context.throwIfCancelled();
+    context.reportProgress((index + 1) / 6, `Rendered view ${String(index + 1)} of 6`);
+  });
+  context.throwIfCancelled();
+  return {
+    value: {
+      source: payload.source,
+      partId: payload.partId,
+      pngs: prepared.pngs,
+      summary: prepared.summary,
+    },
+    transfer: prepared.pngs.map((png) => png.buffer as ArrayBuffer),
+  };
+};
+
+export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = (
+  payload,
+  context,
+) => {
+  context.throwIfCancelled();
+  const mesh = resolveMesh(payload.source, payload.partId);
+  refuseIfTooLarge(mesh);
+  let answer: SemanticAnswer;
+  if (payload.mode === 'human') {
+    const checked = validateHuman(payload.analysis);
+    if (!checked.ok)
+      throw invalidState('The analysis did not match the expected shape.', {
+        code: 'AUTO_SPLIT_ANSWER_INVALID',
+      });
+    const human: HumanAnswer = checked.value;
+    answer = { mode: 'human', human };
+  } else {
+    const checked = validateVehicle(payload.analysis);
+    if (!checked.ok)
+      throw invalidState('The analysis did not match the expected shape.', {
+        code: 'AUTO_SPLIT_ANSWER_INVALID',
+      });
+    const vehicle: VehicleAnswer = checked.value;
+    answer = { mode: 'vehicle', vehicle };
+  }
+  const result = suggestFor(mesh, answer);
+  context.throwIfCancelled();
+  const sourceReasons = sourceReasonsOf(
+    mesh,
+    payload.source.revision,
+    payload.partId,
+    context.cancellation,
+  );
+  return Promise.resolve({
+    value: {
+      source: payload.source,
+      partId: payload.partId,
+      mode: payload.mode,
+      suggestions: result.suggestions,
+      components: result.components,
+      componentCount: result.componentCount,
+      faceCount: result.faceCount,
+      sourceReasons,
+    },
+  });
+};
+
+export const autoSplitComponentFacesHandler: OperationHandler<'autosplit/component-faces'> = (
+  payload,
+  context,
+) => {
+  context.throwIfCancelled();
+  const mesh = resolveMesh(payload.source, payload.partId);
+  const labelling = labellingFor(payload.source, payload.partId, mesh);
+  const chosen = new Set(payload.ranks);
+  const faces: number[] = [];
+  labelling.faceRank.forEach((rank, face) => {
+    if (chosen.has(rank)) faces.push(face);
+  });
+  const out = Uint32Array.from(faces);
+  return Promise.resolve({
+    value: { source: payload.source, partId: payload.partId, faces: out },
+    transfer: [out.buffer],
+  });
+};
+
+const NO_CUT = {
+  triangleIds: [],
+  center: [0, 0, 0],
+  spanU: 0,
+  spanV: 0,
+  centerEdgeDistance: 0,
+  interiorCandidates: [],
+  area: 0,
+  loopCount: 0,
+  outline: new Float32Array(0),
+  outlineTruncated: false,
+} as const;
+
+export const autoSplitExtractCreateHandler: OperationHandler<'autosplit/extract-create'> = (
+  payload,
+  context,
+) => {
+  context.throwIfCancelled();
+  const sourcePart = residentDocuments.resolvePart(payload.source, partId(payload.partId));
+  if (!isPart(sourcePart)) throw sourcePart;
+  const reasons = sourceReasonsOf(
+    sourcePart.mesh,
+    payload.source.revision,
+    payload.partId,
+    context.cancellation,
+  );
+  if (reasons.length > 0)
+    throw invalidState(describeSplitSourceRefusal(reasons), {
+      code: 'SPLIT_SOURCE_NOT_CLOSED_SOLID',
+      reasons: reasons.join(','),
+      label: payload.partId,
+    });
+  const labelling = labellingFor(payload.source, payload.partId, sourcePart.mesh);
+  let pieces;
+  try {
+    pieces = componentPieces(sourcePart.mesh, labelling, payload.ranks);
+  } catch (error) {
+    throw invalidState(error instanceof Error ? error.message : 'The selection cannot be split.', {
+      code: 'AUTO_SPLIT_SELECTION_INVALID',
+    });
+  }
+  const ticket = splitCandidates.begin(payload.source, sourcePart.id);
+  try {
+    context.reportProgress(0.3, 'Preparing selection…');
+    const sourceVolume = meshVolume(sourcePart.mesh);
+    const a = meshVolume(pieces.selected);
+    const b = meshVolume(pieces.rest);
+    const result: SplitResult = {
+      pieceA: pieces.selected,
+      pieceB: pieces.rest,
+      cutA: NO_CUT,
+      cutB: NO_CUT,
+      connector: { kind: 'none' },
+      metrics: {
+        sourceVolume,
+        pieceAVolume: a,
+        pieceBVolume: b,
+        pieceAFinalVolume: a,
+        pieceBFinalVolume: b,
+        volumeRelativeError: sourceVolume === 0 ? 0 : Math.abs(a + b - sourceVolume) / sourceVolume,
+        tolerance: splitTolerance(sourcePart.mesh),
+      },
+      placements: [],
+    };
+    context.reportProgress(0.7, 'Checking parts…');
+    const summary = splitCandidates.resolve(ticket, result, context.cancellation);
+    const preview = splitCandidates.preview(summary.candidate, (document) => ({
+      render: buildDocumentRenderSnapshot(document),
+      parts: describeParts(document),
+    }));
+    context.reportProgress(1, 'Preparing preview…');
+    return Promise.resolve({
+      value: { ...summary, ...preview },
+      transfer: documentRenderTransferables(preview.render),
+    });
+  } catch (error) {
+    splitCandidates.fail(ticket);
+    throw error;
+  }
+};

@@ -18,6 +18,9 @@ import type { HoleFillCandidateHandle } from './hole-fill-candidates';
 import type { GeometryEditCandidateHandle, GeometryEditResourceAccounting } from './geometry-edit';
 import type { SplitCandidateHandle, SplitCandidateSummary } from './split-candidates';
 import type { SplitRequest } from './split-connectors';
+// Type-only, like the repair and hole-fill contracts: the Auto Split engine runs in the worker and its
+// code must not reach the main-thread bundle through the protocol.
+import type { ComponentSummary, Suggestion } from '@cadfixer/auto-split';
 import type {
   SurfaceTextureRequest,
   SurfaceTextureResult,
@@ -230,6 +233,19 @@ export interface OperationMap {
   'split/create': { payload: SplitCreatePayload; result: SplitCreateResult };
   'split/commit': { payload: SplitCommitPayload; result: SplitCommitResult };
   'split/discard': { payload: SplitDiscardPayload; result: SplitDiscardResult };
+  /**
+   * AUTO SPLIT, LOCAL HALF. None of these three mutates the document: `autosplit/render` and
+   * `autosplit/suggest` READ a part, and `autosplit/extract-create` produces a split CANDIDATE through
+   * the same store `split/create` uses, so Apply and Undo are the existing `split/commit` and
+   * `repair/undo`. An answer from a provider is DATA to `autosplit/suggest`, never an instruction.
+   */
+  'autosplit/render': { payload: AutoSplitRenderPayload; result: AutoSplitRenderResult };
+  'autosplit/suggest': { payload: AutoSplitSuggestPayload; result: AutoSplitSuggestResult };
+  'autosplit/component-faces': {
+    payload: AutoSplitComponentFacesPayload;
+    result: AutoSplitComponentFacesResult;
+  };
+  'autosplit/extract-create': { payload: AutoSplitExtractPayload; result: SplitCreateResult };
   'texture/select': { payload: TextureSelectPayload; result: TextureSelectResult };
   'texture/layout': { payload: TextureCreatePayload; result: TextureLayoutResult };
   'texture/create': { payload: TextureCreatePayload; result: TextureCreateResult };
@@ -300,6 +316,62 @@ export interface SplitDiscardPayload {
 }
 export interface SplitDiscardResult {
   readonly released: boolean;
+}
+
+/* -------------------------------------------------------------- auto split -- */
+export interface AutoSplitRenderPayload {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+}
+export interface AutoSplitRenderResult {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  /** Six clean 512 x 512 RGB PNGs, in the contract's view order. Transferred, not copied. */
+  readonly pngs: readonly Uint8Array[];
+  /** Bounding-box extents (longest side 1), the number of separate shells, and the bounding radius. */
+  readonly summary: {
+    readonly extents: readonly [number, number, number];
+    readonly shells: number;
+    readonly radius: number;
+  };
+}
+export interface AutoSplitSuggestPayload {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  readonly mode: 'human' | 'vehicle';
+  /** The provider's answer in the contract's schema shape, UNTRUSTED: the worker validates it again. */
+  readonly analysis: unknown;
+}
+export interface AutoSplitSuggestResult {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  readonly mode: 'human' | 'vehicle';
+  readonly suggestions: readonly Suggestion[];
+  readonly components: readonly ComponentSummary[];
+  readonly componentCount: number;
+  readonly faceCount: number;
+  /**
+   * Why the part is not yet a splittable closed solid, as `SplitSourceReason` codes; empty when it is
+   * one. An executable suggestion needs this to be empty; the suggestions are shown regardless.
+   */
+  readonly sourceReasons: readonly string[];
+}
+export interface AutoSplitComponentFacesPayload {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  readonly ranks: readonly number[];
+}
+export interface AutoSplitComponentFacesResult {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  /** Source face indices of the selected components, ascending. Transferred. */
+  readonly faces: Uint32Array;
+}
+export interface AutoSplitExtractPayload {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  /** Component ranks to take out as their own part (largest surface is rank 0). */
+  readonly ranks: readonly number[];
 }
 
 /* --------------------------------------------------------- surface texture -- */

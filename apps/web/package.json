@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/workers/tsconfig.json && tsc --noEmit -p src/workers/node-tests/tsconfig.json && tsc --noEmit -p e2e-harness/tsconfig.json && tsc --noEmit -p e2e-harness/worker/tsconfig.json"
   },
   "dependencies": {
+    "@cadfixer/auto-split": "*",
+    "@cadfixer/auto-split-contract": "*",
     "@cadfixer/file-formats": "*",
     "@cadfixer/geometry-runtime": "*",
     "@cadfixer/mesh-core": "*",

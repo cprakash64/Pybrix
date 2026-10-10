@@ -27,6 +27,12 @@ import {
   editCommitHandler,
   editDiscardHandler,
 } from './geometry-edit-handlers';
+import {
+  autoSplitComponentFacesHandler,
+  autoSplitExtractCreateHandler,
+  autoSplitRenderHandler,
+  autoSplitSuggestHandler,
+} from './auto-split-handlers';
 import { splitCommitHandler, splitCreateHandler, splitDiscardHandler } from './split-handlers';
 import {
   textureCreateHandler,
@@ -93,6 +99,11 @@ host.register('edit/discard', editDiscardHandler);
 host.register('split/create', splitCreateHandler);
 host.register('split/commit', splitCommitHandler);
 host.register('split/discard', splitDiscardHandler);
+// Auto Split, local half: two reads and one CANDIDATE. None of them commits; Apply is `split/commit`.
+host.register('autosplit/render', autoSplitRenderHandler);
+host.register('autosplit/suggest', autoSplitSuggestHandler);
+host.register('autosplit/component-faces', autoSplitComponentFacesHandler);
+host.register('autosplit/extract-create', autoSplitExtractCreateHandler);
 host.register('texture/create', textureCreateHandler);
 host.register('texture/select', textureSelectHandler);
 host.register('texture/layout', textureLayoutHandler);
