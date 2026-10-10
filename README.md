@@ -25,7 +25,7 @@ feature set with clearer Repair results. See the
   flow also runs in Playwright's WebKit build; Safari, Firefox and real mobile
   devices are **not** release-qualified. See
   [BROWSER_SUPPORT.md](docs/release/BROWSER_SUPPORT.md).
-- All geometry is processed in your browser. Nothing is uploaded.
+- All geometry is processed in your browser, and your files are never uploaded. The one exception is the opt-in **Auto Split (Beta)**, which — only after a disclosure the user accepts — sends six rendered views of the model and three bounded numbers to Pybrix's own same-origin service for AI part detection. Repair, Convert and Manual Split never make a network request.
 - Deliberately bounded: see
   [What is and is not implemented](#what-is-and-is-not-implemented).
 

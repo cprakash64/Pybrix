@@ -4,6 +4,13 @@ Pybrix's central promise is that a user's model never leaves their machine.
 This document defines what that means concretely, what network traffic is
 permitted, and how the constraint is enforced rather than merely intended.
 
+**One disclosed exception exists (ADR 0020): Auto Split (Beta).** If, and only
+if, a user chooses a model type, accepts a disclosure and presses Find parts,
+six rendered views of the model and three bounded numbers are sent to Pybrix's
+own same-origin service for AI part detection. The original file, its vertices
+and its faces are never sent, and Repair, Convert and Manual Split never make a
+network request. See §2 and `docs/adr/0020-auto-split-same-origin-service.md`.
+
 ## 1. The promise
 
 **Raw user geometry stays local by default.** Files are read, parsed, repaired,
@@ -17,21 +24,42 @@ being true.
 
 ## 2. Allowed network traffic
 
-Only these are permitted, and only the first exists today.
+Only these are permitted, and only the first two exist today.
 
-| Traffic                                                             | Status                        | Notes                                                                      |
-| ------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------- |
-| Static application assets (HTML, JS, CSS, WASM) from our own origin | **Present**                   | The application bundle itself. Same-origin only.                           |
-| Application update checks                                           | Not implemented               | Version metadata only. Must never carry document state.                    |
-| Anonymous aggregate telemetry                                       | Not implemented, not approved | Would require an ADR, a user-facing disclosure, and the constraints in §4. |
-| Authentication and billing                                          | Not implemented, out of scope | When added, must not touch the geometry pipeline.                          |
+| Traffic                                                             | Status                        | Notes                                                                                                                                                                                                 |
+| ------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Static application assets (HTML, JS, CSS, WASM) from our own origin | **Present**                   | The application bundle itself. Same-origin only.                                                                                                                                                      |
+| Auto Split analysis (`POST /api/auto-split/analyze`, same origin)   | **Present, opt-in, Beta**     | Six clean 512 px PNGs, a mode, a protocol version and three bounded numbers. One file in the browser makes the request; the service holds the provider key. Never a model file. See ADR 0020 and §2a. |
+| Application update checks                                           | Not implemented               | Version metadata only. Must never carry document state.                                                                                                                                               |
+| Anonymous aggregate telemetry                                       | Not implemented, not approved | Would require an ADR, a user-facing disclosure, and the constraints in §4.                                                                                                                            |
+| Authentication and billing                                          | Not implemented, out of scope | When added, must not touch the geometry pipeline.                                                                                                                                                     |
+
+### 2a. Auto Split, exactly
+
+- **Opt-in and disclosed.** Nothing is requested on import, on opening the Split workspace, on opening
+  the Auto Split tab or on choosing a model type. The first request follows a disclosure the user
+  accepts, then Find parts. Consent is held in memory for the page session only.
+- **What is sent**: a request id, `human` or `vehicle`, a protocol version, six shaded 512 × 512 PNGs
+  with no metadata and no interface, and the model's bounding-box extents, shell count and bounding
+  radius (normalised). **What cannot be sent**: a file, a file name, a vertex, a face, a unit, a part
+  name. The service refuses a request that carries any such field.
+- **Derived data**: six silhouettes with shading are derived from the model. They are not the file and
+  cannot be turned back into it, but they are not nothing, which is why this is disclosed rather than
+  described as "not uploaded".
+- **At the provider**: `store=false` is requested and the protocol is pinned server-side. Pybrix makes
+  no claim about the provider's own retention beyond that.
+- **Pybrix's logs**: request id, mode, protocol version, durations, HTTP statuses, token counts, an
+  approximate cost. Never an image, a payload, a header or a key.
+- **Cancel** aborts the browser request, which aborts the provider call, and a late answer is ignored.
+- **Off by default in the sense that matters**: a deployment without the service answers 404 and Auto
+  Split reports it unavailable.
 
 ## 3. Forbidden by default
 
 These are prohibited. Introducing any of them requires an explicit, recorded
 product decision — not a code review nod.
 
-- **Uploading an imported model**, in whole or in part, to any destination.
+- **Uploading an imported model**, in whole or in part, to any destination. (Auto Split sends rendered views, never the model or its mesh data; see §2a.)
 - **Uploading a repaired, converted, split, textured, or hollowed model.**
 - **Sending geometry to analytics** in any form, including derived data such as
   vertex positions, bounding boxes, or mesh hashes that could fingerprint a

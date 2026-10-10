@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { MAX_REQUEST_BODY_BYTES, PROVIDER_TIMEOUT_MS } from '@cadfixer/auto-split-contract';
 import { PRODUCTION_SECURITY_HEADERS } from '../apps/web/security-headers';
 
 /**
@@ -290,9 +291,12 @@ describe('HV-C07–HV-C11 — the nginx site template', () => {
     expect(templateCode).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/);
   });
 
-  it('HV-C09: proxies nothing — CAD Fixer is static', () => {
+  it('HV-C09: the static template proxies nothing — Auto Split is a separate, optional snippet', () => {
     expect(templateCode).not.toMatch(/proxy_pass/);
     expect(templateCode).not.toMatch(/upstream\s/);
+    // The ONLY way the template reaches the service is an optional include whose glob may match nothing.
+    const includes = [...templateCode.matchAll(/^\s*include\s+([^;]+);/gm)].map((m) => m[1]);
+    expect(includes).toContain('/etc/nginx/snippets/cad-fixer-auto-split*.conf');
   });
 
   it('HV-C10: no PHP, FastCGI, uWSGI, SCGI or directory listing', () => {
@@ -456,5 +460,85 @@ describe('HV-C20 — provider isolation', () => {
       expect(text.toLowerCase()).not.toContain('cloudflare');
       expect(text.toLowerCase()).not.toContain('wrangler');
     }
+  });
+});
+
+describe("HV-C30–HV-C37 — Auto Split's optional same-origin service (ADR 0020)", () => {
+  const AUTO_SPLIT_SNIPPET = join(DEPLOY_DIR, 'cad-fixer-auto-split.conf');
+  const UNIT = join(REPO_ROOT, 'deploy', 'auto-split', 'cad-fixer-auto-split.service');
+  const ENV_EXAMPLE = join(REPO_ROOT, 'deploy', 'auto-split', 'auto-split.env.example');
+  const snippetCode = stripComments(readFileSync(AUTO_SPLIT_SNIPPET, 'utf8'));
+  const proxyBlocks = locationBlocks(readFileSync(AUTO_SPLIT_SNIPPET, 'utf8'));
+  const body = (header: string): string => proxyBlocks.find((b) => b.header === header)?.body ?? '';
+
+  it('HV-C30: defines exactly the analyze and health locations and a 404 for the rest', () => {
+    expect(proxyBlocks.map((b) => b.header).sort()).toEqual(
+      ['/api/auto-split/', '= /api/auto-split/analyze', '= /api/auto-split/health'].sort(),
+    );
+    expect(body('/api/auto-split/').trim()).toBe('return 404;');
+  });
+
+  it('HV-C31: proxies only to the one loopback port, with no variable and no upstream', () => {
+    const targets = [...snippetCode.matchAll(/proxy_pass\s+([^;]+);/g)].map((m) => m[1]);
+    expect(targets).toEqual(['http://127.0.0.1:8787', 'http://127.0.0.1:8787']);
+    expect(snippetCode).not.toMatch(/proxy_pass\s+[^;]*\$/);
+    expect(snippetCode).not.toMatch(/upstream\s/);
+    expect(snippetCode).not.toMatch(/\brewrite\b/);
+    expect(snippetCode).not.toMatch(/proxy_cache/);
+  });
+
+  it('HV-C32: the analysis location takes POST only, and a body no larger than the contract allows', () => {
+    const analyze = body('= /api/auto-split/analyze');
+    expect(analyze).toMatch(/limit_except\s+POST\s*\{\s*deny\s+all;\s*\}/);
+    const size = /client_max_body_size\s+(\d+)k;/.exec(analyze);
+    expect(size, 'client_max_body_size must be stated in KiB').not.toBeNull();
+    const bytes = Number(size?.[1]) * 1024;
+    // Not below what a valid request needs, and not a generous multiple of it.
+    expect(bytes).toBeGreaterThanOrEqual(MAX_REQUEST_BODY_BYTES);
+    expect(bytes).toBeLessThan(MAX_REQUEST_BODY_BYTES * 1.1);
+  });
+
+  it('HV-C33: waits for the provider deadline plus a margin, and releases the provider when the browser leaves', () => {
+    const analyze = body('= /api/auto-split/analyze');
+    const read = /proxy_read_timeout\s+(\d+)s;/.exec(analyze);
+    expect(Number(read?.[1])).toBeGreaterThan(PROVIDER_TIMEOUT_MS / 1000);
+    expect(Number(read?.[1])).toBeLessThanOrEqual(300);
+    expect(analyze).toMatch(/proxy_ignore_client_abort\s+off;/);
+    expect(analyze).toMatch(/proxy_buffering\s+off;/);
+  });
+
+  it('HV-C34: the client address is set from the socket and credentials are never forwarded', () => {
+    const analyze = body('= /api/auto-split/analyze');
+    expect(analyze).toMatch(/proxy_set_header\s+X-Real-IP\s+\$remote_addr;/);
+    expect(analyze).toMatch(/proxy_set_header\s+X-Forwarded-For\s+"";/);
+    expect(analyze).toMatch(/proxy_set_header\s+Authorization\s+"";/);
+    expect(analyze).toMatch(/proxy_set_header\s+Cookie\s+"";/);
+  });
+
+  it('HV-C35: every location that sets a header re-includes the security snippet, and nothing is cached', () => {
+    for (const block of proxyBlocks.filter((b) => b.body.includes('add_header'))) {
+      expect(block.body, block.header).toContain(SECURITY_SNIPPET_INCLUDE);
+      expect(block.body, block.header).toMatch(/Cache-Control\s+"no-store"/);
+    }
+  });
+
+  it('HV-C36: the service runs unprivileged, from a root-owned environment file, with no key in the unit', () => {
+    const unit = stripComments(readFileSync(UNIT, 'utf8'));
+    expect(unit).toMatch(/^User=(?!root\b)\S+/m);
+    expect(unit).toMatch(/^EnvironmentFile=\/etc\/cad-fixer\/auto-split\.env$/m);
+    expect(unit).toMatch(/^NoNewPrivileges=true$/m);
+    expect(unit).toMatch(/^ProtectSystem=strict$/m);
+    expect(unit).not.toMatch(/OPENAI_API_KEY/);
+    expect(unit).not.toMatch(/sk-/);
+  });
+
+  it('HV-C37: the environment example holds no secret and listens on loopback only', () => {
+    const env = stripComments(readFileSync(ENV_EXAMPLE, 'utf8'));
+    expect(env).toMatch(/^OPENAI_API_KEY=$/m);
+    expect(env).toMatch(/^AUTO_SPLIT_HOST=127\.0\.0\.1$/m);
+    expect(env).toMatch(/^AUTO_SPLIT_PROVIDER=openai$/m);
+    expect(env).not.toMatch(/sk-[A-Za-z0-9]/);
+    // The mock provider is not a deployable setting.
+    expect(env).not.toMatch(/AUTO_SPLIT_PROVIDER=mock/);
   });
 });

@@ -62,6 +62,14 @@ export interface TransportOptions {
 /** Read through a call so a check after an `await` is not narrowed away by the one before it. */
 const isAborted = (signal: AbortSignal): boolean => signal.aborted;
 
+function codeForUnreadableReply(status: number): AnalyzeErrorCode {
+  if (status === 429) return AnalyzeErrorCode.RateLimited;
+  if (status === 503) return AnalyzeErrorCode.Busy;
+  if (status === 404 || status === 502 || status === 504)
+    return AnalyzeErrorCode.ProviderUnavailable;
+  return AnalyzeErrorCode.ProviderInvalidResponse;
+}
+
 const failure = (code: AnalyzeErrorCode, retryAfterSeconds?: number): ParsedResponse => ({
   ok: false,
   error: analyzeError(code, retryAfterSeconds),
@@ -102,14 +110,10 @@ export function createAnalysisTransport(options: TransportOptions = {}): Analysi
         try {
           body = JSON.parse(text);
         } catch {
-          // Not JSON: a proxy's error page, not our service. The page itself is never shown.
-          return failure(
-            response.status === 429
-              ? AnalyzeErrorCode.RateLimited
-              : response.status === 503
-                ? AnalyzeErrorCode.Busy
-                : AnalyzeErrorCode.ProviderInvalidResponse,
-          );
+          // Not JSON: a proxy's error page, not our service. The page itself is never shown. A path
+          // that does not exist (the service is not installed) and a gateway that cannot reach the
+          // service both mean the service is unavailable.
+          return failure(codeForUnreadableReply(response.status));
         }
         return parseAnalyzeResponse(body, { requestId: request.requestId, mode: request.mode });
       } catch {

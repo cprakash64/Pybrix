@@ -45,6 +45,11 @@ server {
     # Applies to every response from a location that sets no header of its own.
     include /etc/nginx/snippets/cad-fixer-security-headers.conf;
 
+    # OPTIONAL: Auto Split's same-origin analysis service (ADR 0020). The glob may match nothing, in
+    # which case this is the static site it always was. It lives in its own file so that this template
+    # keeps proxying nothing; see deploy/nginx/cad-fixer-auto-split.conf and deploy/auto-split/README.md.
+    include /etc/nginx/snippets/cad-fixer-auto-split*.conf;
+
     # The shell is revalidated, so a cached document can never point at hashed
     # chunks a newer release has replaced. Never `immutable`.
     location = /index.html {

@@ -144,6 +144,10 @@ describe('brand identity', () => {
       'Technical Preview · v0.6.1',
     );
     expect(about).toHaveTextContent('Models are processed locally in your browser.');
+    // The one exception is stated where the claim is made, not left to be discovered.
+    expect(about).toHaveTextContent('Your files are never uploaded.');
+    expect(about).toHaveTextContent('Auto Split (Beta), six rendered views of the model');
+    expect(about).toHaveTextContent('Repair, Convert and Manual Split stay local.');
     expect(screen.getByTestId('third-party-notices')).toHaveAttribute(
       'href',
       'third-party-notices.txt',

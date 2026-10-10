@@ -1,0 +1,39 @@
+# Pybrix — Auto Split analysis service (systemd). See deploy/auto-split/README.md.
+#
+# Install as /etc/systemd/system/cad-fixer-auto-split.service. The service receives six rendered views
+# and three bounded numbers, and holds the one secret in the whole product (the provider key), which
+# lives in the environment file below and nowhere else.
+
+[Unit]
+Description=Pybrix Auto Split analysis service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cad-fixer-auto-split
+Group=cad-fixer-auto-split
+WorkingDirectory=/opt/cad-fixer-auto-split
+ExecStart=/usr/bin/node /opt/cad-fixer-auto-split/main.js
+# 0600, owned by root: the key is never in the unit, the artifact or the repository.
+EnvironmentFile=/etc/cad-fixer/auto-split.env
+Restart=on-failure
+RestartSec=3
+
+# The service makes outbound HTTPS requests to its provider and listens on loopback; it needs nothing else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryMax=512M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

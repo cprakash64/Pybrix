@@ -16,6 +16,20 @@ before adoption. See [Geometry kernel licensing](#geometry-kernel-licensing).
 Versions below are the ranges declared in `package.json`, verified against the
 npm registry on 2026-08-14. Licences were read from published package metadata.
 
+## Auto Split (PYBRIX-08B-PROD-A1)
+
+**No third-party package was added.** The four new workspaces are first-party and
+private: `@cadfixer/auto-split-contract` (wire types, strict validators, PNG inspector, view
+cameras), `@cadfixer/auto-split` (the worker-side engine: six software renders, component matching,
+suggestions, component extraction), `@cadfixer/auto-split-api` (the same-origin service) and test
+fixtures under the engine package. The service uses Node's own `http` and `fetch`; there is no
+framework and no provider SDK, so the provider's wire format is read from its documented REST API
+rather than from a client library.
+
+The **provider** is an external service, not a dependency of the build: model `gpt-6.1-sol` through
+the Responses API, `store=false`, reached only from the service and only with a key that exists only on
+the server. Its terms and retention are the provider's. See ADR 0020 and `docs/PRIVACY_ARCHITECTURE.md`.
+
 ## Runtime dependencies
 
 | Package     | Version  | Purpose                | Source                                                           | Licence | Why this one                                                                                           | Risks                                                                                                                                                                                                                                                                             |

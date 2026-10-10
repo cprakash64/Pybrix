@@ -119,7 +119,9 @@ describe('how a reply is read', () => {
   it('treats a body that is not our JSON as a service fault, and never shows it', async () => {
     const req = await request();
     const cases: readonly [number, string, AnalyzeErrorCode][] = [
-      [502, '<html>Bad gateway</html>', AnalyzeErrorCode.ProviderInvalidResponse],
+      [502, '<html>Bad gateway</html>', AnalyzeErrorCode.ProviderUnavailable],
+      [404, '<html>Not Found</html>', AnalyzeErrorCode.ProviderUnavailable],
+      [500, '<html>oops</html>', AnalyzeErrorCode.ProviderInvalidResponse],
       [429, '<html>slow down</html>', AnalyzeErrorCode.RateLimited],
       [503, 'busy', AnalyzeErrorCode.Busy],
       [

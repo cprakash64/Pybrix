@@ -716,6 +716,15 @@ describe('no network API reaches production', () => {
 
 const AUTO_SPLIT_TRANSPORT = join('apps', 'web', 'src', 'runtime', 'auto-split-transport.ts');
 
+/** Code with comment lines removed, so prose that explains a ban is not mistaken for a use. */
+const codeOf = (path: string): string =>
+  readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+    .join('\n');
+/** The global `fetch`, called or merely referenced; not `fetcher` or `fetchImpl`. */
+const NAMES_FETCH = /(^|[^A-Za-z0-9_.$-])fetch\b(?!-)/;
+
 describe('Auto Split sends one same-origin request and nothing else (ADR 0020)', () => {
   const webSources = sourceFilesUnder(join(REPO_ROOT, 'apps', 'web', 'src')).filter(
     (file) => !/\.test\.(ts|tsx)$/.test(file),
@@ -723,7 +732,7 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
   const transportSource = readFileSync(join(REPO_ROOT, AUTO_SPLIT_TRANSPORT), 'utf8');
 
   it('has exactly one fetch in the whole browser application, and it is in the transport', () => {
-    const using = webSources.filter((file) => readFileSync(file, 'utf8').includes('fetch('));
+    const using = webSources.filter((file) => NAMES_FETCH.test(codeOf(file)));
     expect(using.map((file) => relative(REPO_ROOT, file))).toEqual([AUTO_SPLIT_TRANSPORT]);
     expect(transportSource.match(/fetch\(/g)).toHaveLength(1);
   });
@@ -771,7 +780,7 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
       (file) => !/\.test\.ts$/.test(file),
     );
     const fetching = serviceFiles
-      .filter((file) => readFileSync(file, 'utf8').includes('fetch('))
+      .filter((file) => NAMES_FETCH.test(codeOf(file)))
       .map((file) => relative(REPO_ROOT, file));
     expect(fetching).toEqual([join('apps', 'auto-split-api', 'src', 'openai-provider.ts')]);
 

@@ -100,6 +100,13 @@ preview read from the stored candidate, an explicit Apply and an Undo. See
 `docs/adr/0018-hole-filling-qualification.md`, its production addendum, its
 Stage 4B-1B1-R1 closure addendum and its Stage 4B-1B2 workflow addendum.
 
+**Stage 08B-PROD-A1 (a LOCAL PRODUCT CANDIDATE, not deployed) added Auto Split (Beta): ASSISTED
+part detection inside the Split workspace.** An AI provider, reached only through one same-origin
+service, says roughly where a head, an arm, a wheel, a cab or a body is in six rendered views; Pybrix
+turns that into EDITABLE SUGGESTIONS checked against the real geometry; the user previews, edits and
+applies through the existing split transaction. **It never changes a model by itself.** See
+`docs/adr/0020-auto-split-same-origin-service.md` and the Auto Split invariants below.
+
 **Topology diagnoses; it never repairs.** Connectivity is recovered from exact
 stored coordinates with no tolerance, and analysis leaves the canonical buffers
 byte-identical. See `docs/adr/0009-exact-topology-recovery.md`.
@@ -130,7 +137,9 @@ write; the rule is about commit trailers and identity fields only.
 2. **Raw user geometry stays local by default.** Never add code that transmits a
    user's model, or anything derived from it, anywhere.
 3. **No backend geometry processing.** No server-side geometry, no file upload
-   endpoint. The application is a static site.
+   endpoint. The application is a static site. **One disclosed exception (ADR 0020):** Auto Split's
+   optional same-origin service receives six rendered PNGs and three bounded numbers — never a model,
+   a vertex, a face or a file name — and the release bundle contains none of it.
 4. **Never do expensive geometry work on the UI thread.** Parsing, validation,
    repair, booleans, subdivision, displacement, hollowing, and export run in
    workers. If it touches a whole mesh, it belongs off-thread.
@@ -229,6 +238,7 @@ npm test             # Vitest unit and component tests
 npm run test:e2e     # Playwright end-to-end (needs `npx playwright install chromium`)
 npm run test:e2e:timing # Timing/responsiveness proofs, SERIAL (see below)
 npm run test:e2e:harness # Multi-part document proofs in Chromium, SERIAL (see below)
+npm run test:e2e:auto-split # Auto Split against the real service + a deterministic provider, SERIAL
 npm run verify       # format:check + lint + typecheck + test + build
 npm run release:check # verify + test:e2e + test:e2e:harness + test:e2e:timing, in order
 npm run bench:stl      # STL parser benchmark (NOT in CI)
@@ -630,6 +640,48 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   UUID checks A3 deliberately does not enforce. Neither is a licence to accept
   a negative case that changes GEOMETRY; each accepted negative is classified in
   the Stage 6D-A4 design section, and a new one must be too.
+
+## Auto Split invariants (Stage 08B-PROD-A1, ADR 0020)
+
+- **AUTO SPLIT NEVER MUTATES A MODEL.** The four `autosplit/*` worker operations read a part or build a
+  split CANDIDATE; none commits. Apply is the existing `split/commit`, Undo the existing `repair/undo`,
+  so one Apply is one document transaction and one Undo restores the exact previous mesh OBJECTS. A
+  boundary test asserts the handler module reaches no `replace`, `commit` or history call. Never add a
+  path that applies a suggestion without a preview the user asked for.
+- **A PROVIDER ANSWER IS DATA.** It arrives as `unknown`, is validated in the service, again in the
+  browser and again in the worker, and can only become suggestions. It cannot name a part, a revision, a
+  handle or an operation, and a test injects an instruction-shaped field to prove it.
+- **THE REQUEST HAS NO FIELD FOR GEOMETRY.** `AnalyzeRequest` is six clean 512 × 512 RGB PNGs, a mode, a
+  protocol version and three bounded numbers. The service refuses unknown keys and a deny-list of
+  mesh-looking keys (`RAW_GEOMETRY_REJECTED`), and the PNG inspector refuses any chunk but
+  `IHDR`/`IDAT`/`IEND`. Never widen the request without changing the contract, the validator, the
+  disclosure, the privacy document and the ADR together.
+- **THE KEY LIVES IN ONE PLACE.** `OPENAI_API_KEY` is read by the service at start-up and nowhere else:
+  not a `VITE_*` variable, not in a bundle, not in a log, an error, a response or a test (tests use an
+  obviously fake one). The browser supplies no prompt, model or URL; the protocol version is pinned in
+  server code and the vehicle protocol's three hashes are asserted.
+- **THE LOCAL SOURCE GATE IS MANUAL SPLIT'S, AND IT IS NOT WEAKENED.** A part that is not a closed solid
+  shows its suggestions with Preview and Edit disabled and "Part found, but this model needs Repair
+  before it can be split." Repair is offered only when every reason is one Repair addresses (winding,
+  degenerate or duplicate triangles).
+- **A SUGGESTION BELONGS TO A REVISION.** The session reads a result back only for the
+  (document, revision, part) it was made for: a new revision stales it (still listed, never
+  executable), another document clears it and the cache, and a run in flight for anything else is
+  cancelled. A late answer is dropped by generation, never applied.
+- **A PLANE SUGGESTION IS LOADED INTO MANUAL SPLIT'S CONTROLS**, by `planeSettingsFor`, which is
+  round-trip tested against `splitPlaneFor`. There is no second plane editor. When the controls cannot
+  express a plane exactly the nearest is loaded and the interface says so.
+- **THE MOCK PROVIDER AND THE TEST MODELS NEVER SHIP.** They exist in `packages/auto-split/src/fixtures`
+  and `apps/auto-split-api/src/test-server.ts` (own build, `dist-test`, git-ignored). The production
+  entry is `allowMock: false`; boundary tests assert nothing that ships imports either.
+- **CONSENT IS IN MEMORY ONLY.** Nothing is written to storage; the disclosure is asked again after a
+  reload. Nothing is requested on import, on opening the tab or on choosing a model type.
+- **THE COPY LIVES IN `state/auto-split-presentation.ts`**, all of it, with exhaustive switches. The only
+  claim it may make is "AI-assisted part detection with editable split suggestions": no accuracy figure,
+  no number that reads as confidence, no "perfect", "every part" or "one-click", no research vocabulary,
+  no retention promise. A test bans each.
+- **THE DEFAULT TAB IS MANUAL SPLIT**, so the qualified 08A workflow opens exactly as it did. Auto Split
+  is the second tab, badged Beta, and the Inspector is never opened by it.
 
 ## Streaming 3MF ingestion invariants (Stage 6E-A1 prototype, 6E-A2 production)
 
@@ -1708,7 +1760,10 @@ validated`, and the qualifier naming what was NOT examined travels with it.
   WebWorker globals conflict.
 - **Network APIs are lint errors.** `fetch`, `XMLHttpRequest`, `WebSocket`,
   `EventSource`, and `navigator.sendBeacon` are banned repo-wide. This is
-  deliberate — see `docs/PRIVACY_ARCHITECTURE.md`. Do not work around it.
+  deliberate — see `docs/PRIVACY_ARCHITECTURE.md`. Do not work around it. The ONLY
+  exemptions (ADR 0020) are `apps/web/src/runtime/auto-split-transport.ts`, the
+  service's `openai-provider.ts` and the service's own tests, each named in
+  `eslint.config.js`, and `production-boundary.test.ts` asserts there are no others.
 - **`eslint-plugin-react-hooks` flat config lives at `configs.flat[...]`**; the
   top-level `configs[...]` entries are the legacy shape and ESLint 10 rejects
   them.

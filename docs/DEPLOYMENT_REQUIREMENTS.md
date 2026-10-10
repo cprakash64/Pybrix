@@ -112,3 +112,20 @@ above will serve it.
 - Injected third-party tags at the edge (analytics, tag managers, session
   replay). These would break both the privacy promise and, under
   `require-corp`, quite possibly the application.
+
+## 6. Auto Split's optional service (ADR 0020)
+
+The static site is complete without it. To offer Auto Split (Beta), deploy the analysis service
+beside it, from the same commit, as described in `deploy/auto-split/README.md`:
+
+- The service is a separate process (`apps/auto-split-api`, built to `dist/main.js`) listening on
+  **127.0.0.1 only**, run unprivileged by systemd with its key in a root-owned, mode-0600 environment
+  file. The key is never in the repository, the unit, the release bundle or the browser.
+- nginx proxies **exactly** `/api/auto-split/analyze` (POST, body ≤ the contract's ceiling) and
+  `/api/auto-split/health` (GET) to that port, sets `X-Real-IP` from the socket, forwards no credentials,
+  and answers 404 for everything else under `/api/auto-split/`. The snippet is
+  `deploy/nginx/cad-fixer-auto-split.conf`; the static template includes it by a glob that may match
+  nothing.
+- **The Content-Security-Policy is unchanged** (`connect-src 'self'`). Do not widen it for this feature.
+- The mock provider and the test server are **not deployable**: the production entry refuses
+  `AUTO_SPLIT_PROVIDER=mock`.
