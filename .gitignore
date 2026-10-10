@@ -54,3 +54,4 @@ experiments/self-intersection/artifacts/
 # describes that tree and is deliberately never part of it.
 artifacts/release/
 dist-test/
+artifacts/auto-split-visual/

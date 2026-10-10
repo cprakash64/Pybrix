@@ -189,6 +189,10 @@ test('character: disclosure, six views and three numbers, a head suggestion, pre
   expect(server.received[0]?.imageCount).toBe(6);
   expect(thirdParty, 'nothing leaves the origin').toEqual([]);
 
+  // The Inspector is never opened for the person: collapsed before, collapsed now.
+  await expect(page.getByTestId('inspector-rail')).toBeVisible();
+  await expect(page.getByTestId('inspector')).toBeHidden();
+
   // Suggestions are rows with a status, never a number.
   await expect(page.getByTestId('auto-row-status-head')).toHaveText('Suggested');
   await expect(page.getByTestId('auto-row-status-left_arm')).toHaveText('Review cut');
@@ -202,6 +206,8 @@ test('character: disclosure, six views and three numbers, a head suggestion, pre
   // Preview, then the user's own Apply: one transaction.
   await previewAndApply(page, 'head');
   expect(await triangleCount(page)).not.toBe(triangles.toLocaleString('en-US'));
+
+  await expect(page.getByTestId('inspector')).toBeHidden();
 
   // The remaining suggestions are stale and Re-analyze is offered.
   await expect(page.getByTestId('auto-stale')).toBeVisible();
@@ -262,6 +268,11 @@ test('vehicle: a fused cab and bed is offered as one cut to review, and it previ
   // Editing it is editing Manual Split's own plane.
   await page.getByTestId('auto-edit-cab_bed').click();
   await expect(page.getByTestId('split-position-slider')).toBeVisible();
+  // A binary STL states no unit: analysis was allowed, and connectors stay locked until the person
+  // chooses how to read the numbers.
+  await expect(page.getByTestId('split-connectors-unit')).toBeVisible();
+  await expect(page.getByTestId('split-connector-pin')).toBeDisabled();
+  await expect(page.getByTestId('split-connector-dovetail')).toBeDisabled();
   await previewAndApply(page, 'cab_bed');
   await page.getByTestId('split-undo').click();
   await expect(page.getByTestId('fact-triangles')).toHaveText(triangles.toLocaleString('en-US'), {

@@ -63,7 +63,8 @@
     "qualify:streaming-corpus": "vitest run --config vitest.bench.config.ts scripts/streaming-corpus.suite.ts",
     "qualify:repair-core-06a": "vitest run --config vitest.bench.config.ts scripts/repair-core-06a-qualify.bench-suite.ts",
     "test:e2e:auto-split": "playwright test --config playwright.auto-split.config.ts",
-    "smoke:auto-split-live": "vitest run --config vitest.live.config.ts"
+    "smoke:auto-split-live": "vitest run --config vitest.live.config.ts",
+    "bench:auto-split": "vitest run --config vitest.bench.config.ts scripts/auto-split-performance.bench-suite.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

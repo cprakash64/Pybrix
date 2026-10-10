@@ -18,7 +18,6 @@ import {
 import { repairUndoHandler } from './repair-handlers';
 import { splitCommitHandler } from './split-handlers';
 import { repairHistory, residentDocuments, splitCandidates } from './stl-handlers';
-import handlerSource from './auto-split-handlers.ts?raw';
 
 /**
  * THE LOCAL HALF OF AUTO SPLIT, AT THE WORKER BOUNDARY.
@@ -221,19 +220,5 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
       autoSplitExtractCreateHandler({ source: stale, partId: PART, ranks: [1] }, context()),
     );
     expect(refusal.code).toBe(AppErrorCode.ModelUnavailable);
-  });
-});
-
-describe('the module cannot mutate a document', () => {
-  it('reaches no commit, replace, release or history call', () => {
-    for (const forbidden of [
-      '.replace(',
-      '.commit(',
-      'releaseDocument',
-      'repairHistory',
-      'markCommitted',
-    ]) {
-      expect(handlerSource, forbidden).not.toContain(forbidden);
-    }
   });
 });

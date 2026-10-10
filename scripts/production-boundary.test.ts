@@ -790,6 +790,30 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
     expect(entry).toContain('allowMock: false');
   });
 
+  it('cannot mutate a document: the Auto Split worker module reaches no commit, replace or history call', () => {
+    const handlers = codeOf(
+      join(REPO_ROOT, 'apps', 'web', 'src', 'workers', 'auto-split-handlers.ts'),
+    );
+    for (const forbidden of [
+      '.replace(',
+      '.commit(',
+      'releaseDocument',
+      'repairHistory',
+      'markCommitted',
+      'residentDocuments.commit',
+    ])
+      expect(handlers, forbidden).not.toContain(forbidden);
+    // The only store it may write to is the split CANDIDATE store, through the same three calls
+    // `split/create` makes; Apply is `split/commit`, in another module.
+    for (const used of [
+      'splitCandidates.begin(',
+      'splitCandidates.resolve(',
+      'splitCandidates.fail(',
+    ])
+      expect(handlers, used).toContain(used);
+    expect(handlers).not.toContain('splitCandidates.commit(');
+  });
+
   it('keeps the test models and mock scenarios out of everything that ships', () => {
     const shipped = [
       ...webSources,
