@@ -471,6 +471,30 @@ describe('an analysis', () => {
     expect(screen.getByTestId('split-cancel')).toBeInTheDocument();
   });
 
+  it('a service-wide capacity refusal reads as such, says nothing about counts, and leaves the other workflows alone', async () => {
+    mount({
+      response: () =>
+        Promise.resolve({
+          ok: false,
+          error: analyzeError(AnalyzeErrorCode.AtCapacity, 600),
+        } satisfies ParsedResponse),
+    });
+    await findParts('human');
+    const error = screen.getByTestId('auto-error');
+    expect(error).toHaveAttribute('role', 'alert');
+    expect(screen.getByTestId('auto-error-message')).toHaveTextContent(
+      'Auto Split is temporarily at capacity. Try again later.',
+    );
+    expect(screen.getByTestId('auto-error-detail')).toHaveTextContent(
+      'Repair and Manual Split are not affected.',
+    );
+    expect(error.textContent).not.toMatch(/\d|minute|hour|limit|cost/i);
+    expect(within(error).getByTestId('auto-try-again')).toBeInTheDocument();
+    // Manual Split is still right there.
+    fireEvent.click(screen.getByTestId('split-tab-manual'));
+    expect(screen.getByTestId('split-preview')).toBeEnabled();
+  });
+
   it('turns a failure into a decision with our own sentence and a way forward', async () => {
     mount({
       response: () =>

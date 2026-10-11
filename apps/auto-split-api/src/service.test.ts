@@ -392,6 +392,7 @@ describe('the limiter', () => {
     let clock = 0;
     const limiter = new AnalysisLimiter(
       {
+        ...DEFAULT_LIMITS,
         perClientMax: 2,
         windowMs: 1000,
         perClientConcurrent: 1,
@@ -421,6 +422,7 @@ describe('the limiter', () => {
   it('forgets the oldest idle clients and never one that is running', () => {
     const limiter = new AnalysisLimiter(
       {
+        ...DEFAULT_LIMITS,
         perClientMax: 5,
         windowMs: 1000,
         perClientConcurrent: 1,

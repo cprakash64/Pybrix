@@ -60,9 +60,20 @@ Estimated time: under two minutes, dominated by the two root commands.
 ## Observability and cost
 
 The service logs, per request: request id, mode, protocol version, durations, HTTP statuses, token
-counts and an approximate cost, and refusals including rate-limit events. No image, geometry, answer
-body or file name is ever logged. Limits: 8 analyses per hour per client, 1 concurrent per client, 6
-concurrent overall. Upper bound on spend: six concurrent requests at the highest observed cost
-(about $0.03 each, 25 s) is roughly 6 × 3600 / 25 × $0.03 ≈ $26 per hour if the global ceiling were
-saturated continuously by many distinct clients; the per-client limit makes sustained saturation by one
-client impossible. This is planning, not a guarantee.
+counts and an approximate cost, and refusals including rate-limit and capacity events. No image,
+geometry, answer body or file name is ever logged.
+
+**Limits.** Per client: 8 analyses an hour, 1 at a time. Service-wide: 6 at a time, and **60 provider
+attempts an hour and 300 a day** whoever asks (`AUTO_SPLIT_GLOBAL_*`). Semantics: an analysis spends one
+attempt when it is admitted to the provider, and a retry of a transient failure spends one more (a retry
+that finds no room is not made); invalid, cross-origin, wrong-type, raw-mesh, per-client-refused and
+busy-refused requests spend nothing; a cancel or a provider error after dispatch does not give the
+attempt back. The counters are process-local (**single process**: a second Auto Split process would
+double the ceilings), reset when the service restarts (**limit resets on restart**: acceptable for the
+beta because only the administrator can restart it, and a crash-looping service is held by systemd's
+`StartLimitBurst`), and use no client-supplied value, so forged addresses and forwarding headers cannot move
+them. A refusal answers 429 `AT_CAPACITY` with a fixed `Retry-After: 600` and no counts.
+
+**Bound.** At the highest cost seen in qualification ($0.03): 60 × $0.03 = **$1.80 an hour** and
+300 × $0.03 = **$9 a day**, in provider attempts. This is a bound on REQUEST COUNT, not a dollar cap and
+not a billing guarantee; provider billing can vary. Also set a hard budget on the provider's own project.

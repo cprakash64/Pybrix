@@ -36,6 +36,16 @@ sudo systemctl daemon-reload && sudo systemctl enable --now cad-fixer-auto-split
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+## Limits
+
+Per client (by the address nginx passes): 8 analyses an hour, 1 at a time. Service-wide: 6 at a time,
+**60 provider attempts an hour and 300 a day**, whoever asks. The service-wide windows are in-process
+counters: they do not survive a restart, they are not shared between processes (running a second
+Auto Split process would double the ceilings), and nothing a request carries can move them. A request
+refused for capacity answers 429 `AT_CAPACITY` with a fixed `Retry-After: 600` and no counts. See the
+variables in `auto-split.env.example`. At $0.03 a request the ceilings bound request-count exposure at
+about $1.80 an hour and $9 a day; they are not a dollar cap, so also set a budget on the provider's project.
+
 ## Check
 
 ```bash

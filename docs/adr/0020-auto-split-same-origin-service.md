@@ -79,7 +79,10 @@ global `fetch` only). It owns everything the browser must not control:
   browser cannot reach a protocol the server changed. The browser supplies no prompt, model or URL.
 - **Limits**: body size, image count and dimensions, MIME, mode, schema; a provider deadline (150 s), one
   bounded retry of a transient failure; **rate limiting per client address** (default 8 analyses per
-  hour, one at a time per client, six at once overall) and a cost guard through those ceilings.
+  hour, one at a time per client, six at once overall) and, since RC2.2, **service-wide ceilings of 60
+  provider attempts an hour and 300 a day** that no client identity can move (sliding windows in fixed
+  rings, process-local, reset on restart, a retry spends a second attempt; refusal is 429 `AT_CAPACITY`
+  with no counts). They bound request count, not dollars.
 - **Cancellation propagates**: the browser aborts its request, the connection closes, and the service
   aborts its provider call when the connection does. A response that arrives after is never read.
 - **Sanitised errors**: the response carries a code and a sentence Pybrix wrote; provider text, headers

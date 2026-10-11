@@ -51,6 +51,7 @@ const STATUS_FOR: Readonly<Record<AnalyzeErrorCode, number>> = {
   UNSUPPORTED_PROTOCOL: 400,
   RATE_LIMITED: 429,
   BUSY: 503,
+  AT_CAPACITY: 429,
   PROVIDER_UNAVAILABLE: 502,
   PROVIDER_TIMEOUT: 504,
   PROVIDER_INVALID_RESPONSE: 502,
@@ -134,6 +135,15 @@ function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   });
 }
 
+/** The refusal for an admission reason. Capacity carries a fixed, coarse wait: nothing about counts or windows. */
+const CAPACITY_RETRY_AFTER_SECONDS = 600;
+function refusalFor(reason: 'rate' | 'capacity' | 'busy', retryAfterSeconds: number): AnalyzeError {
+  if (reason === 'rate') return analyzeError(AnalyzeErrorCode.RateLimited, retryAfterSeconds);
+  if (reason === 'capacity')
+    return analyzeError(AnalyzeErrorCode.AtCapacity, CAPACITY_RETRY_AFTER_SECONDS);
+  return analyzeError(AnalyzeErrorCode.Busy, retryAfterSeconds);
+}
+
 function failureCode(kind: ProviderFailureKind): AnalyzeErrorCode {
   switch (kind) {
     case ProviderFailureKind.Timeout:
@@ -172,7 +182,8 @@ const pause = (ms: number, signal: AbortSignal): Promise<void> =>
 
 export function createAnalysisServer(deps: ServiceDeps): Server {
   const { config, provider, logger } = deps;
-  const now = deps.now ?? ((): number => Date.now());
+  // MONOTONIC by default: windows and durations must not jump if the wall clock is set.
+  const now = deps.now ?? ((): number => performance.now());
   const limiter = new AnalysisLimiter(config.limits, now);
 
   async function callProvider(
@@ -195,6 +206,8 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
             : new ProviderFailure(ProviderFailureKind.Unavailable);
         if (signal.aborted) throw new ProviderFailure(ProviderFailureKind.Cancelled);
         if (!failure.transient || attempts > config.providerRetries) throw failure;
+        // A retry is another billable call: it spends from the service-wide windows or it is not made.
+        if (!limiter.tryConsumeRetry()) throw failure;
         await pause(config.retryDelayMs, signal);
         if (isAborted(signal)) throw new ProviderFailure(ProviderFailureKind.Cancelled);
       }
@@ -233,7 +246,7 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
     }
     const early = limiter.wouldRefuse(client);
     if (early !== undefined) {
-      refuse(analyzeError(AnalyzeErrorCode.RateLimited, early.retryAfterSeconds));
+      refuse(refusalFor(early.reason, early.retryAfterSeconds));
       return;
     }
 
@@ -265,10 +278,7 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
     const admission = limiter.admit(client);
     if (!admission.allowed) {
       refuse(
-        analyzeError(
-          admission.reason === 'rate' ? AnalyzeErrorCode.RateLimited : AnalyzeErrorCode.Busy,
-          admission.retryAfterSeconds,
-        ),
+        refusalFor(admission.reason, admission.retryAfterSeconds),
         request.requestId,
         body.length,
       );

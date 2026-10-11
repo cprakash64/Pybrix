@@ -152,6 +152,20 @@ describe('errors', () => {
     expect(describeError({ code: LocalErrorCode.SourceChanged, message: 'x' }).canRetry).toBe(true);
   });
 
+  it('tells a person only that Auto Split is at capacity: no wait, count, cost or limit', () => {
+    const view = describeError({
+      code: AnalyzeErrorCode.AtCapacity,
+      message: ANALYZE_ERROR_MESSAGES[AnalyzeErrorCode.AtCapacity],
+      retryAfterSeconds: 600,
+    });
+    expect(view.message).toBe('Auto Split is temporarily at capacity. Try again later.');
+    expect(view.canRetry).toBe(true);
+    expect(view.detail).toBe('Repair and Manual Split are not affected.');
+    expect(`${view.message} ${view.detail ?? ''}`).not.toMatch(
+      /\d|minute|second|hour|limit|cost|\$|token/i,
+    );
+  });
+
   it('turns a retry delay into words', () => {
     expect(
       describeError({ code: AnalyzeErrorCode.RateLimited, message: 'x', retryAfterSeconds: 45 })

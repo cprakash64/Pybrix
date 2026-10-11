@@ -44,6 +44,10 @@ export default defineConfig({
         AUTO_SPLIT_HOST: '127.0.0.1',
         AUTO_SPLIT_TRUST_PROXY: '1',
         AUTO_SPLIT_RATE_MAX: '3',
+        // The service-wide ceilings are proven in the service tests with a counting provider; here they are
+        // set out of the way so a long suite (or a screenshot run) cannot meet them by accident.
+        AUTO_SPLIT_GLOBAL_RATE_MAX: '100000',
+        AUTO_SPLIT_GLOBAL_DAILY_MAX: '100000',
         AUTO_SPLIT_PROVIDER_RETRIES: '0',
         AUTO_SPLIT_RETRY_DELAY_MS: '0',
       },

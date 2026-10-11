@@ -257,6 +257,14 @@ export function describeError(error: AutoSplitErrorView): ErrorGuidance {
     case AnalyzeErrorCode.RateLimited:
     case AnalyzeErrorCode.Busy:
       return { message: error.message, canRetry: true, detail: wait };
+    case AnalyzeErrorCode.AtCapacity:
+      // A service-wide ceiling: the person did nothing, and is told no more than that. No wait is quoted,
+      // because the wait says something about the ceiling.
+      return {
+        message: error.message,
+        canRetry: true,
+        detail: 'Repair and Manual Split are not affected.',
+      };
     case AnalyzeErrorCode.UnsupportedProtocol:
       return { message: error.message, canRetry: false, detail: undefined };
     case AnalyzeErrorCode.UnsupportedMode:

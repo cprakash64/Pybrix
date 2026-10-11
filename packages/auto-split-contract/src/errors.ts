@@ -13,6 +13,11 @@ export const AnalyzeErrorCode = {
   RateLimited: 'RATE_LIMITED',
   /** Too many analyses are running; try again shortly. */
   Busy: 'BUSY',
+  /**
+   * Auto Split as a whole is at its capacity for now (a service-wide ceiling, not this person's own
+   * use). Says nothing about counts, cost or the provider.
+   */
+  AtCapacity: 'AT_CAPACITY',
   ProviderUnavailable: 'PROVIDER_UNAVAILABLE',
   ProviderTimeout: 'PROVIDER_TIMEOUT',
   /** The provider answered, and not with an answer the contract accepts. */
@@ -43,6 +48,7 @@ export const ANALYZE_ERROR_MESSAGES: Readonly<Record<AnalyzeErrorCode, string>> 
   UNSUPPORTED_PROTOCOL: 'This version of Pybrix is out of date. Reload the page and try again.',
   RATE_LIMITED: 'Auto Split has been used a lot from this connection. Try again in a little while.',
   BUSY: 'Auto Split is busy right now. Try again in a moment.',
+  AT_CAPACITY: 'Auto Split is temporarily at capacity. Try again later.',
   PROVIDER_UNAVAILABLE: 'The part-finding service is unavailable right now. Try again later.',
   PROVIDER_TIMEOUT: 'The part-finding service took too long to answer. Try again.',
   PROVIDER_INVALID_RESPONSE:

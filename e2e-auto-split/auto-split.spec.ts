@@ -646,3 +646,41 @@ test('RC2.1, vehicle: the same holds when Auto Split took components out', async
   });
   expect((await exportActivePart(page)).equals(original)).toBe(true);
 });
+
+test('RC2.2: a service-wide capacity refusal reaches the person as such, and the other workflows carry on', async ({
+  page,
+}) => {
+  // The real service's wire format for a capacity refusal, served by the page's route table so that no
+  // paid or mock provider is involved: this proves the BROWSER's handling of the response.
+  await page.route('**/api/auto-split/analyze', async (route) => {
+    await route.fulfill({
+      status: 429,
+      contentType: 'application/json',
+      headers: { 'retry-after': '600', 'cache-control': 'no-store' },
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          code: 'AT_CAPACITY',
+          message: 'Auto Split is temporarily at capacity. Try again later.',
+          retryAfterSeconds: 600,
+        },
+      }),
+    });
+  });
+  const triangles = await openMesh(page, 'figure.stl', humanFigure().mesh);
+  await enterAuto(page);
+  await accept(page, 'human');
+  await findParts(page);
+  await expect(page.getByTestId('auto-error-message')).toHaveText(
+    'Auto Split is temporarily at capacity. Try again later.',
+  );
+  await expect(page.getByTestId('auto-error-detail')).toHaveText(
+    'Repair and Manual Split are not affected.',
+  );
+  await expect(page.getByTestId('auto-error')).not.toContainText(/\d|minute|hour|limit|cost/i);
+  expect(await triangleCount(page)).toBe(triangles.toLocaleString('en-US'));
+  // Manual Split works as usual.
+  await page.getByTestId('split-tab-manual').click();
+  await page.getByTestId('split-preview').click();
+  await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 120_000 });
+});

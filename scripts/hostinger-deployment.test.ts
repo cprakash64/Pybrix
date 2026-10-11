@@ -549,6 +549,11 @@ describe("HV-C30–HV-C37 — Auto Split's optional same-origin service (ADR 002
     expect(env).toMatch(/^OPENAI_API_KEY=$/m);
     expect(env).toMatch(/^AUTO_SPLIT_HOST=127\.0\.0\.1$/m);
     expect(env).toMatch(/^AUTO_SPLIT_PROVIDER=openai$/m);
+    // The service-wide ceilings are stated, at the qualified defaults.
+    expect(env).toMatch(/^AUTO_SPLIT_GLOBAL_RATE_MAX=60$/m);
+    expect(env).toMatch(/^AUTO_SPLIT_GLOBAL_RATE_WINDOW_SECONDS=3600$/m);
+    expect(env).toMatch(/^AUTO_SPLIT_GLOBAL_DAILY_MAX=300$/m);
+    expect(env).toMatch(/^AUTO_SPLIT_GLOBAL_DAILY_WINDOW_SECONDS=86400$/m);
     expect(env).not.toMatch(/sk-[A-Za-z0-9]/);
     // The mock provider is not a deployable setting.
     expect(env).not.toMatch(/AUTO_SPLIT_PROVIDER=mock/);

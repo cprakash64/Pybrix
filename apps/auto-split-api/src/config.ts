@@ -15,6 +15,15 @@ export interface LimitConfig {
   readonly globalConcurrent: number;
   /** The most clients the limiter remembers; the oldest are forgotten first. */
   readonly maxTrackedClients: number;
+  /**
+   * THE SERVICE-WIDE CEILINGS, independent of who is asking. Each counts PROVIDER ATTEMPTS inside a
+   * sliding window: an analysis consumes one when it is admitted to the provider, and a retry of a
+   * transient failure consumes one more. Nothing a client sends is an input to them.
+   */
+  readonly globalRateMax: number;
+  readonly globalRateWindowMs: number;
+  readonly globalDailyMax: number;
+  readonly globalDailyWindowMs: number;
 }
 
 export interface ServerConfig {
@@ -41,7 +50,15 @@ export const DEFAULT_LIMITS: LimitConfig = Object.freeze({
   perClientConcurrent: 1,
   globalConcurrent: 6,
   maxTrackedClients: 20_000,
+  // 60 an hour and 300 a day: at the highest cost seen in qualification ($0.03) about $1.80 and $9.
+  globalRateMax: 60,
+  globalRateWindowMs: 60 * 60 * 1000,
+  globalDailyMax: 300,
+  globalDailyWindowMs: 24 * 60 * 60 * 1000,
 });
+
+/** The most entries a global window may hold: its memory is exactly this many numbers, whatever arrives. */
+export const MAX_GLOBAL_ENTRIES = 100_000;
 
 export const PRODUCTION_MODEL = 'gpt-6.1-sol';
 export const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
@@ -64,6 +81,9 @@ function integer(
 ): number {
   const raw = env[name];
   if (raw === undefined || raw === '') return fallback;
+  // Digits only: `1e3`, `0x10`, `+5`, `60.0` and ` 60` are not what anyone meant, and are refused rather than read.
+  if (!/^[0-9]{1,15}$/.test(raw))
+    throw new ConfigError(`${name} must be an integer from ${String(min)} to ${String(max)}.`);
   const value = Number(raw);
   if (!Number.isInteger(value) || value < min || value > max)
     throw new ConfigError(`${name} must be an integer from ${String(min)} to ${String(max)}.`);
@@ -124,6 +144,36 @@ export function parseConfig(env: NodeJS.ProcessEnv, options: { allowMock: boolea
         1000,
       ),
       maxTrackedClients: DEFAULT_LIMITS.maxTrackedClients,
+      globalRateMax: integer(
+        env,
+        'AUTO_SPLIT_GLOBAL_RATE_MAX',
+        DEFAULT_LIMITS.globalRateMax,
+        1,
+        MAX_GLOBAL_ENTRIES,
+      ),
+      globalRateWindowMs:
+        integer(
+          env,
+          'AUTO_SPLIT_GLOBAL_RATE_WINDOW_SECONDS',
+          DEFAULT_LIMITS.globalRateWindowMs / 1000,
+          1,
+          7 * 86_400,
+        ) * 1000,
+      globalDailyMax: integer(
+        env,
+        'AUTO_SPLIT_GLOBAL_DAILY_MAX',
+        DEFAULT_LIMITS.globalDailyMax,
+        1,
+        MAX_GLOBAL_ENTRIES,
+      ),
+      globalDailyWindowMs:
+        integer(
+          env,
+          'AUTO_SPLIT_GLOBAL_DAILY_WINDOW_SECONDS',
+          DEFAULT_LIMITS.globalDailyWindowMs / 1000,
+          1,
+          30 * 86_400,
+        ) * 1000,
     },
     trustProxy: env.AUTO_SPLIT_TRUST_PROXY === '1',
     providerTimeoutMs: integer(env, 'AUTO_SPLIT_PROVIDER_TIMEOUT_MS', 150_000, 1000, 600_000),
