@@ -554,3 +554,153 @@ test('screenshots: the size notice, the phases and the results at the ceiling', 
   await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 600_000 });
   await page.screenshot({ path: `${dir}/09-cab-bed-preview-at-the-ceiling.png` });
 });
+
+/**
+ * THE REPORTED FILE, READ-ONLY. `LM_FILE=<path to a binary STL>` runs the whole chain on a real model:
+ * import (the file is only read), Auto Split with the deterministic provider, every suggestion the model
+ * lets be previewed (Preview, Apply, Undo, export identical to the original), and then a Manual Split cut
+ * through the middle, which does not depend on what the provider said. The mock provider's answers
+ * describe the synthetic truck, not this file, so which suggestions are executable is the MODEL'S
+ * business: what is asserted is that nothing is refused for size, nothing crashes, and Undo restores the
+ * original bytes whatever was applied.
+ */
+test('the reported file: no size refusal, and Apply then Undo exports the original bytes', async ({
+  page,
+}) => {
+  const file = process.env.LM_FILE;
+  test.skip(file === undefined, 'set LM_FILE to a binary STL to run this on a real model');
+  if (file === undefined) return;
+  test.setTimeout(3_600_000);
+  const log = (row: Record<string, unknown>): void => {
+    mkdirSync(OUT, { recursive: true });
+    const line = JSON.stringify({ label: 'real-file', ...row });
+    appendFileSync(`${OUT}/browser-${TAG}.jsonl`, `${line}\n`);
+    console.warn(line);
+  };
+  const network = watchNetwork(page);
+  const problems: string[] = [];
+  page.on('crash', () => problems.push('PAGE CRASH'));
+  page.on('pageerror', (error) => problems.push(`pageerror: ${error.message.slice(0, 160)}`));
+  let t = Date.now();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('browse-button').click();
+  await (await chooser).setFiles(file);
+  await expect(page.getByTestId('fact-triangles')).toHaveText(/^[\d,]+$/, { timeout: 900_000 });
+  const triangleText = ((await page.getByTestId('fact-triangles').textContent()) ?? '').trim();
+  log({ phase: 'import', triangles: triangleText, ms: Date.now() - t, rssMB: browserRssMb() });
+  await page.waitForTimeout(3000);
+  const original = await exportDigest(page);
+  log({ phase: 'export-original', ...original, rssMB: browserRssMb() });
+
+  await page.getByTestId('workflow-split').click();
+  await page.getByTestId('split-tab-auto').click();
+  await expect(page.getByTestId('auto-too-detailed')).toHaveCount(0);
+  await page.getByTestId('auto-kind-vehicle').check({ force: true });
+  await page.getByTestId('auto-disclosure-continue').click();
+  await startGaps(page);
+  t = Date.now();
+  await page.getByTestId('auto-analyze').click();
+  await expect(
+    page
+      .locator(
+        '[data-testid="auto-results"], [data-testid="auto-error"], [data-testid="auto-source-not-ready"]',
+      )
+      .first(),
+  ).toBeVisible({ timeout: 900_000 });
+  log({
+    phase: 'find-parts',
+    ms: Date.now() - t,
+    gaps: await stopGaps(page),
+    errorShown: (await page.getByTestId('auto-error').count()) > 0,
+    sourceNotReady: (await page.getByTestId('auto-source-not-ready').count()) > 0,
+    rssMB: browserRssMb(),
+  });
+  expect(await page.getByTestId('auto-error').count()).toBe(0);
+  const statuses: Record<string, string> = {};
+  for (const element of await page.locator('[data-testid^="auto-row-status-"]').all())
+    statuses[((await element.getAttribute('data-testid')) ?? '').replace('auto-row-status-', '')] =
+      ((await element.textContent()) ?? '').trim();
+  log({ phase: 'suggestions', statuses });
+
+  const applyUndo = async (label: string, start: () => Promise<void>): Promise<void> => {
+    await startGaps(page);
+    t = Date.now();
+    await start();
+    await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 900_000 });
+    log({
+      phase: `preview-${label}`,
+      ms: Date.now() - t,
+      gaps: await stopGaps(page),
+      rssMB: browserRssMb(),
+    });
+    t = Date.now();
+    await page.getByTestId('split-apply').click();
+    await expect(page.getByTestId('split-undo')).toBeVisible({ timeout: 900_000 });
+    log({ phase: `apply-${label}`, ms: Date.now() - t, rssMB: browserRssMb() });
+    t = Date.now();
+    await page.getByTestId('split-undo').click();
+    await expect(page.getByTestId('split-undo')).toHaveCount(0, { timeout: 900_000 });
+    log({ phase: `undo-${label}`, ms: Date.now() - t, rssMB: browserRssMb() });
+    const after = await exportDigest(page);
+    const identical = after.sha === original.sha && after.bytes === original.bytes;
+    log({ phase: `export-after-undo-${label}`, ...after, byteIdenticalToOriginal: identical });
+    expect(identical, `export after Undo of ${label} differs from the original export`).toBe(true);
+  };
+
+  const notClosed = (await page.getByTestId('auto-source-not-ready').count()) > 0;
+  if (notClosed) {
+    // A property of the FILE, not of its size: a surface with openings cannot be split by either
+    // tool until it is repaired. What must hold is that this is said as what it is, that no size verdict
+    // is given, and that the attempt leaves the model exactly as it was.
+    await page.getByTestId('split-tab-manual').click();
+    await page.getByTestId('split-preview').click();
+    const refusal = page.getByTestId('split-error');
+    await expect(refusal).toBeVisible({ timeout: 300_000 });
+    const text = ((await refusal.textContent()) ?? '').trim();
+    log({
+      phase: 'manual-preview-refused',
+      text: text.slice(0, 300),
+      sizeVerdict: /too detailed|more room/i.test(text),
+    });
+    expect(text).not.toMatch(/too detailed|more room|limit/i);
+    const unchanged = await exportDigest(page);
+    log({
+      phase: 'export-after-refusal',
+      ...unchanged,
+      byteIdenticalToOriginal: unchanged.sha === original.sha,
+    });
+    expect(unchanged.sha).toBe(original.sha);
+  } else {
+    let executed = 0;
+    for (const id of Object.keys(statuses)) {
+      if (executed >= 2) break;
+      const preview = page.getByTestId(`auto-preview-${id}`);
+      if ((await preview.count()) === 0 || !(await preview.isEnabled())) continue;
+      executed += 1;
+      await applyUndo(`auto-${id.replace(':', '_')}`, async () => {
+        await preview.click();
+      });
+      // Undo moved the revision on, so the list is stale: look at the part now shown before the next one.
+      await page.getByTestId('workflow-split').click();
+      await page.getByTestId('split-tab-auto').click();
+      const again = page.getByTestId('auto-reanalyze');
+      if ((await again.count()) > 0) {
+        await again.click();
+        await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 900_000 });
+        await expect(page.getByTestId('auto-stale')).toHaveCount(0, { timeout: 900_000 });
+      }
+    }
+    log({ phase: 'auto-suggestions-executed', executed });
+    // Manual Split through the middle: independent of the provider, so the exact split at this size is
+    // exercised on this file even if no suggestion was executable.
+    await page.getByTestId('split-tab-manual').click();
+    await applyUndo('manual-centre', async () => {
+      await page.getByTestId('split-preview').click();
+    });
+  }
+  expect(network.analyze.length).toBeLessThanOrEqual(3);
+  expect(network.foreign).toEqual([]);
+  expect(network.bigBodies).toEqual([]);
+  log({ phase: 'end', problems, analyzeRequests: network.analyze });
+  expect(problems).toEqual([]);
+});

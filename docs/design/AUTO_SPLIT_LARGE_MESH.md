@@ -277,6 +277,28 @@ about half of what the Node figure suggests: the browser adds the Boolean worker
 render snapshot of both pieces, their transfer, and the viewport's scene rebuild. Most of the remaining
 time is NOT the kernel: in Node the two Booleans are 7 of 18.6 s.
 
+### The reported file, read-only
+
+The reported 1,988,877-triangle vehicle exists locally (`~/Downloads/Hitem3d-1785766060812.stl`, 99,443,934
+bytes; two other copies sit in `~/Developer/cadfixer-05a-artifacts`). It was opened by the browser and
+read, never written (its size and modification time are unchanged), and run through `LM_FILE=... npm run
+test:e2e:auto-split-large`:
+
+- imported (1,988,877 triangles) and exported byte-for-byte as it was read;
+- **Find parts ran at this size with no size refusal** (11 to 19 s on a loaded host; largest frame gap
+  134 to 147 ms) and listed its suggestions;
+- the file is **not a closed solid** (open boundaries and non-manifold edges), so Preview is disabled on
+  every suggestion ("Repair model first") and Manual Split refuses it as "requires a closed solid ... it still
+  has open boundaries; it has non-manifold edges or vertices", which is the file's own property and has
+  nothing to do with its size (asserted: no size wording, and the export after the attempt is unchanged);
+- the Preview, Apply, Undo and Export chain therefore runs on the closed 1,992,704- and 2,000,000-triangle
+  fixtures above, which carry the same size and the same shape of work. Repair is the way into the real
+  file, and was not part of this stage.
+- Its request body was **734,676 bytes**, against 26,135 for the synthetic fixtures at every size: the
+  request does not depend on the triangle count but its six PNGs depend on what the views contain, and a
+  detailed real model compresses worse than flat-shaded boxes. Both are far inside the request limits, and
+  the earlier 0.4 to 0.5 MiB figure for real models is the same effect.
+
 ## 9. Residual risks
 
 - **Preview, Apply and Undo block the page for seconds at 1.5 to 2 M.** Unchanged by this stage and
@@ -350,10 +372,11 @@ crashed, ran out of memory or was refused, not because a 4 GiB bar was cleared.
 `store: false`, the strict schema, the per-client and service-wide limits and the key handling are the
 same code. The request is the same request at every size:
 
-|                                | body                           | images             | other                                                             |
-| ------------------------------ | ------------------------------ | ------------------ | ----------------------------------------------------------------- |
-| 500,000 to 2,000,000 triangles | **26,135 bytes** at every size | six 512 x 512 PNGs | three bounded numbers, the mode, a protocol version, a request id |
-| with 105 and 1,005 shells      | 26,197 and 26,246 bytes        | six                | the digits of the bounding numbers differ                         |
+|                                            | body                           | images             | other                                                              |
+| ------------------------------------------ | ------------------------------ | ------------------ | ------------------------------------------------------------------ |
+| 500,000 to 2,000,000 triangles (synthetic) | **26,135 bytes** at every size | six 512 x 512 PNGs | three bounded numbers, the mode, a protocol version, a request id  |
+| the reported 1,988,877-triangle file       | 734,676 bytes                  | six 512 x 512 PNGs | the same: size follows the images' content, not the triangle count |
+| with 105 and 1,005 shells                  | 26,197 and 26,246 bytes        | six                | the digits of the bounding numbers differ                          |
 
 The browser-side capture of the large runs asserts that nothing but that one request leaves the page: a
 single `POST /api/auto-split/analyze` per analysis, under 1 MB, six images at the mock service, no request
