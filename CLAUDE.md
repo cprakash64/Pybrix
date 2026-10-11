@@ -107,6 +107,11 @@ turns that into EDITABLE SUGGESTIONS checked against the real geometry; the user
 applies through the existing split transaction. **It never changes a model by itself.** See
 `docs/adr/0020-auto-split-same-origin-service.md` and the Auto Split invariants below.
 
+**AUTO-SPLIT-LARGE-MESH-02 (local, not deployed) raised the supported part size for Auto Split AND the
+exact split to ONE shared ceiling of 2,000,000 triangles**, aligned the Manifold input budget to it,
+made the long local passes cancellable and told a larger part so as a neutral status before anything
+runs. See the large-mesh split invariants below and `docs/design/AUTO_SPLIT_LARGE_MESH.md`.
+
 **Topology diagnoses; it never repairs.** Connectivity is recovered from exact
 stored coordinates with no tolerance, and analysis leaves the canonical buffers
 byte-identical. See `docs/adr/0009-exact-topology-recovery.md`.
@@ -239,6 +244,9 @@ npm run test:e2e     # Playwright end-to-end (needs `npx playwright install chro
 npm run test:e2e:timing # Timing/responsiveness proofs, SERIAL (see below)
 npm run test:e2e:harness # Multi-part document proofs in Chromium, SERIAL (see below)
 npm run test:e2e:auto-split # Auto Split against the real service + a deterministic provider, SERIAL
+npm run test:e2e:auto-split-large # the 2,000,000-triangle chain, refusal, many-shell and Cancel probes (minutes; on demand)
+npm run bench:auto-split-large # local Auto Split passes by size, before/after the reference implementations (NOT in CI)
+npm run bench:auto-split-large-split # the exact split at the ceiling with the real Manifold WASM (NOT in CI)
 npm run verify       # format:check + lint + typecheck + test + build
 npm run release:check # verify + test:e2e + test:e2e:harness + test:e2e:timing, in order
 npm run bench:stl      # STL parser benchmark (NOT in CI)
@@ -682,6 +690,54 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   no retention promise. A test bans each.
 - **THE DEFAULT TAB IS MANUAL SPLIT**, so the qualified 08A workflow opens exactly as it did. Auto Split
   is the second tab, badged Beta, and the Inspector is never opened by it.
+
+## Large-mesh split invariants (AUTO-SPLIT-LARGE-MESH-02)
+
+- **ONE TRIANGLE CEILING FOR EVERY SPLIT PATH: `MAX_SUPPORTED_SPLIT_TRIANGLES` (2,000,000), in
+  `mesh-core/src/split-limits.ts`.** Auto Split's worker handlers, the page's pre-check and the Boolean
+  adapter's per-input gate all read it, so Auto Split never accepts a part the exact split would refuse
+  for size alone. 1,999,999 and 2,000,000 are allowed, 2,000,001 is refused, and tests hold all three.
+  Never restate the number. Raising it needs the ladder in
+  `docs/design/AUTO_SPLIT_LARGE_MESH.md` re-measured, not an argument.
+- **THE MANIFOLD INPUT BUDGET IS DERIVED, NEVER A FLAT CONSTANT.** `MAX_BOOLEAN_INPUT_BYTES` is
+  `(MAX_SUPPORTED_SPLIT_TRIANGLES + MAX_BOOLEAN_TOOL_TRIANGLES) * 84`, where 84 is
+  `BOOLEAN_KERNEL_BYTES_PER_TRIANGLE` (nine Float64 coordinates and three Uint32 indices) and
+  `booleanKernelInputBytes` is the one estimator the backend uses. The tool term is not slack: a plane
+  split intersects the part with a 12-triangle half-space, so `2,000,000 * 84` alone would refuse the part
+  the ceiling admits. It replaced a flat 128 MiB that refused at 1,597,830 triangles, below the Boolean
+  ceiling it sat under.
+- **EVERY INDEPENDENT GUARD STAYS.** The Boolean adapter's triangle ceiling, the topology-workspace
+  limit, the canonical-byte limit, the output-triangle limit and the edit-peak limit each fire on their
+  own. Raising one budget aligned it with the others; it removed none.
+- **A SIZE VERDICT IS A STATUS, NOT A FAILURE.** A part above the ceiling is told so BEFORE Find parts,
+  from `PartDescriptor.triangleCount`, as `role="status"` with the size, the limit, "your model is
+  unchanged and nothing was sent", and NO retry. The worker's check (`AUTO_SPLIT_TOO_DETAILED`) is the
+  authority and the page's is courtesy; its refusal maps to the same status, never to the alert.
+  `2,000,001` is written out in full against `2,000,000`, so a sentence never says a number exceeds a
+  limit it prints equal to.
+- **A RESOURCE REFUSAL OF A CUT NEVER SAYS "USE MANUAL SPLIT".** Manual Split meets the same exact-split
+  limits, so pointing at it is a promise the product cannot keep. A split declined for resources is a
+  neutral status (`ResourceRefusalCard`); "adjust the cut or use Manual Split" remains for a cut that is
+  merely unsound. All of it is copy in `state/split-size-presentation.ts`.
+- **EVERY LONG LOCAL PASS TAKES A `Checkpoint`, AND A CHECKPOINT NEVER CHANGES A RESULT.** The renders,
+  the labelling, the plane search and the extraction call it every `CHECKPOINT_STRIDE` units; the worker
+  passes `context.throwIfCancelled`, which reads the SHARED cancellation word and so sees a Cancel from
+  inside synchronous work. The three Auto Split dispatches are `interruptible`. Where a pass cannot be
+  interrupted (a page without cross-origin isolation) Cancel is WITHDRAWN, not left to lie.
+- **THE CAB/BED SEARCH SCREENS, THEN CONFIRMS EXACTLY.** A face's side of a plane is the sign of
+  `t - offset`, so it is exact in any order; only the ORDER of the area sums differs between a one-pass
+  screen and the per-candidate scorer. Screening ranks 625 candidates a seed in one pass per tilt; only
+  those within `SCREEN_KEEP_WINDOW` of the best are scored by the original ascending-face-order `purity`,
+  and the original selection loop runs over them. The selected plane and its score are bit-identical to
+  the frozen reference (`fixtures/reference-cab-bed.ts`), and the argument is written beside the
+  constants. Never widen the screen's tolerance or narrow the window without redoing it.
+- **THE FROZEN REFERENCES ARE ORACLES.** `fixtures/reference-*.ts` hold the code that stood at 5272c59
+  verbatim. They live under `fixtures/`, which the production boundary scan forbids production code to
+  import, and they are never "improved": an oracle edited to match the thing it checks proves nothing.
+- **BOOKKEEPING IS TYPED, GEOMETRY IS NOT TOUCHED.** Component extraction and the kernel's exact-coordinate
+  indexing replaced a JavaScript `Map` per vertex with int32 tables: 593 MB of heap became 1 MB, and 2.1 s
+  per operand became a fraction of that, with the same numbering and the same coordinates (`-0` kept).
+  Welding was considered and rejected: it adds topology semantics the ceiling does not need.
 
 ## Streaming 3MF ingestion invariants (Stage 6E-A1 prototype, 6E-A2 production)
 

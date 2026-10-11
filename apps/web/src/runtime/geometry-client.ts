@@ -547,7 +547,11 @@ export class GeometryClient {
     return this.coordinator.dispatch(
       'autosplit/render',
       { source, partId },
-      onProgress === undefined ? {} : { onProgress },
+      // INTERRUPTIBLE: the six renders and the shell count are long synchronous loops over every face,
+      // and Cancel must reach them. The shared word is visible from inside a loop; the cancel message
+      // is not, until the loop ends. Where the page is not cross-origin isolated the dispatch falls
+      // back to the message and `handle.interruptible` says so.
+      { interruptible: true, ...(onProgress === undefined ? {} : { onProgress }) },
     );
   }
 
@@ -558,7 +562,13 @@ export class GeometryClient {
     mode: 'human' | 'vehicle',
     analysis: unknown,
   ): OperationHandle<AutoSplitSuggestResult> {
-    return this.coordinator.dispatch('autosplit/suggest', { source, partId, mode, analysis }, {});
+    // INTERRUPTIBLE for the same reason as the render: the local suggestion pass is the longest
+    // synchronous stretch of the analysis, and a Cancel that waited for it would be a button that lies.
+    return this.coordinator.dispatch(
+      'autosplit/suggest',
+      { source, partId, mode, analysis },
+      { interruptible: true },
+    );
   }
 
   /** Auto Split: the source faces of some components, for highlighting. A READ. */
@@ -584,7 +594,7 @@ export class GeometryClient {
     return this.coordinator.dispatch(
       'autosplit/extract-create',
       { source, partId, ranks },
-      onProgress === undefined ? {} : { onProgress },
+      { interruptible: true, ...(onProgress === undefined ? {} : { onProgress }) },
     );
   }
 

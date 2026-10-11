@@ -7,6 +7,7 @@ import {
   recoverVertexIdentity,
 } from '@cadfixer/mesh-topology';
 import type { Vec3 } from '@cadfixer/auto-split-contract';
+import { CHECKPOINT_STRIDE, NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 import type { FaceFacts, NormalizedGeometry } from './geometry';
 
 /**
@@ -23,26 +24,43 @@ export interface ComponentLabelling {
   readonly count: number;
 }
 
-export function labelComponents(mesh: CanonicalMesh, facts: FaceFacts): ComponentLabelling {
+export function labelComponents(
+  mesh: CanonicalMesh,
+  facts: FaceFacts,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
+): ComponentLabelling {
   const faceCount = Math.floor(mesh.indices.length / 3);
-  const geometry = buildTopologicalGeometry(mesh, recoverVertexIdentity(mesh));
-  const edges = buildDirectedEdges(geometry.triangles, faceCount);
-  const groups = groupEdges(edges);
-  const { faceComponent, componentCount } = analyseComponents(edges, groups, faceCount);
+  // Each topology primitive already reports between batches; a batch is a few milliseconds, so the
+  // checkpoint is read at each of those boundaries and a cancel is seen between them.
+  const poll = (): void => {
+    checkpoint();
+  };
+  const geometry = buildTopologicalGeometry(mesh, recoverVertexIdentity(mesh, { onBatch: poll }));
+  checkpoint();
+  const edges = buildDirectedEdges(geometry.triangles, faceCount, poll);
+  const groups = groupEdges(edges, poll);
+  const { faceComponent, componentCount } = analyseComponents(edges, groups, faceCount, poll);
+  checkpoint();
   const area = new Float64Array(componentCount);
   const first = new Int32Array(componentCount).fill(-1);
-  for (let f = 0; f < faceCount; f += 1) {
-    const c = faceComponent[f] ?? 0;
-    area[c] = (area[c] ?? 0) + (facts.areas[f] ?? 0);
-    if ((first[c] ?? -1) < 0) first[c] = f;
+  for (let start = 0; start < faceCount; start += CHECKPOINT_STRIDE) {
+    checkpoint();
+    const end = Math.min(faceCount, start + CHECKPOINT_STRIDE);
+    for (let f = start; f < end; f += 1) {
+      const c = faceComponent[f] ?? 0;
+      area[c] = (area[c] ?? 0) + (facts.areas[f] ?? 0);
+      if ((first[c] ?? -1) < 0) first[c] = f;
+    }
   }
-  const order = Array.from({ length: componentCount }, (_, i) => i).sort(
-    (a, b) => (area[b] ?? 0) - (area[a] ?? 0) || (first[a] ?? 0) - (first[b] ?? 0),
-  );
+  // Largest surface first, ties to the lower first face: a TOTAL order (no two components share a
+  // first face), so the ranking is the same whichever sort runs. Typed, so a model of many shells
+  // holds four bytes a component here rather than a boxed number.
+  const order = new Uint32Array(componentCount);
+  for (let i = 0; i < componentCount; i += 1) order[i] = i;
+  order.sort((a, b) => (area[b] ?? 0) - (area[a] ?? 0) || (first[a] ?? 0) - (first[b] ?? 0));
+  checkpoint();
   const rankOf = new Int32Array(componentCount);
-  order.forEach((component, rank) => {
-    rankOf[component] = rank;
-  });
+  for (let rank = 0; rank < componentCount; rank += 1) rankOf[order[rank] ?? 0] = rank;
   const faceRank = new Int32Array(faceCount);
   for (let f = 0; f < faceCount; f += 1) faceRank[f] = rankOf[faceComponent[f] ?? 0] ?? 0;
   return { faceRank, count: componentCount };

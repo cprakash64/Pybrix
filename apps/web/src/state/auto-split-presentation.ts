@@ -84,6 +84,8 @@ export const AUTO_SPLIT_COPY = {
   approximateCut:
     'Manual Split can’t place this cut exactly, so the nearest cut it can place was loaded. Check it in the preview.',
   noModel: 'Load a model to use Auto Split.',
+  tooDetailedHint: 'This model is too detailed for Auto Split right now.',
+  cancelUnavailable: 'Almost done: finishing on this device. This step cannot be cancelled.',
   unsafeCut: 'This suggested cut isn’t safe on this model. Adjust the cut or use Manual Split.',
   unitlessNote:
     'This file doesn’t say what its units are, so connectors stay locked until you choose how to read them.',
@@ -222,9 +224,9 @@ export function describePhase(phase: AutoSplitPhase, note: string): string {
     case AutoSplitPhase.Idle:
       return '';
     case AutoSplitPhase.PreparingViews:
-      return note === '' ? 'Rendering six views of your model on this device…' : note;
+      return note === '' ? 'Preparing model…' : note;
     case AutoSplitPhase.Analyzing:
-      return note === '' ? 'Finding parts…' : note;
+      return note === '' ? 'Looking for parts…' : note;
     case AutoSplitPhase.SuggestionsReady:
       return 'Suggestions are ready to review.';
     case AutoSplitPhase.Previewing:
@@ -273,6 +275,9 @@ export function describeError(error: AutoSplitErrorView): ErrorGuidance {
         canRetry: false,
         detail: 'Manual Split works on any model.',
       };
+    case LocalErrorCode.TooDetailed:
+      // A deterministic outcome, not a failure: the size is a fact, so there is nothing to retry.
+      return { message: error.message, canRetry: false, detail: undefined };
     case LocalErrorCode.SourceChanged:
     case LocalErrorCode.LocalFailure:
     case AnalyzeErrorCode.InvalidRequest:

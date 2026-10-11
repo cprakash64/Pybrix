@@ -324,7 +324,7 @@ test('cancel aborts the request, reaches the service, and leaves the model uncha
   await accept(page, 'human');
   await findParts(page);
   await expect(page.getByTestId('auto-progress')).toBeVisible();
-  await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
+  await expect(page.getByTestId('auto-status')).toContainText(/looking for parts/i, {
     timeout: 60_000,
   });
   await page.getByTestId('auto-cancel').click();
@@ -340,7 +340,7 @@ test('a model replaced during analysis never receives the old answer', async ({ 
   await enterAuto(page);
   await accept(page, 'human');
   await findParts(page);
-  await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
+  await expect(page.getByTestId('auto-status')).toContainText(/looking for parts/i, {
     timeout: 60_000,
   });
   // Another model is opened while the analysis is in flight.
@@ -516,7 +516,7 @@ test('a long analysis never looks broken: honest wording, Cancel in reach, a liv
     requestAnimationFrame(tick);
   });
   await findParts(page);
-  await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
+  await expect(page.getByTestId('auto-status')).toContainText(/looking for parts/i, {
     timeout: 30_000,
   });
   // Several seconds in: still the same honest sentence, a visible Cancel, no fake precision.

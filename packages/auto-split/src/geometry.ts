@@ -1,4 +1,5 @@
 import type { Vec3 } from '@cadfixer/auto-split-contract';
+import { CHECKPOINT_STRIDE, NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 
 /**
  * A part's geometry in NORMALIZED coordinates: the bounding-box centre at the origin and the longest
@@ -34,30 +35,40 @@ export class DegenerateGeometryError extends Error {
 export function normalizeGeometry(
   positions: ArrayLike<number>,
   indices: ArrayLike<number>,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
 ): NormalizedGeometry {
   const lo: [number, number, number] = [Infinity, Infinity, Infinity];
   const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i + 2 < positions.length; i += 3)
-    for (let a = 0; a < 3; a += 1) {
-      const v = positions[i + a] ?? 0;
-      if (v < (lo[a] ?? Infinity)) lo[a] = v;
-      if (v > (hi[a] ?? -Infinity)) hi[a] = v;
-    }
+  const corners = Math.floor(positions.length / 3);
+  for (let start = 0; start < corners; start += CHECKPOINT_STRIDE) {
+    checkpoint();
+    const end = Math.min(corners, start + CHECKPOINT_STRIDE) * 3;
+    for (let i = start * 3; i < end; i += 3)
+      for (let a = 0; a < 3; a += 1) {
+        const v = positions[i + a] ?? 0;
+        if (v < (lo[a] ?? Infinity)) lo[a] = v;
+        if (v > (hi[a] ?? -Infinity)) hi[a] = v;
+      }
+  }
   const size: Vec3 = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
   const scale = Math.max(size[0], size[1], size[2]);
   if (!(scale > 0) || !Number.isFinite(scale)) throw new DegenerateGeometryError();
   const center: Vec3 = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
   const out = new Float32Array(positions.length);
   let max2 = 0;
-  for (let i = 0; i + 2 < positions.length; i += 3) {
-    const x = ((positions[i] ?? 0) - center[0]) / scale;
-    const y = ((positions[i + 1] ?? 0) - center[1]) / scale;
-    const z = ((positions[i + 2] ?? 0) - center[2]) / scale;
-    out[i] = x;
-    out[i + 1] = y;
-    out[i + 2] = z;
-    const d = x * x + y * y + z * z;
-    if (d > max2) max2 = d;
+  for (let start = 0; start < corners; start += CHECKPOINT_STRIDE) {
+    checkpoint();
+    const end = Math.min(corners, start + CHECKPOINT_STRIDE) * 3;
+    for (let i = start * 3; i < end; i += 3) {
+      const x = ((positions[i] ?? 0) - center[0]) / scale;
+      const y = ((positions[i + 1] ?? 0) - center[1]) / scale;
+      const z = ((positions[i + 2] ?? 0) - center[2]) / scale;
+      out[i] = x;
+      out[i + 1] = y;
+      out[i + 2] = z;
+      const d = x * x + y * y + z * z;
+      if (d > max2) max2 = d;
+    }
   }
   const idx = indices instanceof Uint32Array ? indices : Uint32Array.from(indices);
   return {
@@ -88,27 +99,34 @@ export interface FaceFacts {
   readonly totalArea: number;
 }
 
-export function faceFacts(geometry: NormalizedGeometry): FaceFacts {
+export function faceFacts(
+  geometry: NormalizedGeometry,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
+): FaceFacts {
   const { positions: p, indices: idx, faceCount } = geometry;
   const areas = new Float64Array(faceCount);
   const centroids = new Float64Array(faceCount * 3);
   let total = 0;
-  for (let f = 0; f < faceCount; f += 1) {
-    const a = (idx[f * 3] ?? 0) * 3;
-    const b = (idx[f * 3 + 1] ?? 0) * 3;
-    const c = (idx[f * 3 + 2] ?? 0) * 3;
-    const ux = (p[b] ?? 0) - (p[a] ?? 0);
-    const uy = (p[b + 1] ?? 0) - (p[a + 1] ?? 0);
-    const uz = (p[b + 2] ?? 0) - (p[a + 2] ?? 0);
-    const vx = (p[c] ?? 0) - (p[a] ?? 0);
-    const vy = (p[c + 1] ?? 0) - (p[a + 1] ?? 0);
-    const vz = (p[c + 2] ?? 0) - (p[a + 2] ?? 0);
-    const area = 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
-    areas[f] = area;
-    total += area;
-    centroids[f * 3] = ((p[a] ?? 0) + (p[b] ?? 0) + (p[c] ?? 0)) / 3;
-    centroids[f * 3 + 1] = ((p[a + 1] ?? 0) + (p[b + 1] ?? 0) + (p[c + 1] ?? 0)) / 3;
-    centroids[f * 3 + 2] = ((p[a + 2] ?? 0) + (p[b + 2] ?? 0) + (p[c + 2] ?? 0)) / 3;
+  for (let start = 0; start < faceCount; start += CHECKPOINT_STRIDE) {
+    checkpoint();
+    const end = Math.min(faceCount, start + CHECKPOINT_STRIDE);
+    for (let f = start; f < end; f += 1) {
+      const a = (idx[f * 3] ?? 0) * 3;
+      const b = (idx[f * 3 + 1] ?? 0) * 3;
+      const c = (idx[f * 3 + 2] ?? 0) * 3;
+      const ux = (p[b] ?? 0) - (p[a] ?? 0);
+      const uy = (p[b + 1] ?? 0) - (p[a + 1] ?? 0);
+      const uz = (p[b + 2] ?? 0) - (p[a + 2] ?? 0);
+      const vx = (p[c] ?? 0) - (p[a] ?? 0);
+      const vy = (p[c + 1] ?? 0) - (p[a + 1] ?? 0);
+      const vz = (p[c + 2] ?? 0) - (p[a + 2] ?? 0);
+      const area = 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+      areas[f] = area;
+      total += area;
+      centroids[f * 3] = ((p[a] ?? 0) + (p[b] ?? 0) + (p[c] ?? 0)) / 3;
+      centroids[f * 3 + 1] = ((p[a + 1] ?? 0) + (p[b + 1] ?? 0) + (p[c + 1] ?? 0)) / 3;
+      centroids[f * 3 + 2] = ((p[a + 2] ?? 0) + (p[b + 2] ?? 0) + (p[c + 2] ?? 0)) / 3;
+    }
   }
   return { areas, centroids, totalArea: total };
 }

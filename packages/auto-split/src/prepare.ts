@@ -1,12 +1,10 @@
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
 import type { AnalyzeSummary, ViewName } from '@cadfixer/auto-split-contract';
+import { type Checkpoint, NO_CHECKPOINT } from './checkpoint';
 import { labelComponents } from './components';
 import { faceFacts, normalizeGeometry } from './geometry';
 import type { Deflate } from './png';
 import { renderSemanticViews } from './render';
-
-/** The most triangles a part may have for a semantic analysis: six software renders of it must stay interactive. */
-export const MAX_ANALYSIS_TRIANGLES = 1_500_000;
 
 export interface PreparedViews {
   readonly pngs: readonly Uint8Array[];
@@ -22,14 +20,14 @@ export async function prepareViews(
   mesh: CanonicalMesh,
   deflate: Deflate,
   onView?: (view: ViewName, index: number) => void,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
 ): Promise<PreparedViews> {
-  const geometry = normalizeGeometry(mesh.positions, mesh.indices);
-  const render = await renderSemanticViews(
-    geometry,
-    deflate,
-    onView === undefined ? {} : { onView },
-  );
-  const shells = labelComponents(mesh, faceFacts(geometry)).count;
+  const geometry = normalizeGeometry(mesh.positions, mesh.indices, checkpoint);
+  const render = await renderSemanticViews(geometry, deflate, {
+    checkpoint,
+    ...(onView === undefined ? {} : { onView }),
+  });
+  const shells = labelComponents(mesh, faceFacts(geometry, checkpoint), checkpoint).count;
   const round = (x: number): number => Math.round(x * 1000) / 1000;
   return {
     pngs: render.pngs,

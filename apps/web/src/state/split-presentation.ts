@@ -339,6 +339,7 @@ export const SPLIT_COPY = Object.freeze({
   previewReady: 'Preview ready — nothing has changed until you apply it.',
   applying: 'Applying the split…',
   failedLine: 'No split was made — details above',
+  tooDetailedHint: 'This model is too detailed for Manual Split right now.',
   exportFailedLine: 'The export did not finish — details above',
   exportSection: 'Export pieces',
 });

@@ -55,3 +55,4 @@ experiments/self-intersection/artifacts/
 artifacts/release/
 dist-test/
 artifacts/auto-split-visual/
+artifacts/auto-split-large/

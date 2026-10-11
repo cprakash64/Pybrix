@@ -222,6 +222,12 @@ export {
 } from './boolean-adapter';
 export type { BooleanBackend, BooleanKind, BooleanResult } from './boolean-adapter';
 export {
+  BOOLEAN_KERNEL_BYTES_PER_TRIANGLE,
+  booleanKernelInputBytes,
+  MAX_BOOLEAN_INPUT_BYTES,
+  MAX_BOOLEAN_TOOL_TRIANGLES,
+} from './boolean-limits';
+export {
   buildSplitCutters,
   identifyCutSurface,
   meshVolume,

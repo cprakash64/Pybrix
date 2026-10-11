@@ -7,6 +7,7 @@ import {
   type Vec3,
   type ViewName,
 } from '@cadfixer/auto-split-contract';
+import { CHECKPOINT_STRIDE, NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 import type { NormalizedGeometry } from './geometry';
 
 /**
@@ -32,7 +33,11 @@ export interface Raster {
   readonly face: Int32Array;
 }
 
-export function rasteriseView(geometry: NormalizedGeometry, view: ViewName): Raster {
+export function rasteriseView(
+  geometry: NormalizedGeometry,
+  view: ViewName,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
+): Raster {
   const camera = cameraFor(view);
   const size = GRID_SIZE;
   const perUnit = (size * FRAME_FILL) / (2 * geometry.radius);
@@ -42,49 +47,53 @@ export function rasteriseView(geometry: NormalizedGeometry, view: ViewName): Ras
   const p = geometry.positions;
   const idx = geometry.indices;
   const { right, up, forward } = camera;
-  for (let t = 0; t < geometry.faceCount; t += 1) {
-    const ia = (idx[t * 3] ?? 0) * 3;
-    const ib = (idx[t * 3 + 1] ?? 0) * 3;
-    const ic = (idx[t * 3 + 2] ?? 0) * 3;
-    const ax = p[ia] ?? 0;
-    const ay = p[ia + 1] ?? 0;
-    const az = p[ia + 2] ?? 0;
-    const bx = p[ib] ?? 0;
-    const by = p[ib + 1] ?? 0;
-    const bz = p[ib + 2] ?? 0;
-    const cx = p[ic] ?? 0;
-    const cy = p[ic + 1] ?? 0;
-    const cz = p[ic + 2] ?? 0;
-    const x0 = half + (ax * right[0] + ay * right[1] + az * right[2]) * perUnit;
-    const y0 = half - (ax * up[0] + ay * up[1] + az * up[2]) * perUnit;
-    const x1 = half + (bx * right[0] + by * right[1] + bz * right[2]) * perUnit;
-    const y1 = half - (bx * up[0] + by * up[1] + bz * up[2]) * perUnit;
-    const x2 = half + (cx * right[0] + cy * right[1] + cz * right[2]) * perUnit;
-    const y2 = half - (cx * up[0] + cy * up[1] + cz * up[2]) * perUnit;
-    const z0 = ax * forward[0] + ay * forward[1] + az * forward[2];
-    const z1 = bx * forward[0] + by * forward[1] + bz * forward[2];
-    const z2 = cx * forward[0] + cy * forward[1] + cz * forward[2];
-    const minX = Math.max(0, Math.floor(Math.min(x0, x1, x2) - 0.5));
-    const maxX = Math.min(size - 1, Math.ceil(Math.max(x0, x1, x2) - 0.5));
-    const minY = Math.max(0, Math.floor(Math.min(y0, y1, y2) - 0.5));
-    const maxY = Math.min(size - 1, Math.ceil(Math.max(y0, y1, y2) - 0.5));
-    if (minX > maxX || minY > maxY) continue;
-    const area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-    if (area === 0) continue;
-    const inv = 1 / area;
-    for (let y = minY; y <= maxY; y += 1) {
-      const py = y + 0.5;
-      for (let x = minX; x <= maxX; x += 1) {
-        const px = x + 0.5;
-        const w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv;
-        const w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv;
-        const w2 = 1 - w0 - w1;
-        if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-        const z = w0 * z0 + w1 * z1 + w2 * z2;
-        const o = y * size + x;
-        if (z < (depth[o] ?? Infinity)) {
-          depth[o] = z;
-          face[o] = t;
+  for (let start = 0; start < geometry.faceCount; start += CHECKPOINT_STRIDE) {
+    checkpoint();
+    const end = Math.min(geometry.faceCount, start + CHECKPOINT_STRIDE);
+    for (let t = start; t < end; t += 1) {
+      const ia = (idx[t * 3] ?? 0) * 3;
+      const ib = (idx[t * 3 + 1] ?? 0) * 3;
+      const ic = (idx[t * 3 + 2] ?? 0) * 3;
+      const ax = p[ia] ?? 0;
+      const ay = p[ia + 1] ?? 0;
+      const az = p[ia + 2] ?? 0;
+      const bx = p[ib] ?? 0;
+      const by = p[ib + 1] ?? 0;
+      const bz = p[ib + 2] ?? 0;
+      const cx = p[ic] ?? 0;
+      const cy = p[ic + 1] ?? 0;
+      const cz = p[ic + 2] ?? 0;
+      const x0 = half + (ax * right[0] + ay * right[1] + az * right[2]) * perUnit;
+      const y0 = half - (ax * up[0] + ay * up[1] + az * up[2]) * perUnit;
+      const x1 = half + (bx * right[0] + by * right[1] + bz * right[2]) * perUnit;
+      const y1 = half - (bx * up[0] + by * up[1] + bz * up[2]) * perUnit;
+      const x2 = half + (cx * right[0] + cy * right[1] + cz * right[2]) * perUnit;
+      const y2 = half - (cx * up[0] + cy * up[1] + cz * up[2]) * perUnit;
+      const z0 = ax * forward[0] + ay * forward[1] + az * forward[2];
+      const z1 = bx * forward[0] + by * forward[1] + bz * forward[2];
+      const z2 = cx * forward[0] + cy * forward[1] + cz * forward[2];
+      const minX = Math.max(0, Math.floor(Math.min(x0, x1, x2) - 0.5));
+      const maxX = Math.min(size - 1, Math.ceil(Math.max(x0, x1, x2) - 0.5));
+      const minY = Math.max(0, Math.floor(Math.min(y0, y1, y2) - 0.5));
+      const maxY = Math.min(size - 1, Math.ceil(Math.max(y0, y1, y2) - 0.5));
+      if (minX > maxX || minY > maxY) continue;
+      const area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+      if (area === 0) continue;
+      const inv = 1 / area;
+      for (let y = minY; y <= maxY; y += 1) {
+        const py = y + 0.5;
+        for (let x = minX; x <= maxX; x += 1) {
+          const px = x + 0.5;
+          const w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv;
+          const w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv;
+          const w2 = 1 - w0 - w1;
+          if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+          const z = w0 * z0 + w1 * z1 + w2 * z2;
+          const o = y * size + x;
+          if (z < (depth[o] ?? Infinity)) {
+            depth[o] = z;
+            face[o] = t;
+          }
         }
       }
     }

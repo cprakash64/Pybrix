@@ -1,5 +1,6 @@
 import type { HumanAnswer, HumanSlot, Vec3 } from '@cadfixer/auto-split-contract';
 import { HUMAN_SLOTS } from '@cadfixer/auto-split-contract';
+import { NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 import { toSourcePoint, type FaceFacts, type NormalizedGeometry } from './geometry';
 import {
   crossSectionLength,
@@ -44,8 +45,13 @@ const LABELS: Readonly<Record<HumanSlot, string>> = {
   right_arm: 'Right arm',
 };
 
-function plausible(plane: NormalizedPlane, facts: FaceFacts, center: Vec3 | null): boolean {
-  const share = sideShares(facts, plane).positive;
+function plausible(
+  plane: NormalizedPlane,
+  facts: FaceFacts,
+  center: Vec3 | null,
+  checkpoint: Checkpoint,
+): boolean {
+  const share = sideShares(facts, plane, checkpoint).positive;
   if (share < MIN_PART_SHARE || share > MAX_PART_SHARE) return false;
   return center === null || dot3(center, plane.normal) - plane.offset >= 0;
 }
@@ -53,15 +59,20 @@ function plausible(plane: NormalizedPlane, facts: FaceFacts, center: Vec3 | null
 export function refinePlane(
   geometry: NormalizedGeometry,
   proposal: NormalizedPlane,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
 ): NormalizedPlane {
   const steps = Math.round(REFINEMENT_WINDOW / REFINEMENT_STEP);
   let best = 0;
   let bestLength = Infinity;
   for (let k = -steps; k <= steps; k += 1) {
-    const length = crossSectionLength(geometry, {
-      normal: proposal.normal,
-      offset: proposal.offset + k * REFINEMENT_STEP,
-    });
+    const length = crossSectionLength(
+      geometry,
+      {
+        normal: proposal.normal,
+        offset: proposal.offset + k * REFINEMENT_STEP,
+      },
+      checkpoint,
+    );
     // Ties keep the slide closest to the proposal.
     if (
       length < bestLength - 1e-12 ||
@@ -79,6 +90,7 @@ export function suggestHuman(
   geometry: NormalizedGeometry,
   facts: FaceFacts,
   answer: HumanAnswer,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
 ): Suggestion[] {
   const out: Suggestion[] = [];
   for (const slot of HUMAN_SLOTS) {
@@ -112,10 +124,10 @@ export function suggestHuman(
         normal: [-plane.normal[0], -plane.normal[1], -plane.normal[2]],
         offset: -plane.offset,
       };
-    const refined = refinePlane(geometry, plane);
-    const chosen = plausible(refined, facts, part.center)
+    const refined = refinePlane(geometry, plane, checkpoint);
+    const chosen = plausible(refined, facts, part.center, checkpoint)
       ? refined
-      : plausible(plane, facts, part.center)
+      : plausible(plane, facts, part.center, checkpoint)
         ? plane
         : null;
     if (chosen === null) {

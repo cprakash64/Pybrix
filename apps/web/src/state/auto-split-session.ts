@@ -7,7 +7,11 @@ import {
   type AnalyzeRequest,
   type SemanticMode,
 } from '@cadfixer/auto-split-contract';
-import type { ComponentSummary, Suggestion } from '@cadfixer/auto-split';
+import {
+  AUTO_SPLIT_TOO_DETAILED,
+  type ComponentSummary,
+  type Suggestion,
+} from '@cadfixer/auto-split';
 import type {
   AutoSplitRenderResult,
   AutoSplitSuggestResult,
@@ -16,6 +20,7 @@ import type {
 } from '@cadfixer/geometry-runtime';
 import { isAppError, AppErrorCode, operationCancelled } from '@cadfixer/shared';
 import type { AnalysisTransport } from '../runtime/auto-split-transport';
+import { splitSizeNoticeFor, type SplitSizeNotice } from './split-size-presentation';
 
 /**
  * THE AUTO SPLIT SESSION: what the product knows about one analysis, as a framework-free machine.
@@ -66,6 +71,11 @@ export const LocalErrorCode = {
   SourceChanged: 'SOURCE_CHANGED',
   /** The part could not be rendered or its suggestions built on this device. */
   LocalFailure: 'LOCAL_FAILURE',
+  /**
+   * The part has more triangles than Auto Split supports. Deterministic: the count is a fact and the
+   * ceiling a constant, so this is a STATUS, never a failure, and repeating the request cannot help.
+   */
+  TooDetailed: 'TOO_DETAILED',
 } as const;
 export type LocalErrorCode = (typeof LocalErrorCode)[keyof typeof LocalErrorCode];
 
@@ -74,11 +84,19 @@ export interface AutoSplitErrorView {
   /** A sentence Pybrix wrote. Never provider text, never a file name. */
   readonly message: string;
   readonly retryAfterSeconds?: number;
+  /** For `TooDetailed`: the part's triangle count and the supported ceiling. */
+  readonly size?: SplitSizeNotice;
 }
 
 export interface AutoSplitTarget {
   readonly handle: DocumentHandle;
   readonly partId: string;
+  /**
+   * The part's triangle count, from its descriptor, when the caller has it. A part above the supported
+   * ceiling is never analysed: the page does not offer Find parts for it, and the session refuses as
+   * a second line. The worker's own check is still the authority.
+   */
+  readonly triangleCount?: number;
 }
 
 /** `document@revision/part`: the identity every result is read back against. */
@@ -105,6 +123,12 @@ export interface AutoSplitSnapshot {
   readonly kind: ModelKind | undefined;
   /** Phase-oriented, never a percentage. */
   readonly note: string;
+  /**
+   * False only while a local pass that CANNOT be interrupted is running (a page that is not
+   * cross-origin isolated has no shared cancellation word). Cancel is then not offered, because a
+   * button that cannot stop the work would be a lie; the note says what is happening instead.
+   */
+  readonly cancellable: boolean;
   readonly error: AutoSplitErrorView | undefined;
   readonly result: AutoSplitResult | undefined;
   /** True once the revision moved on: the list is shown, nothing in it can be previewed. */
@@ -120,6 +144,8 @@ export interface AutoSplitSnapshot {
 interface OperationLike<T> {
   readonly promise: Promise<T>;
   cancel(): void;
+  /** True when a Cancel reaches synchronous work. Absent means "assume it does". */
+  readonly interruptible?: boolean;
 }
 
 /** The two geometry reads the session needs. A `GeometryClient` satisfies it. */
@@ -149,6 +175,7 @@ const INITIAL: AutoSplitSnapshot = Object.freeze({
   disclosureAccepted: false,
   kind: undefined,
   note: '',
+  cancellable: true,
   error: undefined,
   result: undefined,
   stale: false,
@@ -169,6 +196,7 @@ export class AutoSplitSession {
   private generation = 0;
   private abort: AbortController | undefined;
   private render: OperationLike<AutoSplitRenderResult> | undefined;
+  private suggest: OperationLike<AutoSplitSuggestResult> | undefined;
   private running: { readonly key: string; readonly documentId: string } | undefined;
 
   private client: AutoSplitClient | undefined;
@@ -194,7 +222,9 @@ export class AutoSplitSession {
   public readonly getSnapshot = (): AutoSplitSnapshot => this.snapshot;
 
   private set(patch: Partial<AutoSplitSnapshot>): void {
-    this.snapshot = { ...this.snapshot, ...patch };
+    // Leaving a run (any state that is not preparing or analysing) always restores the Cancel it withdrew.
+    const idle = patch.run !== undefined && patch.run !== 'preparing' && patch.run !== 'analyzing';
+    this.snapshot = { ...this.snapshot, ...(idle ? { cancellable: true } : {}), ...patch };
     for (const listener of this.listeners) listener();
   }
 
@@ -234,6 +264,8 @@ export class AutoSplitSession {
   public analyze(target: AutoSplitTarget, force = false): boolean {
     const { kind, disclosureAccepted } = this.snapshot;
     if (!disclosureAccepted || kind === undefined || kind === ModelKind.Other) return false;
+    // Second line: a part above the ceiling is never rendered, never sent, never retried.
+    if (splitSizeNoticeFor(target.triangleCount) !== undefined) return false;
     if (this.snapshot.run === 'preparing' || this.snapshot.run === 'analyzing') return false;
     const mode: SemanticMode = kind;
     const key = targetKey(target);
@@ -270,7 +302,8 @@ export class AutoSplitSession {
     this.running = { key, documentId: target.handle.documentId };
     this.set({
       run: 'preparing',
-      note: 'Rendering six views of your model on this device…',
+      note: 'Preparing model…',
+      cancellable: true,
       error: undefined,
       result: undefined,
       stale: false,
@@ -286,7 +319,7 @@ export class AutoSplitSession {
         // A progress message can be delivered after the render has finished: it must not write over the
         // note of the phase that followed.
         if (current() && this.snapshot.run === 'preparing')
-          this.set({ note: update.note ?? 'Rendering views on this device…' });
+          this.set({ note: update.note ?? 'Preparing model…' });
       });
       this.render = render;
       const views = await render.promise;
@@ -294,7 +327,7 @@ export class AutoSplitSession {
       this.render = undefined;
 
       // 2. One request: six PNGs and three bounded numbers.
-      this.set({ run: 'analyzing', note: 'Finding parts…' });
+      this.set({ run: 'analyzing', note: 'Looking for parts…', cancellable: true });
       const request: AnalyzeRequest = {
         requestId: this.deps.newRequestId(),
         mode,
@@ -316,15 +349,23 @@ export class AutoSplitSession {
         return;
       }
 
-      // 3. The answer is data. The worker validates it again and turns it into suggestions.
-      this.set({ note: 'Preparing editable suggestions…' });
-      const suggested = await client.suggestAutoSplit(
+      // 3. The answer is data. The worker validates it again and turns it into suggestions. It is the
+      // longest local pass, so it is cancellable like the render: Cancel stops it inside its loops.
+      const suggestion = client.suggestAutoSplit(
         target.handle,
         target.partId,
         mode,
         response.analysis.raw,
-      ).promise;
+      );
+      this.suggest = suggestion;
+      this.set({
+        note: 'Reviewing candidate cuts…',
+        // Where nothing can interrupt synchronous work the button is withdrawn, not left to lie.
+        cancellable: suggestion.interruptible !== false,
+      });
+      const suggested = await suggestion.promise;
       if (!current()) return;
+      this.suggest = undefined;
       const result: AutoSplitResult = {
         key,
         documentId: target.handle.documentId,
@@ -339,13 +380,31 @@ export class AutoSplitSession {
       this.cache.set(cacheKey, result);
       this.running = undefined;
       this.abort = undefined;
-      this.set({ run: 'ready', note: '', error: undefined, result, stale: false });
+      this.set({
+        run: 'ready',
+        note: '',
+        cancellable: true,
+        error: undefined,
+        result,
+        stale: false,
+      });
     } catch (cause: unknown) {
       if (!current()) return;
       this.render = undefined;
+      this.suggest = undefined;
       if (isCancellation(cause)) {
-        this.set({ run: 'cancelled', note: '', error: undefined });
+        this.set({ run: 'cancelled', note: '', cancellable: true, error: undefined });
         this.running = undefined;
+        return;
+      }
+      const size = tooDetailedSize(cause);
+      if (size !== undefined) {
+        // The worker's size check is the authority; this is its answer, shown as the status it is.
+        this.fail({
+          code: LocalErrorCode.TooDetailed,
+          message: 'This model is too detailed for Auto Split right now.',
+          size,
+        });
         return;
       }
       this.fail({
@@ -362,10 +421,10 @@ export class AutoSplitSession {
     this.running = undefined;
     this.abort = undefined;
     if (error.code === AnalyzeErrorCode.Cancelled) {
-      this.set({ run: 'cancelled', note: '', error: undefined });
+      this.set({ run: 'cancelled', note: '', cancellable: true, error: undefined });
       return;
     }
-    this.set({ run: 'error', note: '', error, result: undefined });
+    this.set({ run: 'error', note: '', cancellable: true, error, result: undefined });
   }
 
   /** Stops whatever is running: aborts the request, cancels the render, and makes any late answer inert. */
@@ -375,6 +434,8 @@ export class AutoSplitSession {
     this.abort = undefined;
     this.render?.cancel();
     this.render = undefined;
+    this.suggest?.cancel();
+    this.suggest = undefined;
     this.running = undefined;
   }
 
@@ -382,8 +443,11 @@ export class AutoSplitSession {
   public cancel(): void {
     const { run } = this.snapshot;
     if (run !== 'preparing' && run !== 'analyzing') return;
+    // Cancel is offered only where it can work: a pass that cannot be interrupted is not cancelled
+    // in name while it runs on.
+    if (!this.snapshot.cancellable) return;
     this.stop();
-    this.set({ run: 'cancelled', note: '', error: undefined });
+    this.set({ run: 'cancelled', note: '', cancellable: true, error: undefined });
   }
 
   /** Back to the start for this model: the explicit "Try again" and "Start over". */
@@ -501,6 +565,19 @@ export class AutoSplitSession {
     this.stop();
     this.listeners.clear();
   }
+}
+
+/**
+ * The size the worker refused, when `cause` is its deterministic "too detailed" refusal: the error
+ * carries `AUTO_SPLIT_TOO_DETAILED` and the count and limit it measured, as numbers.
+ */
+function tooDetailedSize(cause: unknown): SplitSizeNotice | undefined {
+  if (!isAppError(cause) || cause.details.code !== AUTO_SPLIT_TOO_DETAILED) return undefined;
+  const triangles = cause.details.value;
+  const limit = cause.details.limit;
+  return typeof triangles === 'number' && typeof limit === 'number'
+    ? { triangles, limit }
+    : undefined;
 }
 
 /** The error the interface shows for a code, never a provider's words. */

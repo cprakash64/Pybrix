@@ -1,5 +1,6 @@
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
 import { VIEW_NAMES, type HumanAnswer, type VehicleAnswer } from '@cadfixer/auto-split-contract';
+import { NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 import { labelComponents } from './components';
 import { faceFacts, normalizeGeometry } from './geometry';
 import { suggestHuman } from './human-suggest';
@@ -16,18 +17,35 @@ export type SemanticAnswer =
   | { readonly mode: 'human'; readonly human: HumanAnswer }
   | { readonly mode: 'vehicle'; readonly vehicle: VehicleAnswer };
 
-export function suggestFor(mesh: CanonicalMesh, answer: SemanticAnswer): SuggestionResult {
-  const geometry = normalizeGeometry(mesh.positions, mesh.indices);
-  const facts = faceFacts(geometry);
+export interface SuggestOptions {
+  /** Read at safe boundaries inside every long pass; throws to cancel. It never changes a result. */
+  readonly checkpoint?: Checkpoint;
+}
+
+export function suggestFor(
+  mesh: CanonicalMesh,
+  answer: SemanticAnswer,
+  options: SuggestOptions = {},
+): SuggestionResult {
+  const checkpoint = options.checkpoint ?? NO_CHECKPOINT;
+  const geometry = normalizeGeometry(mesh.positions, mesh.indices, checkpoint);
+  const facts = faceFacts(geometry, checkpoint);
   if (answer.mode === 'human')
     return {
-      suggestions: suggestHuman(geometry, facts, answer.human),
+      suggestions: suggestHuman(geometry, facts, answer.human, checkpoint),
       components: [],
       componentCount: 0,
       faceCount: geometry.faceCount,
     };
   // Vehicles need the face-id buffers; the images are not needed here and are not encoded.
-  const rasters = VIEW_NAMES.map((view) => rasteriseView(geometry, view));
-  const labelling = labelComponents(mesh, facts);
-  return suggestVehicle({ geometry, facts, labelling, rasters, answer: answer.vehicle });
+  const rasters = VIEW_NAMES.map((view) => rasteriseView(geometry, view, checkpoint));
+  const labelling = labelComponents(mesh, facts, checkpoint);
+  return suggestVehicle({
+    geometry,
+    facts,
+    labelling,
+    rasters,
+    answer: answer.vehicle,
+    checkpoint,
+  });
 }

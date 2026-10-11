@@ -16,9 +16,11 @@ import {
 import {
   AutoSplitPhase,
   AutoSplitSession,
+  LocalErrorCode,
   ModelKind,
   type AutoSplitTarget,
 } from './auto-split-session';
+import { splitSizeNoticeFor, type SplitSizeNotice } from './split-size-presentation';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { SplitPhase, SplitSource, type SplitControls } from './use-split-workflow';
 import { WorkflowId } from './workflows';
@@ -82,6 +84,14 @@ export interface AutoSplitControls {
   readonly busy: boolean;
 
   readonly error: ErrorGuidance | undefined;
+  /**
+   * Set when the part has more triangles than Auto Split supports: known BEFORE Find parts from the
+   * part's descriptor (or, as a second line, from the worker's own refusal). A neutral status with no
+   * retry; `error` stays undefined for it because it is not a failure.
+   */
+  readonly tooDetailed: SplitSizeNotice | undefined;
+  /** False while a pass that cannot be interrupted runs: the Cancel control is withdrawn then. */
+  readonly cancellable: boolean;
   readonly rows: readonly AutoSplitRow[];
   readonly hasResult: boolean;
   readonly stale: boolean;
@@ -106,6 +116,8 @@ export interface AutoSplitControls {
   readonly planeApproximate: boolean;
   /** A preview from a suggestion failed local validation. */
   readonly unsafeCut: boolean;
+  /** A preview from a suggestion was declined for resources (a limit, not a defect in the cut). */
+  readonly cutNeedsMoreRoom: boolean;
   /** Why the footer's Preview cannot be used in the Auto tab, or undefined. */
   readonly footerBlock: string | undefined;
   /**
@@ -172,7 +184,7 @@ export function useAutoSplit(
     () =>
       model === undefined || part === undefined
         ? undefined
-        : { handle: model.handle, partId: part.partId },
+        : { handle: model.handle, partId: part.partId, triangleCount: part.triangleCount },
     [model, part],
   );
 
@@ -343,10 +355,15 @@ export function useAutoSplit(
   /* ------------------------------------------------------- analysis -- */
 
   const kind = snap.kind;
+  // The size is a fact the page already holds, so the verdict precedes the click.
+  const tooDetailed: SplitSizeNotice | undefined =
+    splitSizeNoticeFor(part?.triangleCount) ??
+    (snap.error?.code === LocalErrorCode.TooDetailed ? snap.error.size : undefined);
   const canAnalyze =
     target !== undefined &&
     snap.disclosureAccepted &&
     (kind === ModelKind.Character || kind === ModelKind.Vehicle) &&
+    tooDetailed === undefined &&
     snap.run !== 'preparing' &&
     snap.run !== 'analyzing';
   const analyze = useCallback((): void => {
@@ -429,19 +446,25 @@ export function useAutoSplit(
 
   /* ------------------------------------------------------- outputs -- */
 
-  const error = snap.error === undefined ? undefined : describeError(snap.error);
+  // Too detailed is a status, not a failure: it has its own card and never reaches the alert.
+  const error =
+    snap.error === undefined || snap.error.code === LocalErrorCode.TooDetailed
+      ? undefined
+      : describeError(snap.error);
   const statusText = describePhase(derived, snap.note);
 
   const footerBlock: string | undefined =
-    result === undefined
-      ? 'Find parts first, or switch to Manual Split.'
-      : stale
-        ? AUTO_SPLIT_COPY.stale
-        : !sourceReady
-          ? AUTO_SPLIT_COPY.needsRepairHeading
-          : selected === undefined
-            ? 'Choose a suggestion to preview.'
-            : undefined;
+    tooDetailed !== undefined
+      ? AUTO_SPLIT_COPY.tooDetailedHint
+      : result === undefined
+        ? 'Find parts first, or switch to Manual Split.'
+        : stale
+          ? AUTO_SPLIT_COPY.stale
+          : !sourceReady
+            ? AUTO_SPLIT_COPY.needsRepairHeading
+            : selected === undefined
+              ? 'Choose a suggestion to preview.'
+              : undefined;
 
   return {
     tab,
@@ -467,6 +490,8 @@ export function useAutoSplit(
     reset,
     busy: snap.run === 'preparing' || snap.run === 'analyzing',
     error,
+    tooDetailed,
+    cancellable: snap.cancellable,
     rows,
     hasResult: result !== undefined,
     stale,
@@ -483,7 +508,16 @@ export function useAutoSplit(
     edit,
     previewSelection,
     planeApproximate: approximate && selected?.operation === SuggestionOperation.Plane,
-    unsafeCut: tab === 'auto' && selected !== undefined && splitError !== undefined,
+    unsafeCut:
+      tab === 'auto' &&
+      selected !== undefined &&
+      splitError !== undefined &&
+      !split.errorIsResourceLimit,
+    cutNeedsMoreRoom:
+      tab === 'auto' &&
+      selected !== undefined &&
+      splitError !== undefined &&
+      split.errorIsResourceLimit,
     footerBlock,
     planeVisible: tab === 'manual' || selected?.operation === SuggestionOperation.Plane,
     highlight,

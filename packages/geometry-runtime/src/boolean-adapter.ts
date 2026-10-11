@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type, @typescript-eslint/restrict-template-expressions */
 import {
   assertMeshStructure,
+  MAX_SUPPORTED_SPLIT_TRIANGLES,
   meshByteLength,
   triangleCount,
   singlePartDocument,
@@ -35,7 +36,8 @@ export interface BooleanResult {
   readonly inputReports: readonly [TopologyReport, TopologyReport];
   readonly outputReport: TopologyReport;
 }
-const MAX_BOOLEAN_INPUT_TRIANGLES = 2_000_000;
+/** One authoritative split ceiling (Stage AUTO-SPLIT-LARGE-MESH-02): the value is unchanged, the source is shared. */
+const MAX_BOOLEAN_INPUT_TRIANGLES = MAX_SUPPORTED_SPLIT_TRIANGLES;
 const MAX_BOOLEAN_WORKSPACE_BYTES = 1024 * 1024 * 1024;
 function topology(
   mesh: CanonicalMesh,

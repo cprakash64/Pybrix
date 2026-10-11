@@ -1,4 +1,5 @@
 import { VIEW_IMAGE_SIZE, VIEW_NAMES, type ViewName } from '@cadfixer/auto-split-contract';
+import { NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 import type { NormalizedGeometry } from './geometry';
 import { encodePng, type Deflate } from './png';
 import { rasteriseView, shadeView, type Raster } from './raster';
@@ -19,12 +20,15 @@ export async function renderSemanticViews(
   options: {
     readonly keepRasters?: boolean;
     readonly onView?: (view: ViewName, index: number) => void;
+    readonly checkpoint?: Checkpoint;
   } = {},
 ): Promise<SemanticRender> {
+  const checkpoint = options.checkpoint ?? NO_CHECKPOINT;
   const rasters: Raster[] = [];
   const pngs: Uint8Array[] = [];
   for (const [index, view] of VIEW_NAMES.entries()) {
-    const raster = rasteriseView(geometry, view);
+    checkpoint();
+    const raster = rasteriseView(geometry, view, checkpoint);
     pngs.push(
       await encodePng(VIEW_IMAGE_SIZE, VIEW_IMAGE_SIZE, shadeView(geometry, raster), deflate),
     );

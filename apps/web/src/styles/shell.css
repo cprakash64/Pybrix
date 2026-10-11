@@ -4543,6 +4543,17 @@
   box-shadow: var(--focus-ring);
 }
 
+.auto-card--notice {
+  border-left: 3px solid var(--cad-border-strong, var(--cad-border));
+}
+
+.auto-card__figure {
+  margin: 0;
+  color: var(--cad-text-strong);
+  font: 600 var(--fs-ui) var(--font-mono);
+  line-height: 1.4;
+}
+
 .auto-card__body {
   margin: 0;
   color: var(--cad-text);

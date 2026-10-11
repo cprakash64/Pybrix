@@ -34,6 +34,7 @@ import { WorkspaceStore } from '../state/workspace-store';
 import { WorkflowId } from '../state/workflows';
 import type { LoadedModel } from '../state/model';
 import { AUTO_SPLIT_COPY } from '../state/auto-split-presentation';
+import { invalidState, resourceLimitExceeded } from '@cadfixer/shared';
 
 /**
  * AUTO SPLIT AT COMPONENT LEVEL: the flow a person actually goes through, with the geometry worker and
@@ -48,12 +49,12 @@ afterEach(cleanup);
 
 const PART_ID = 'p1';
 
-function part(): PartDescriptor {
+function part(triangleCount = 12): PartDescriptor {
   return {
     partId: PART_ID,
     name: 'Figure',
     transform: IDENTITY_PART_TRANSFORM,
-    triangleCount: 12,
+    triangleCount,
     vertexCount: 8,
     bounds: {
       min: [0, 0, 0],
@@ -70,9 +71,9 @@ function part(): PartDescriptor {
   };
 }
 
-function load(store: WorkspaceStore): void {
+function load(store: WorkspaceStore, triangleCount = 12): void {
   const handle = { documentId: 'doc-1', revision: 1 } as DocumentHandle;
-  const parts = [part()];
+  const parts = [part(triangleCount)];
   const renderSnapshot: DocumentRenderSnapshot = {
     parts: parts.map((p) => ({
       partId: p.partId,
@@ -97,7 +98,7 @@ function load(store: WorkspaceStore): void {
       importedAt: 0,
     },
     bounds: undefined,
-    triangleCount: 12,
+    triangleCount,
     vertexCount: 8,
     validation: { valid: true, issueCount: 0, warningCount: 0, truncated: false, codes: [] },
     warnings: [],
@@ -194,11 +195,15 @@ interface Options {
   readonly suggestions?: readonly Suggestion[];
   readonly sourceReasons?: readonly string[];
   readonly response?: (request: AnalyzeRequest, signal: AbortSignal) => Promise<ParsedResponse>;
+  /** The active part's triangle count, as its descriptor reports it. */
+  readonly triangleCount?: number;
+  /** What the exact split's preview rejects with, when it should. */
+  readonly previewRejects?: unknown;
 }
 
 function mount(options: Options = {}): Spies {
   const store = new WorkspaceStore();
-  load(store);
+  load(store, options.triangleCount);
   const requests: AnalyzeRequest[] = [];
   const signals: AbortSignal[] = [];
   const transport = vi.fn<AnalysisTransport['analyze']>((request, signal) => {
@@ -230,7 +235,11 @@ function mount(options: Options = {}): Spies {
     promise: new Promise<never>(() => undefined),
     cancel: (): void => undefined,
   });
-  const createSplit = vi.fn(never);
+  const createSplit = vi.fn(() =>
+    options.previewRejects === undefined
+      ? never()
+      : { promise: Promise.reject(options.previewRejects as Error), cancel: (): void => undefined },
+  );
   const createComponentSplit = vi.fn(never);
   const commitSplit = vi.fn(never);
   const client = Object.assign(new GeometryClient({ onDiagnostic: (): void => undefined }), {
@@ -445,7 +454,7 @@ describe('an analysis', () => {
     const spies = mount({ response: () => pending });
     await findParts('human');
     expect(screen.getByTestId('auto-progress')).toBeInTheDocument();
-    expect(screen.getByTestId('auto-status')).toHaveTextContent(/finding parts/i);
+    expect(screen.getByTestId('auto-status')).toHaveTextContent(/looking for parts/i);
     expect(screen.getByTestId('auto-progress').textContent).not.toMatch(/\d\s*%/);
     expect(spies.signals[0]?.aborted).toBe(false);
     click('auto-cancel');
@@ -647,5 +656,115 @@ describe('manual split stays local', () => {
     expect(spies.transport).not.toHaveBeenCalled();
     expect(spies.render).not.toHaveBeenCalled();
     expect(spies.suggest).not.toHaveBeenCalled();
+  });
+});
+
+describe('a part too detailed for the split tools', () => {
+  it('Auto Split says so as a status before Find parts, with the size and the limit, and no retry', async () => {
+    const spies = mount({ triangleCount: 2_010_000 });
+    await openAuto();
+    const card = screen.getByTestId('auto-too-detailed');
+    // A neutral status, never an alert: nothing went wrong.
+    expect(card).toHaveAttribute('role', 'status');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('auto-too-detailed-heading')).toHaveTextContent(
+      'This model is too detailed for Auto Split right now.',
+    );
+    expect(screen.getByTestId('auto-too-detailed-size')).toHaveTextContent('2.01M triangles');
+    expect(screen.getByTestId('auto-too-detailed-limit')).toHaveTextContent(
+      'Auto Split currently supports models up to 2.00M triangles.',
+    );
+    expect(screen.getByTestId('auto-too-detailed-unchanged')).toHaveTextContent(
+      'Your model is unchanged and nothing was sent.',
+    );
+    // Repeating the action cannot succeed, so nothing offers to: no retry, no question, no analysis.
+    for (const id of ['auto-analyze', 'auto-try-again', 'auto-kind-human', 'auto-disclosure'])
+      expect(screen.queryByTestId(id)).toBeNull();
+    expect(card.textContent).not.toMatch(/try again/i);
+    expect(spies.render).not.toHaveBeenCalled();
+    expect(spies.transport).not.toHaveBeenCalled();
+  });
+
+  it('does not offer Manual Split as the way out, because it has the same limit', async () => {
+    mount({ triangleCount: 2_010_000 });
+    await openAuto();
+    const text = screen.getByTestId('auto-too-detailed').textContent;
+    expect(text).toContain('Manual Split has the same limit');
+    expect(text).toContain('Repair, Convert and Export have their own limits');
+    expect(screen.queryByTestId('auto-open-manual')).toBeNull();
+    expect(text).not.toMatch(/use manual split/i);
+  });
+
+  it('Manual Split says the same, asks the worker for nothing, and keeps Preview off', async () => {
+    const spies = mount({ triangleCount: 2_010_000 });
+    expect(screen.getByTestId('split-too-detailed')).toHaveAttribute('role', 'status');
+    expect(screen.getByTestId('split-too-detailed-heading')).toHaveTextContent(
+      'This model is too detailed for Manual Split right now.',
+    );
+    expect(screen.getByTestId('split-too-detailed-others')).toHaveTextContent(
+      'Auto Split has the same limit.',
+    );
+    click('split-preview');
+    await settle();
+    expect(spies.createSplit).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('writes 2,000,001 against 2,000,000 in full, so it never says a number exceeds itself', async () => {
+    mount({ triangleCount: 2_000_001 });
+    await openAuto();
+    expect(screen.getByTestId('auto-too-detailed-size')).toHaveTextContent('2,000,001 triangles');
+    expect(screen.getByTestId('auto-too-detailed-limit')).toHaveTextContent(
+      'up to 2,000,000 triangles',
+    );
+  });
+
+  it('does not appear at 2,000,000 or 1,999,999: Find parts is offered', async () => {
+    for (const triangleCount of [1_999_999, 2_000_000]) {
+      const spies = mount({ triangleCount });
+      await chooseAndAccept('human');
+      expect(screen.queryByTestId('auto-too-detailed')).toBeNull();
+      expect(screen.getByTestId('auto-analyze')).toBeEnabled();
+      expect(spies.render).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
+});
+
+describe('a split the worker declines for resources', () => {
+  const declined = resourceLimitExceeded('Manifold input bytes are 1; limit is 1.', {
+    metric: 'inputBytes',
+  });
+
+  it('Manual Split shows a decision in a neutral status, not a failure alert, and not the raw limit', async () => {
+    mount({ previewRejects: declined });
+    click('split-preview');
+    await settle();
+    const note = screen.getByTestId('split-resource-limit');
+    expect(note).toHaveAttribute('role', 'status');
+    expect(screen.queryByTestId('split-error')).toBeNull();
+    expect(note.textContent).toContain('This split needs more room than Pybrix allows.');
+    expect(note.textContent).toContain('Your model is unchanged.');
+    expect(note.textContent).not.toMatch(/manifold|inputBytes|limit is/i);
+    expect(screen.queryByTestId('split-failure-line')).toBeNull();
+  });
+
+  it('Auto Split does not tell the person to use Manual Split, which has the same limits', async () => {
+    mount({ previewRejects: declined });
+    await findParts('human');
+    click('auto-preview-head');
+    await settle();
+    expect(screen.getByTestId('auto-needs-room')).toHaveAttribute('role', 'status');
+    expect(screen.queryByTestId('auto-unsafe')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/use manual split/i);
+  });
+
+  it('still says "adjust the cut or use Manual Split" for a cut that is merely unsound', async () => {
+    mount({ previewRejects: invalidState('Geometry edit candidate contains degenerate faces.') });
+    await findParts('human');
+    click('auto-preview-head');
+    await settle();
+    expect(screen.getByTestId('auto-unsafe')).toHaveTextContent(AUTO_SPLIT_COPY.unsafeCut);
+    expect(screen.queryByTestId('auto-needs-room')).toBeNull();
   });
 });

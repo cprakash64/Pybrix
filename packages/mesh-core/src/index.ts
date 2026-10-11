@@ -71,6 +71,7 @@ export {
   UNSHARED_IMPORT_BYTES_PER_TRIANGLE,
 } from './import-cost';
 export type { ImportGeometryCost } from './import-cost';
+export { isWithinSplitTriangleCeiling, MAX_SUPPORTED_SPLIT_TRIANGLES } from './split-limits';
 export type { DrawableTriangles } from './analysis';
 export type { MeshBounds, Vector3Tuple } from './analysis';
 

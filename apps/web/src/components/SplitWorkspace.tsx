@@ -29,6 +29,7 @@ import {
   type SplitControls,
 } from '../state/use-split-workflow';
 import { AutoSplitSections, SplitModeTabs } from './AutoSplitPanel';
+import { ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
 import { useOpenConvertWorkspace } from './shell/open-convert';
 import {
   ActionFooter,
@@ -77,6 +78,13 @@ export function SplitWorkspace(): ReactNode {
           </PanelSection>
         ) : auto.tab === 'manual' ? (
           <div role="tabpanel" id="split-tabpanel-manual" aria-labelledby="split-tab-manual">
+            {split.sizeNotice === undefined ? null : (
+              <TooDetailedCard
+                tool="Manual Split"
+                notice={split.sizeNotice}
+                testId="split-too-detailed"
+              />
+            )}
             <CutPlaneSection split={split} />
             <ConnectorSection split={split} />
             <ResultSection split={split} />
@@ -106,8 +114,16 @@ export function SplitWorkspace(): ReactNode {
       <SplitFooter
         split={split}
         exportMode={exportMode}
-        previewBlock={auto.tab === 'auto' ? auto.footerBlock : undefined}
-        {...(auto.tab === 'auto' && auto.busy ? { onCancelAnalysis: auto.cancel } : {})}
+        previewBlock={
+          auto.tab === 'auto'
+            ? auto.footerBlock
+            : split.sizeNotice === undefined
+              ? undefined
+              : SPLIT_COPY.tooDetailedHint
+        }
+        {...(auto.tab === 'auto' && auto.busy && auto.cancellable
+          ? { onCancelAnalysis: auto.cancel }
+          : {})}
       />
     </div>
   );
@@ -700,7 +716,10 @@ function SplitOutcome({ split }: { readonly split: SplitControls }): ReactNode {
   const key = [split.error, exportFailure].filter((message) => message !== undefined).join('|');
   return (
     <WorkspaceOutcome revealKey={key === '' ? undefined : key}>
-      {split.error === undefined ? null : (
+      {split.error === undefined ? null : split.errorIsResourceLimit ? (
+        // A limit the worker enforces is a decision with a reason, not a defect: a status, not an alert.
+        <ResourceRefusalCard testId="split-resource-limit" />
+      ) : (
         <OutcomeAlert testId="split-error">{split.error} The model is unchanged.</OutcomeAlert>
       )}
       {exportFailure === undefined ? null : (
@@ -756,7 +775,7 @@ function SplitFooter({
         : undefined;
   const working = split.phase === SplitPhase.Computing || split.phase === SplitPhase.Applying;
   const failureLine =
-    split.error !== undefined
+    split.error !== undefined && !split.errorIsResourceLimit
       ? SPLIT_COPY.failedLine
       : split.exportState === SplitExportState.Failed && split.exportMessage !== undefined
         ? SPLIT_COPY.exportFailedLine

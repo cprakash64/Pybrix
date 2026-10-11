@@ -4,6 +4,7 @@ import {
   type Vec3,
   type VehicleAnswer,
 } from '@cadfixer/auto-split-contract';
+import { NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 import { componentFacts, type ComponentLabelling } from './components';
 import { describeComponents, pixelCounter, type ComponentDescriptor } from './descriptors';
 import { toSourcePoint, type FaceFacts, type NormalizedGeometry } from './geometry';
@@ -45,6 +46,8 @@ export interface VehicleSuggestInput {
   readonly labelling: ComponentLabelling;
   readonly rasters: readonly Raster[];
   readonly answer: VehicleAnswer;
+  /** Read at safe boundaries inside the long passes; throws to cancel. Never changes a result. */
+  readonly checkpoint?: Checkpoint;
 }
 
 /** A cab or cargo entry is shown as a component only when its evidence is this good: below it, a fused cab looks like a plausible body. */
@@ -145,6 +148,7 @@ const reviewable = (d: Decided): boolean =>
 
 export function suggestVehicle(input: VehicleSuggestInput): SuggestionResult {
   const { geometry, facts, labelling, rasters, answer } = input;
+  const checkpoint = input.checkpoint ?? NO_CHECKPOINT;
   const descriptors: ComponentDescriptor[] = describeComponents(
     componentFacts(labelling, facts, geometry),
     labelling,
@@ -248,7 +252,7 @@ export function suggestVehicle(input: VehicleSuggestInput): SuggestionResult {
   const cargoOk = cargo !== undefined && credible('slot:cargo_or_bed');
   const pairPlane =
     cab !== undefined && cargo !== undefined && !cabOk && !cargoOk
-      ? proposeCabBedPlane(geometry, facts, answer)
+      ? proposeCabBedPlane(geometry, facts, answer, checkpoint)
       : null;
   if (cab !== undefined && cabOk)
     out.push(

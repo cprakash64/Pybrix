@@ -7,11 +7,12 @@ import {
 import {
   componentPieces,
   faceFacts,
+  AUTO_SPLIT_TOO_DETAILED,
   labelComponents,
-  MAX_ANALYSIS_TRIANGLES,
   normalizeGeometry,
   prepareViews,
   suggestFor,
+  type Checkpoint,
   type ComponentLabelling,
   type SemanticAnswer,
 } from '@cadfixer/auto-split';
@@ -22,11 +23,12 @@ import {
   describeSplitSourceRefusal,
   splitTolerance,
   type DocumentHandle,
+  type OperationContext,
   type OperationHandler,
   type SplitSourceReason,
   type SplitResult,
 } from '@cadfixer/geometry-runtime';
-import { partId, type CanonicalMesh } from '@cadfixer/mesh-core';
+import { MAX_SUPPORTED_SPLIT_TRIANGLES, partId, type CanonicalMesh } from '@cadfixer/mesh-core';
 import { analyseTopology } from '@cadfixer/mesh-topology';
 import { invalidState, resourceLimitExceeded, type CancellationToken } from '@cadfixer/shared';
 import {
@@ -83,12 +85,31 @@ function resolveMesh(source: DocumentHandle, id: string): CanonicalMesh {
   return part.mesh;
 }
 
+/** The engine's safe boundary, read from the operation's own cancellation (shared word where interruptible). */
+function checkpointOf(context: OperationContext): Checkpoint {
+  return (): void => {
+    context.throwIfCancelled();
+  };
+}
+
+/**
+ * THE AUTHORITATIVE SIZE CHECK. The page checks the part's triangle count before it offers Find parts,
+ * but that is courtesy: this is the check that decides. The ceiling is the ONE shared split ceiling —
+ * the same number the exact split enforces — so Auto Split never accepts a part the cut it suggests
+ * would then be refused for size alone. The refusal is a deterministic outcome (`AUTO_SPLIT_TOO_DETAILED`):
+ * the count is a fact and the ceiling a constant, so retrying cannot change it.
+ */
 function refuseIfTooLarge(mesh: CanonicalMesh): void {
   const faces = Math.floor(mesh.indices.length / 3);
-  if (faces > MAX_ANALYSIS_TRIANGLES)
+  if (faces > MAX_SUPPORTED_SPLIT_TRIANGLES)
     throw resourceLimitExceeded(
-      `This part has ${faces.toLocaleString('en-US')} triangles; Auto Split analyses parts of up to ${MAX_ANALYSIS_TRIANGLES.toLocaleString('en-US')}.`,
-      { metric: 'triangles', value: faces, limit: MAX_ANALYSIS_TRIANGLES },
+      `This part has ${faces.toLocaleString('en-US')} triangles; Auto Split supports parts of up to ${MAX_SUPPORTED_SPLIT_TRIANGLES.toLocaleString('en-US')}.`,
+      {
+        code: AUTO_SPLIT_TOO_DETAILED,
+        metric: 'triangles',
+        value: faces,
+        limit: MAX_SUPPORTED_SPLIT_TRIANGLES,
+      },
     );
 }
 
@@ -115,12 +136,18 @@ let lastLabelling:
   | { readonly key: string; readonly mesh: CanonicalMesh; readonly labelling: ComponentLabelling }
   | undefined;
 
-function labellingFor(source: DocumentHandle, id: string, mesh: CanonicalMesh): ComponentLabelling {
+function labellingFor(
+  source: DocumentHandle,
+  id: string,
+  mesh: CanonicalMesh,
+  checkpoint: Checkpoint,
+): ComponentLabelling {
   const key = `${source.documentId}@${String(source.revision)}/${id}`;
   if (lastLabelling?.key === key && lastLabelling.mesh === mesh) return lastLabelling.labelling;
   const labelling = labelComponents(
     mesh,
-    faceFacts(normalizeGeometry(mesh.positions, mesh.indices)),
+    faceFacts(normalizeGeometry(mesh.positions, mesh.indices, checkpoint), checkpoint),
+    checkpoint,
   );
   lastLabelling = { key, mesh, labelling };
   return labelling;
@@ -133,10 +160,17 @@ export const autoSplitRenderHandler: OperationHandler<'autosplit/render'> = asyn
   context.throwIfCancelled();
   const mesh = resolveMesh(payload.source, payload.partId);
   refuseIfTooLarge(mesh);
-  const prepared = await prepareViews(mesh, deflate, (_view, index) => {
-    context.throwIfCancelled();
-    context.reportProgress((index + 1) / 6, `Rendered view ${String(index + 1)} of 6`);
-  });
+  const prepared = await prepareViews(
+    mesh,
+    deflate,
+    (_view, index) => {
+      context.throwIfCancelled();
+      context.reportProgress((index + 1) / 6, `Preparing model… view ${String(index + 1)} of 6`);
+    },
+    // Read inside every long loop. Where the operation is interruptible the shared cancellation word
+    // is visible from synchronous work, so a cancel lands within a few milliseconds, not at a view's end.
+    checkpointOf(context),
+  );
   context.throwIfCancelled();
   return {
     value: {
@@ -174,7 +208,7 @@ export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = (
     const vehicle: VehicleAnswer = checked.value;
     answer = { mode: 'vehicle', vehicle };
   }
-  const result = suggestFor(mesh, answer);
+  const result = suggestFor(mesh, answer, { checkpoint: checkpointOf(context) });
   context.throwIfCancelled();
   const sourceReasons = sourceReasonsOf(
     mesh,
@@ -202,7 +236,7 @@ export const autoSplitComponentFacesHandler: OperationHandler<'autosplit/compone
 ) => {
   context.throwIfCancelled();
   const mesh = resolveMesh(payload.source, payload.partId);
-  const labelling = labellingFor(payload.source, payload.partId, mesh);
+  const labelling = labellingFor(payload.source, payload.partId, mesh, checkpointOf(context));
   const chosen = new Set(payload.ranks);
   const faces: number[] = [];
   labelling.faceRank.forEach((rank, face) => {
@@ -235,6 +269,7 @@ export const autoSplitExtractCreateHandler: OperationHandler<'autosplit/extract-
   context.throwIfCancelled();
   const sourcePart = residentDocuments.resolvePart(payload.source, partId(payload.partId));
   if (!isPart(sourcePart)) throw sourcePart;
+  refuseIfTooLarge(sourcePart.mesh);
   const reasons = sourceReasonsOf(
     sourcePart.mesh,
     payload.source.revision,
@@ -247,10 +282,15 @@ export const autoSplitExtractCreateHandler: OperationHandler<'autosplit/extract-
       reasons: reasons.join(','),
       label: payload.partId,
     });
-  const labelling = labellingFor(payload.source, payload.partId, sourcePart.mesh);
+  const labelling = labellingFor(
+    payload.source,
+    payload.partId,
+    sourcePart.mesh,
+    checkpointOf(context),
+  );
   let pieces;
   try {
-    pieces = componentPieces(sourcePart.mesh, labelling, payload.ranks);
+    pieces = componentPieces(sourcePart.mesh, labelling, payload.ranks, checkpointOf(context));
   } catch (error) {
     throw invalidState(error instanceof Error ? error.message : 'The selection cannot be split.', {
       code: 'AUTO_SPLIT_SELECTION_INVALID',

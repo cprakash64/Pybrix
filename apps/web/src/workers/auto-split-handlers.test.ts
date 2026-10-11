@@ -1,15 +1,25 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { partId, singlePartDocument, type CanonicalMesh } from '@cadfixer/mesh-core';
+import {
+  MAX_SUPPORTED_SPLIT_TRIANGLES,
+  partId,
+  singlePartDocument,
+  type CanonicalMesh,
+} from '@cadfixer/mesh-core';
 import { carMultipart, humanFigure, openCube, scenarioAnswer } from '@cadfixer/auto-split/fixtures';
-import { SuggestionOperation } from '@cadfixer/auto-split';
+import { AUTO_SPLIT_TOO_DETAILED, SuggestionOperation } from '@cadfixer/auto-split';
 import {
   isPart,
   type DocumentHandle,
   type OperationContext,
   type SplitCreateResult,
 } from '@cadfixer/geometry-runtime';
-import { AppErrorCode, isAppError, uncancellable, type AppError } from '@cadfixer/shared';
-import { MAX_ANALYSIS_TRIANGLES } from '@cadfixer/auto-split';
+import {
+  AppErrorCode,
+  isAppError,
+  operationCancelled,
+  uncancellable,
+  type AppError,
+} from '@cadfixer/shared';
 import {
   autoSplitComponentFacesHandler,
   autoSplitExtractCreateHandler,
@@ -87,24 +97,36 @@ describe('autosplit/render', () => {
   });
 });
 
+/**
+ * `faces` copies of one tiny triangle, plus one far-away vertex no face uses, so the part has a real
+ * extent and each face covers about a pixel: a mesh whose size is the whole point and whose renders are
+ * cheap. Structurally valid; not a closed solid, which the size gate does not ask.
+ */
+function tinyFaces(faces: number): CanonicalMesh {
+  const indices = new Uint32Array(faces * 3);
+  for (let f = 0; f < faces; f += 1) indices.set([0, 1, 2], f * 3);
+  const positions = new Float32Array([0, 0, 0, 1e-3, 0, 0, 0, 1e-3, 0, 1, 1, 1]);
+  return { positions, indices, metadata: {} };
+}
+
 describe('the resource gate', () => {
-  it('refuses a part above the analysis ceiling, naming the metric, the value and the limit, before any work', async () => {
-    const faces = MAX_ANALYSIS_TRIANGLES + 1;
-    const indices = new Uint32Array(faces * 3);
-    for (let f = 0; f < faces; f += 1) indices.set([0, 1, 2], f * 3);
-    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
-    // Structurally irrelevant: the gate reads the face count and refuses before a single view is drawn.
-    const handle = install({ positions, indices, metadata: {} });
+  it('refuses 2,000,001 triangles, naming the metric, the value and the limit, before any work', async () => {
+    const faces = MAX_SUPPORTED_SPLIT_TRIANGLES + 1;
+    const handle = install(tinyFaces(faces));
     const render = await refusalOf(() =>
       autoSplitRenderHandler({ source: handle, partId: PART }, context()),
     );
     expect(render.code).toBe(AppErrorCode.ResourceLimitExceeded);
+    // A DETERMINISTIC refusal: the count is a fact and the ceiling a constant, so the page can say
+    // "too detailed" and offer no retry. The code is how it tells this from a failure.
     expect(render.details).toMatchObject({
+      code: AUTO_SPLIT_TOO_DETAILED,
       metric: 'triangles',
-      value: faces,
-      limit: MAX_ANALYSIS_TRIANGLES,
+      value: 2_000_001,
+      limit: 2_000_000,
     });
-    expect(render.message).toContain('1,500,001');
+    expect(render.message).toContain('2,000,001');
+    expect(render.message).toContain('2,000,000');
     const suggest = await refusalOf(() =>
       autoSplitSuggestHandler(
         { source: handle, partId: PART, mode: 'human', analysis: scenarioAnswer('human-ok') },
@@ -112,6 +134,67 @@ describe('the resource gate', () => {
       ),
     );
     expect(suggest.code).toBe(AppErrorCode.ResourceLimitExceeded);
+    expect(suggest.details).toMatchObject({ code: AUTO_SPLIT_TOO_DETAILED });
+    const extract = await refusalOf(() =>
+      autoSplitExtractCreateHandler({ source: handle, partId: PART, ranks: [0] }, context()),
+    );
+    expect(extract.details).toMatchObject({ code: AUTO_SPLIT_TOO_DETAILED });
+  }, 120_000);
+
+  it('does not refuse 1,999,999 or 2,000,000 triangles for their size', async () => {
+    for (const faces of [MAX_SUPPORTED_SPLIT_TRIANGLES - 1, MAX_SUPPORTED_SPLIT_TRIANGLES]) {
+      const handle = install(tinyFaces(faces));
+      const out = await autoSplitRenderHandler({ source: handle, partId: PART }, context());
+      expect(out.value.pngs).toHaveLength(6);
+      residentDocuments.releaseAll();
+    }
+  }, 300_000);
+});
+
+describe('cancelling the local analysis', () => {
+  /** A context whose cancellation turns on after `allowed` reads, as the shared word would mid-loop. */
+  function cancelAfter(allowed: number): { context: OperationContext; reads: () => number } {
+    let reads = 0;
+    return {
+      reads: () => reads,
+      context: {
+        ...context(),
+        interruptible: true,
+        throwIfCancelled: (): void => {
+          reads += 1;
+          if (reads > allowed) throw operationCancelled();
+        },
+      },
+    };
+  }
+
+  it('stops the six renders inside a long loop, not at the end of a view', async () => {
+    const handle = install(tinyFaces(400_000));
+    const { context: cancelling, reads } = cancelAfter(4);
+    const refusal = await refusalOf(() =>
+      autoSplitRenderHandler({ source: handle, partId: PART }, cancelling),
+    );
+    expect(refusal.code).toBe(AppErrorCode.OperationCancelled);
+    // Stopped almost at once: a handful of reads, where a full run reads hundreds.
+    expect(reads()).toBeLessThan(10);
+  });
+
+  it('stops the local suggestion pass inside its loops', async () => {
+    const handle = install(carMultipart().mesh);
+    const { context: cancelling, reads } = cancelAfter(2);
+    const refusal = await refusalOf(() =>
+      autoSplitSuggestHandler(
+        {
+          source: handle,
+          partId: PART,
+          mode: 'vehicle',
+          analysis: scenarioAnswer('vehicle-component'),
+        },
+        cancelling,
+      ),
+    );
+    expect(refusal.code).toBe(AppErrorCode.OperationCancelled);
+    expect(reads()).toBeLessThan(10);
   });
 });
 

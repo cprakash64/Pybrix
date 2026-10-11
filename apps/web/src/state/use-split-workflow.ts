@@ -26,7 +26,9 @@ import {
 } from './split-presentation';
 import { planeSettingsFor } from './auto-split-plane';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
-import type { LengthUnit } from '@cadfixer/shared';
+import { AppErrorCode, isAppError, type LengthUnit } from '@cadfixer/shared';
+import { RESOURCE_REFUSAL_COPY, splitSizeNoticeFor } from './split-size-presentation';
+import type { SplitSizeNotice } from './split-size-presentation';
 import { millimetresToCoordinates, unitWord } from './unit-interpretation';
 import { useUnitInterpretation } from './use-unit-interpretation';
 import { StatusSeverity } from './workspace-store';
@@ -139,6 +141,16 @@ export interface SplitControls {
   readonly phase: SplitPhase;
   readonly progress: string;
   readonly error: string | undefined;
+  /**
+   * True when `error` is the worker declining the split for RESOURCES (a limit, not a defect in the
+   * cut). Shown as a neutral status, never an alert, and never as a prompt to try another way.
+   */
+  readonly errorIsResourceLimit: boolean;
+  /**
+   * Set when the part has more triangles than the exact split supports. Deterministic and known from
+   * the part's descriptor, so Preview is not offered and the page says why before anything runs.
+   */
+  readonly sizeNotice: SplitSizeNotice | undefined;
   readonly preview: SplitCreateResult | undefined;
   readonly applied: AppliedSplit | undefined;
   readonly exportState: SplitExportState;
@@ -164,6 +176,10 @@ export interface SplitControls {
 
 const messageOf = (cause: unknown, fallback: string): string =>
   cause instanceof Error && cause.message !== '' ? cause.message : fallback;
+
+/** The worker declined for resources: a limit it enforces, as opposed to a cut it found unsound. */
+const isResourceRefusal = (cause: unknown): boolean =>
+  isAppError(cause) && cause.code === AppErrorCode.ResourceLimitExceeded;
 
 /**
  * The connector request in the MODEL'S coordinate units. The panel's sizes are
@@ -290,7 +306,7 @@ export function useSplitWorkflow(): SplitControls {
     readonly progress: string;
   }>({ session: '', phase: SplitPhase.Idle, progress: '' });
   const [errorState, setErrorState] = useState<
-    { readonly key: string; readonly message: string } | undefined
+    { readonly key: string; readonly message: string; readonly resource: boolean } | undefined
   >(undefined);
   const [previewState, setPreviewState] = useState<
     { readonly key: string; readonly result: SplitCreateResult } | undefined
@@ -305,6 +321,9 @@ export function useSplitWorkflow(): SplitControls {
   const dragStart = useRef<number | undefined>(undefined);
 
   const error = errorState?.key === session ? errorState.message : undefined;
+  const errorIsResourceLimit = errorState?.key === session && errorState.resource;
+  const partTriangles = part?.triangleCount;
+  const sizeNotice = useMemo(() => splitSizeNoticeFor(partTriangles), [partTriangles]);
   const preview = previewState?.key === session ? previewState.result : undefined;
   const rawPhase = work.session === session ? work.phase : SplitPhase.Idle;
   const progress = work.session === session ? work.progress : '';
@@ -348,7 +367,14 @@ export function useSplitWorkflow(): SplitControls {
 
   const setError = useCallback(
     (message: string | undefined): void => {
-      setErrorState(message === undefined ? undefined : { key: session, message });
+      setErrorState(message === undefined ? undefined : { key: session, message, resource: false });
+    },
+    [session],
+  );
+  /** A refusal for RESOURCES: the same slot, marked so the page can show it as a decision. */
+  const setResourceError = useCallback(
+    (message: string): void => {
+      setErrorState({ key: session, message, resource: true });
     },
     [session],
   );
@@ -512,6 +538,9 @@ export function useSplitWorkflow(): SplitControls {
 
   const updatePreview = useCallback((): void => {
     if (client === undefined || model === undefined || part === undefined) return;
+    // Above the supported size nothing can be previewed: the page already says so, and the worker
+    // would only refuse. Asking it would turn a known fact into a failure.
+    if (sizeNotice !== undefined) return;
     const byComponents = componentRanks.length > 0;
     // Components are separate shells: there is no cut face to put a connector on, so the connector
     // settings are neither read nor validated for them.
@@ -548,8 +577,14 @@ export function useSplitWorkflow(): SplitControls {
       (cause: unknown) => {
         if (running.current !== operation) return;
         running.current = undefined;
-        const message = messageOf(cause, 'The split could not be completed.');
         setPhase(SplitPhase.Idle);
+        if (isResourceRefusal(cause)) {
+          // A decision, not a defect: neutral words that name no limit's internals and no other way.
+          setResourceError(RESOURCE_REFUSAL_COPY.body);
+          store.pushStatus(StatusSeverity.Info, RESOURCE_REFUSAL_COPY.heading);
+          return;
+        }
+        const message = messageOf(cause, 'The split could not be completed.');
         setError(message);
         store.pushStatus(StatusSeverity.Error, message);
       },
@@ -568,6 +603,8 @@ export function useSplitWorkflow(): SplitControls {
     setError,
     setPhase,
     setProgress,
+    setResourceError,
+    sizeNotice,
     splitPlane,
     store,
   ]);
@@ -709,6 +746,8 @@ export function useSplitWorkflow(): SplitControls {
     phase,
     progress,
     error,
+    errorIsResourceLimit,
+    sizeNotice,
     preview,
     applied,
     exportState,

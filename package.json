@@ -64,7 +64,10 @@
     "qualify:repair-core-06a": "vitest run --config vitest.bench.config.ts scripts/repair-core-06a-qualify.bench-suite.ts",
     "test:e2e:auto-split": "playwright test --config playwright.auto-split.config.ts",
     "smoke:auto-split-live": "vitest run --config vitest.live.config.ts",
-    "bench:auto-split": "vitest run --config vitest.bench.config.ts scripts/auto-split-performance.bench-suite.ts"
+    "bench:auto-split": "vitest run --config vitest.bench.config.ts scripts/auto-split-performance.bench-suite.ts",
+    "bench:auto-split-large": "vitest run --config vitest.bench.config.ts scripts/auto-split-large.bench-suite.ts",
+    "bench:auto-split-large-split": "vitest run --config vitest.bench.config.ts scripts/auto-split-large-split.bench-suite.ts",
+    "test:e2e:auto-split-large": "AUTO_SPLIT_LARGE=1 playwright test --config playwright.auto-split.config.ts e2e-auto-split/large-mesh.spec.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

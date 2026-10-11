@@ -18,7 +18,8 @@ import type {
   AutoSplitSuggestResult,
   DocumentHandle,
 } from '@cadfixer/geometry-runtime';
-import { operationCancelled, internalError } from '@cadfixer/shared';
+import { operationCancelled, internalError, resourceLimitExceeded } from '@cadfixer/shared';
+import { AUTO_SPLIT_TOO_DETAILED } from '@cadfixer/auto-split';
 import type { AnalysisTransport } from '../runtime/auto-split-transport';
 import {
   AutoSplitSession,
@@ -107,7 +108,9 @@ interface Rig {
   readonly calls: { render: number; suggest: number; transport: number };
   readonly requests: AnalyzeRequest[];
   readonly signals: AbortSignal[];
-  readonly cancelled: { render: number };
+  readonly cancelled: { render: number; suggest: number };
+  /** Whether the suggest operation reports that a Cancel reaches synchronous work. */
+  suggestInterruptible: boolean;
   render: ReturnType<typeof deferred<AutoSplitRenderResult>>;
   progress: ((update: { fraction: number; note?: string }) => void) | undefined;
   transport: ReturnType<typeof deferred<ParsedResponse>>;
@@ -120,7 +123,8 @@ function rig(): Rig {
     calls: { render: 0, suggest: 0, transport: 0 },
     requests: [],
     signals: [],
-    cancelled: { render: 0 },
+    cancelled: { render: 0, suggest: 0 },
+    suggestInterruptible: true,
     render: deferred(),
     transport: deferred(),
     suggest: deferred(),
@@ -142,7 +146,13 @@ function rig(): Rig {
     suggestAutoSplit: (_source, _part, _mode, analysis) => {
       r.calls.suggest += 1;
       r.raws.push(analysis);
-      return { promise: r.suggest.promise, cancel: () => undefined };
+      return {
+        promise: r.suggest.promise,
+        interruptible: r.suggestInterruptible,
+        cancel: (): void => {
+          r.cancelled.suggest += 1;
+        },
+      };
     },
   };
   const transport: AnalysisTransport = {
@@ -544,5 +554,133 @@ describe('selection', () => {
 describe('the key is the identity', () => {
   it('names document, revision and part', () => {
     expect(targetKey(target(4, 'doc-9', 'part-3'))).toBe('doc-9@4/part-3');
+  });
+});
+
+describe('a part too detailed for Auto Split', () => {
+  const sized = (triangleCount: number): AutoSplitTarget => ({ ...target(), triangleCount });
+
+  it('is refused before any work at 2,000,001 triangles, and not at 1,999,999 or 2,000,000', () => {
+    for (const [triangles, allowed] of [
+      [1_999_999, true],
+      [2_000_000, true],
+      [2_000_001, false],
+    ] as const) {
+      const r = rig();
+      ready(r);
+      expect(r.session.analyze(sized(triangles))).toBe(allowed);
+      expect(r.calls.render).toBe(allowed ? 1 : 0);
+      // Nothing was rendered, sent, retried or turned into an error state for the refused one.
+      expect(r.calls.transport).toBe(0);
+      expect(r.session.getSnapshot().run).toBe(allowed ? 'preparing' : 'idle');
+      expect(r.session.getSnapshot().error).toBeUndefined();
+    }
+  });
+
+  it('shows the worker’s own size refusal as a deterministic status with the numbers it measured', async () => {
+    const r = rig();
+    ready(r);
+    r.session.analyze(target());
+    r.render.reject(
+      resourceLimitExceeded('This part has 2,500,000 triangles.', {
+        code: AUTO_SPLIT_TOO_DETAILED,
+        metric: 'triangles',
+        value: 2_500_000,
+        limit: 2_000_000,
+      }),
+    );
+    await flush();
+    const snap = r.session.getSnapshot();
+    expect(snap.run).toBe('error');
+    expect(snap.error?.code).toBe(LocalErrorCode.TooDetailed);
+    expect(snap.error?.size).toEqual({ triangles: 2_500_000, limit: 2_000_000 });
+    // Nothing was sent: the refusal came from the local render, before the request.
+    expect(r.calls.transport).toBe(0);
+  });
+
+  it('does not mistake any other resource refusal for a size verdict', async () => {
+    const r = rig();
+    ready(r);
+    r.session.analyze(target());
+    r.render.reject(resourceLimitExceeded('Some other limit.', { metric: 'inputBytes' }));
+    await flush();
+    expect(r.session.getSnapshot().error?.code).toBe(LocalErrorCode.LocalFailure);
+  });
+});
+
+describe('the phases the person reads', () => {
+  it('goes Preparing model, Looking for parts, Reviewing candidate cuts, in that order', async () => {
+    const r = rig();
+    ready(r);
+    const notes: string[] = [];
+    r.session.subscribe(() => {
+      const { note } = r.session.getSnapshot();
+      if (note !== '' && notes.at(-1) !== note) notes.push(note);
+    });
+    r.session.analyze(target());
+    r.render.resolve(VIEWS);
+    await flush();
+    r.transport.resolve(okHuman());
+    await flush();
+    r.suggest.resolve(suggestResult('human', [HEAD]));
+    await flush();
+    expect(notes).toEqual(['Preparing model…', 'Looking for parts…', 'Reviewing candidate cuts…']);
+  });
+
+  it('carries no implementation vocabulary', async () => {
+    const r = rig();
+    ready(r);
+    const notes = new Set<string>();
+    r.session.subscribe(() => {
+      notes.add(r.session.getSnapshot().note);
+    });
+    r.session.analyze(target());
+    r.progress?.({ fraction: 0.5, note: 'Preparing model… view 3 of 6' });
+    r.render.resolve(VIEWS);
+    await flush();
+    r.transport.resolve(okHuman());
+    await flush();
+    for (const note of notes) expect(note).not.toMatch(/manifold|scorer|triangle soup|provider/i);
+  });
+});
+
+describe('cancelling the local suggestion pass', () => {
+  async function toSuggesting(r: Rig): Promise<void> {
+    ready(r);
+    r.session.analyze(target());
+    r.render.resolve(VIEWS);
+    await flush();
+    r.transport.resolve(okHuman());
+    await flush();
+  }
+
+  it('cancels the worker operation, not just the page’s wait for it', async () => {
+    const r = rig();
+    await toSuggesting(r);
+    expect(r.session.getSnapshot().note).toBe('Reviewing candidate cuts…');
+    expect(r.session.getSnapshot().cancellable).toBe(true);
+    r.session.cancel();
+    expect(r.cancelled.suggest).toBe(1);
+    expect(r.session.getSnapshot().run).toBe('cancelled');
+    // A late answer from the cancelled pass is nothing.
+    r.suggest.resolve(suggestResult('human', [HEAD]));
+    await flush();
+    expect(r.session.getSnapshot().run).toBe('cancelled');
+    expect(r.session.getSnapshot().result).toBeUndefined();
+  });
+
+  it('withdraws Cancel, and does not pretend, where the pass cannot be interrupted', async () => {
+    const r = rig();
+    r.suggestInterruptible = false;
+    await toSuggesting(r);
+    expect(r.session.getSnapshot().cancellable).toBe(false);
+    r.session.cancel();
+    expect(r.cancelled.suggest).toBe(0);
+    expect(r.session.getSnapshot().run).toBe('analyzing');
+    // It finishes, and the control comes back for the next run.
+    r.suggest.resolve(suggestResult('human', [HEAD]));
+    await flush();
+    expect(r.session.getSnapshot().run).toBe('ready');
+    expect(r.session.getSnapshot().cancellable).toBe(true);
   });
 });

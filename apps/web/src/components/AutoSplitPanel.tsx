@@ -11,6 +11,7 @@ import { AutoSplitPhase, ModelKind } from '../state/auto-split-session';
 import type { AutoSplitControls, AutoSplitRow, SplitTab } from '../state/use-auto-split';
 import { Icon } from './shell/Icon';
 import { PanelSection } from './shell/primitives';
+import { ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
 
 /**
  * AUTO SPLIT — PRESENTATION of `useAutoSplit`.
@@ -150,9 +151,17 @@ export function AutoSplitSections({
             <strong className="auto-part__name">{auto.partLabel}</strong>
           </p>
         )}
-        <KindChoice auto={auto} disabled={auto.busy} compact={!showKinds} />
-        {auto.kind === ModelKind.Other ? <OtherKind onOpenManual={onOpenManual} /> : null}
-        {auto.needsDisclosure ? (
+        {auto.tooDetailed === undefined ? (
+          <KindChoice auto={auto} disabled={auto.busy} compact={!showKinds} />
+        ) : (
+          // The verdict precedes the question: a part above the supported size is told so before it is
+          // asked what kind of model it is, because no answer would make Find parts available.
+          <TooDetailedCard tool="Auto Split" notice={auto.tooDetailed} testId="auto-too-detailed" />
+        )}
+        {auto.tooDetailed === undefined && auto.kind === ModelKind.Other ? (
+          <OtherKind onOpenManual={onOpenManual} />
+        ) : null}
+        {auto.tooDetailed === undefined && auto.needsDisclosure ? (
           <Disclosure
             auto={auto}
             onAccepted={() => {
@@ -179,6 +188,7 @@ export function AutoSplitSections({
           <div ref={editorRef}>{editor}</div>
         </>
       ) : null}
+      {auto.cutNeedsMoreRoom ? <ResourceRefusalCard testId="auto-needs-room" /> : null}
       {auto.unsafeCut ? (
         <p className="convert-footer__failure" role="alert" data-testid="auto-unsafe">
           {AUTO_SPLIT_COPY.unsafeCut}
@@ -325,6 +335,7 @@ function Disclosure({
 
 function Start({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
   const ready =
+    auto.tooDetailed === undefined &&
     auto.kind !== undefined &&
     auto.kind !== ModelKind.Other &&
     !auto.needsDisclosure &&
@@ -367,14 +378,21 @@ function Progress({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
         <span>{auto.statusText}</span>
       </p>
       <p className="auto-progress__hint">{AUTO_SPLIT_COPY.waitHint}</p>
-      <button
-        type="button"
-        className="secondary-action auto-progress__cancel"
-        onClick={auto.cancel}
-        data-testid="auto-cancel"
-      >
-        {AUTO_SPLIT_COPY.cancel}
-      </button>
+      {auto.cancellable ? (
+        <button
+          type="button"
+          className="secondary-action auto-progress__cancel"
+          onClick={auto.cancel}
+          data-testid="auto-cancel"
+        >
+          {AUTO_SPLIT_COPY.cancel}
+        </button>
+      ) : (
+        // A control that cannot stop the work is not shown as one: the step is named and left to finish.
+        <p className="auto-progress__hint" data-testid="auto-cancel-unavailable">
+          {AUTO_SPLIT_COPY.cancelUnavailable}
+        </p>
+      )}
     </div>
   );
 }

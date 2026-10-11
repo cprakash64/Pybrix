@@ -55,7 +55,8 @@ Chromium via Playwright) and are not thresholds.
   mesh key, nothing third-party).
 - Regression: `npm run test:e2e` (425 passed, 2 skipped), `test:e2e:timing`, `test:e2e:harness`.
 - Local cost (mock provider, Chromium): click-to-results 0.9 s up to 100k triangles, 1.4 s at 290k, 4.0 s
-  at 1M, 6.0 s at 1.49M (the analysis ceiling is 1.5M); longest main-thread frame gap ≤ 48 ms throughout.
+  at 1M, 6.0 s at 1.49M (the analysis ceiling was 1.5M at A1; since AUTO-SPLIT-LARGE-MESH-02 it is the shared
+  2,000,000-triangle split ceiling, see `AUTO_SPLIT_LARGE_MESH.md`); longest main-thread frame gap ≤ 48 ms throughout.
   The request body is ≈0.4–0.5 MiB. The provider's own latency is not measured: the interface tells the user
   to expect a minute or longer.
 
