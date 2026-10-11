@@ -9,6 +9,7 @@ import {
   type ScenarioName,
 } from '@cadfixer/auto-split/fixtures';
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
+import { openInspector } from '../e2e/inspector';
 
 /**
  * AUTO SPLIT, END TO END (PYBRIX-08B-PROD-A1).
@@ -589,4 +590,59 @@ test('keyboard: Cancel stops an analysis, and a component selection is usable wi
   await page.getByTestId('auto-preview-selection').focus();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 120_000 });
+});
+
+/** The active part as a binary STL, read from the download the application produces. */
+async function exportActivePart(page: Page): Promise<Buffer> {
+  const wait = page.waitForEvent('download', { timeout: 20_000 });
+  await openInspector(page);
+  await page.getByTestId('export-binary').click();
+  const chunks: Buffer[] = [];
+  for await (const chunk of await (await wait).createReadStream()) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+}
+
+test('RC2.1, character: the model is exported identically before Auto Split and after Apply and Undo', async ({
+  page,
+}) => {
+  const figure = humanFigure().mesh;
+  const triangles = await openMesh(page, 'figure.stl', figure);
+  const original = await exportActivePart(page);
+  expect(original.readUInt32LE(80)).toBe(triangles);
+
+  await enterAuto(page);
+  await accept(page, 'human');
+  await findParts(page);
+  await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+  // Source unchanged while the suggestions are on screen.
+  expect((await exportActivePart(page)).equals(original)).toBe(true);
+
+  await previewAndApply(page, 'head');
+  expect(await triangleCount(page)).not.toBe(triangles.toLocaleString('en-US'));
+  await page.getByTestId('split-undo').click();
+  await expect(page.getByTestId('fact-triangles')).toHaveText(triangles.toLocaleString('en-US'), {
+    timeout: 60_000,
+  });
+  // Undo restored the exact model, and the workspace points at it: export works and is byte-identical.
+  expect((await exportActivePart(page)).equals(original)).toBe(true);
+});
+
+test('RC2.1, vehicle: the same holds when Auto Split took components out', async ({ page }) => {
+  await control(page, { scenario: 'vehicle-component' });
+  const triangles = await openMesh(page, 'car.stl', carMultipart().mesh);
+  const original = await exportActivePart(page);
+  expect(original.readUInt32LE(80)).toBe(triangles);
+
+  await enterAuto(page);
+  await accept(page, 'vehicle');
+  await findParts(page);
+  await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+  const wheel = page.locator('[data-testid^="auto-row-wheel:"]').first();
+  const id = ((await wheel.getAttribute('data-testid')) ?? '').replace('auto-row-', '');
+  await previewAndApply(page, id);
+  await page.getByTestId('split-undo').click();
+  await expect(page.getByTestId('fact-triangles')).toHaveText(triangles.toLocaleString('en-US'), {
+    timeout: 60_000,
+  });
+  expect((await exportActivePart(page)).equals(original)).toBe(true);
 });

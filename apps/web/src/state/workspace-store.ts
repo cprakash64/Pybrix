@@ -2443,7 +2443,26 @@ export class WorkspaceStore {
     this.currentAnalysisToken = undefined;
     this.currentRepairToken = undefined;
 
-    const restoredPart = result.parts.find((part) => part.partId === result.partId);
+    /*
+     * THE ACTIVE PART MUST BE A PART OF THE DOCUMENT NOW ON SCREEN (RC2.1).
+     *
+     * An undo can change WHICH parts exist: undoing a split removes Piece A and Piece B and puts the
+     * original part back. The selection used to be left as it was, pointing at a part the restored
+     * document does not contain, and every consumer of the active part then asked the worker for a name
+     * that no longer resolved (export refused it, the Split workspace found nothing to cut).
+     *
+     * So: a selection that still exists is KEPT (undoing a repair of one part must not move the user
+     * off the part they chose), otherwise the part the undone change was made to, otherwise the first
+     * part in document order, which is also what an import selects.
+     */
+    const has = (id: string | undefined): id is string =>
+      id !== undefined && result.parts.some((part) => part.partId === id);
+    const activePartId = has(this.state.activePartId)
+      ? this.state.activePartId
+      : has(result.partId)
+        ? result.partId
+        : result.parts[0]?.partId;
+    const activeDescriptor = result.parts.find((part) => part.partId === activePartId);
 
     this.update({
       model: {
@@ -2459,11 +2478,12 @@ export class WorkspaceStore {
         residentBytes: result.residentBytes,
         revision,
       },
+      activePartId,
       analysis: {
         ...EMPTY_ANALYSIS,
         state: AnalysisState.Idle,
         handle: result.handle,
-        partId: this.state.activePartId,
+        partId: activePartId,
       },
       /*
        * A NEW REVISION GETS A NEW VERDICT, OR NONE AT ALL. See
@@ -2472,8 +2492,8 @@ export class WorkspaceStore {
       selfIntersection: {
         ...EMPTY_SELF_INTERSECTION,
         handle: result.handle,
-        partId: this.state.activePartId,
-        band: bandForFaceCount(restoredPart?.triangleCount ?? result.triangleCount),
+        partId: activePartId,
+        band: bandForFaceCount(activeDescriptor?.triangleCount ?? result.triangleCount),
       },
       overlays: OVERLAYS_HIDDEN,
       /*
@@ -2485,12 +2505,12 @@ export class WorkspaceStore {
       holeFill: {
         ...EMPTY_HOLE_FILL,
         handle: result.handle,
-        partId: this.state.activePartId,
+        partId: activePartId,
       },
       repair: {
         ...EMPTY_REPAIR,
         handle: result.handle,
-        partId: this.state.activePartId,
+        partId: activePartId,
         selection: this.state.repair.selection,
         fillOpenings: this.state.repair.fillOpenings,
       },
