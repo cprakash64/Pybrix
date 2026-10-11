@@ -4762,3 +4762,21 @@
     animation: none;
   }
 }
+
+.auto-part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: var(--fs-secondary);
+}
+
+.auto-part__label {
+  color: var(--cad-text-muted);
+}
+
+.auto-part__name {
+  color: var(--cad-text-strong);
+  overflow-wrap: anywhere;
+}

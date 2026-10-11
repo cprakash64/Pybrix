@@ -59,11 +59,33 @@ Chromium via Playwright) and are not thresholds.
   The request body is ≈0.4–0.5 MiB. The provider's own latency is not measured: the interface tells the user
   to expect a minute or longer.
 
+## Live provider (RC1)
+
+`AUTO_SPLIT_LIVE=1 npm run smoke:auto-split-live` ran the production service in-process against the real
+provider with two generated models (one figure, one car), provider retries off, hard-capped at four
+calls; two were made.
+
+|                               | Human (generated figure)                 | Vehicle (generated car)                     |
+| ----------------------------- | ---------------------------------------- | ------------------------------------------- |
+| Result                        | HTTP 200, answer parsed and valid        | HTTP 200, answer parsed and valid           |
+| Model sent / echoed           | `gpt-6.1-sol` / `gpt-6.1-sol`            | `gpt-6.1-sol` / `gpt-6.1-sol`               |
+| `store` sent / echoed         | `false` / `false`                        | `false` / `false`                           |
+| Schema                        | `json_schema`, strict                    | `json_schema`, strict                       |
+| Images                        | 6                                        | 6                                           |
+| Latency                       | 9.3 s                                    | 25.8 s                                      |
+| Tokens (in / out / reasoning) | 3,410 / 407 / 185                        | 4,582 / 2,086 / 257                         |
+| Approx. cost                  | $0.0109                                  | $0.0300                                     |
+| Local suggestions             | head Suggested; arms No safe split found | four wheels and body Suggested (components) |
+
+The contract worked on the first live attempt; no provider-contract correction was needed. The smoke
+stops at suggestions: it never touches a document. The suggestions are not an accuracy measurement and
+no prompt was tuned from them (the figure's arms were not located; that is recorded, not corrected).
+
 ## Not verified
 
-- **The live provider.** `npm run smoke:auto-split-live` (key- and flag-gated, generated models only, two
-  requests) exists and was **not run**: spending the key in this environment was not authorised. The
-  Responses API request shape is therefore proven against the contract and the mock, not against OpenAI.
+- **The full browser flow against the live provider.** The live request cap (two, after a passing smoke)
+  was spent on the contract; the browser flow was exercised end to end against the deterministic provider,
+  which speaks the same validated contract.
 - Accuracy. Nothing here measures how often a provider finds the right part, and the interface claims none.
 - Deployment: the nginx snippet and systemd unit are contract-tested as text, not installed.
 - Real customer models: only generated models were used.

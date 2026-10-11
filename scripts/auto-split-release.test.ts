@@ -71,6 +71,34 @@ describe('the browser build and the release bundle', () => {
     expect(offenders).toEqual([]);
   });
 
+  it.skipIf(roots.length === 0)(
+    'carry no local filesystem path and no research or third-party asset trace',
+    () => {
+      // Source maps are not shipped (the packager excludes them), so they are not part of this question.
+      const offenders: string[] = [];
+      for (const root of roots)
+        for (const file of walk(root).filter((f) => TEXT.test(f) && !f.endsWith('.map'))) {
+          const text = readFileSync(file, 'utf8');
+          for (const needle of [
+            '/Users/',
+            'C:\\Users',
+            'thingiverse',
+            'Thingiverse',
+            'holdout',
+            'research/auto-split',
+            'REPAIR-CORE',
+            'PYBRIX-08B',
+          ])
+            if (text.includes(needle)) offenders.push(`${relative(REPO_ROOT, file)}: ${needle}`);
+          // `/home/web_user` is the geometry kernels' own in-memory (Emscripten) file system, not a
+          // path on any machine; any other `/home/…` would be.
+          if (/\/home\/(?!web_user)/.test(text))
+            offenders.push(`${relative(REPO_ROOT, file)}: /home/`);
+        }
+      expect(offenders).toEqual([]);
+    },
+  );
+
   it.skipIf(roots.length === 0)('contain no research corpus, provenance or screenshot', () => {
     const names = roots.flatMap((root) => walk(root).map((f) => relative(root, f).toLowerCase()));
     for (const name of names) {
@@ -115,7 +143,10 @@ describe('the service bundle', () => {
         FAKE_TEST_KEY,
       ])
         expect(text, needle).not.toContain(needle);
+      expect(text).not.toMatch(/\/home\/(?!web_user)/);
       expect(text.match(KEY_SHAPE) ?? []).toEqual([]);
+      for (const needle of ['/Users/', 'thingiverse', 'Thingiverse', 'holdout'])
+        expect(text, needle).not.toContain(needle);
       // What it MUST contain: the pinned model, and the request that does not store.
       expect(text).toContain('gpt-6.1-sol');
       expect(text).toMatch(/store:\s*false/);

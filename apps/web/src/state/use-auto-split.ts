@@ -72,6 +72,8 @@ export interface AutoSplitControls {
   readonly acceptDisclosure: () => void;
   readonly declineDisclosure: () => void;
 
+  /** The part an analysis looks at: the one now shown. Named in the panel so the scope is never implied. */
+  readonly partLabel: string | undefined;
   readonly canAnalyze: boolean;
   readonly analyze: () => void;
   readonly reanalyze: () => void;
@@ -457,6 +459,7 @@ export function useAutoSplit(
       session.chooseKind(undefined);
       setTabState('manual');
     },
+    partLabel: part === undefined ? undefined : (part.name ?? part.partId),
     canAnalyze,
     analyze,
     reanalyze,

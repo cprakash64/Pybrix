@@ -132,7 +132,7 @@ test('character: disclosure, six views and three numbers, a head suggestion, pre
   // Nothing has been sent: not on opening the tab, not on choosing a type.
   await page.getByTestId('auto-kind-human').check({ force: true });
   await expect(page.getByTestId('auto-disclosure-text')).toHaveText(
-    /six rendered views of your model/,
+    /six rendered views and limited model metadata/,
   );
   expect(requests).toHaveLength(0);
   await page.getByTestId('auto-disclosure-continue').click();
@@ -465,4 +465,128 @@ test('keyboard only: type, disclosure, analysis and preview are all reachable, a
   await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 120_000 });
   // Nothing was applied by a key press that previewed.
   await expect(page.getByTestId('split-undo')).toHaveCount(0);
+});
+
+test('Split opens on Manual Split, and the Auto Split tab and a cancelled disclosure cost nothing', async ({
+  page,
+}) => {
+  const api: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes('/api/')) api.push(request.url());
+  });
+  await openMesh(page, 'figure.stl', humanFigure().mesh);
+  await page.getByTestId('workflow-split').click();
+  await expect(page.getByTestId('split-workspace')).toBeVisible();
+  // The qualified, local workflow is what opens: not the cloud one.
+  await expect(page.getByTestId('split-tab-manual')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('split-tab-auto')).toHaveAttribute('aria-selected', 'false');
+  await expect(page.getByTestId('split-position-slider')).toBeVisible();
+  await expect(page.getByTestId('auto-split-panel')).toHaveCount(0);
+  await expect(page.getByTestId('auto-beta-badge')).toBeVisible();
+
+  await page.getByTestId('split-tab-auto').click();
+  await page.getByTestId('auto-kind-vehicle').check({ force: true });
+  await page.getByTestId('auto-disclosure-cancel').click();
+  await expect(page.getByTestId('split-tab-manual')).toBeFocused();
+  await expect(page.getByTestId('split-tab-manual')).toHaveAttribute('aria-selected', 'true');
+  // Only an explicit Find parts can send anything.
+  expect(api).toEqual([]);
+  expect((await mockState(page)).received).toHaveLength(0);
+});
+
+test('a long analysis never looks broken: honest wording, Cancel in reach, a live page, one request', async ({
+  page,
+}) => {
+  await control(page, { behaviour: 'ok', delayMs: 12_000 });
+  await openMesh(page, 'figure.stl', humanFigure().mesh);
+  await enterAuto(page);
+  await accept(page, 'human');
+  await page.evaluate(() => {
+    const w = window as unknown as { __gaps: number[]; __stop: boolean };
+    w.__gaps = [];
+    w.__stop = false;
+    let last = performance.now();
+    const tick = (): void => {
+      const now = performance.now();
+      w.__gaps.push(now - last);
+      last = now;
+      if (!w.__stop) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await findParts(page);
+  await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
+    timeout: 30_000,
+  });
+  // Several seconds in: still the same honest sentence, a visible Cancel, no fake precision.
+  await page.waitForTimeout(6000);
+  await expect(page.getByTestId('auto-progress')).toBeVisible();
+  await expect(page.getByTestId('auto-cancel')).toBeVisible();
+  await expect(page.getByTestId('split-cancel-analysis')).toBeVisible();
+  expect(await page.getByTestId('auto-progress').innerText()).not.toMatch(/\d\s*%/);
+  await expect(page.getByTestId('auto-progress')).toContainText(
+    /several seconds to a minute or more/i,
+  );
+  // The analyze button is gone while it runs: nothing can start a duplicate.
+  await expect(page.getByTestId('auto-analyze')).toHaveCount(0);
+  await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 60_000 });
+  const gaps = await page.evaluate(() => {
+    const w = window as unknown as { __gaps: number[]; __stop: boolean };
+    w.__stop = true;
+    return w.__gaps;
+  });
+  // The page stayed alive for the whole wait.
+  expect(Math.max(...gaps)).toBeLessThan(500);
+  expect((await mockState(page)).received).toHaveLength(1);
+});
+
+test('after an Apply, the list says its scope: the current part, not the rest of the original model', async ({
+  page,
+}) => {
+  await openMesh(page, 'figure.stl', humanFigure().mesh);
+  await enterAuto(page);
+  await accept(page, 'human');
+  await findParts(page);
+  await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId('auto-part')).toContainText('part-1');
+  await previewAndApply(page, 'head');
+  await expect(page.getByTestId('auto-stale')).toContainText(
+    'Re-analyze looks only at the part now shown, not at the rest of the original model.',
+  );
+  await expect(page.getByTestId('auto-reanalyze')).toHaveText('Re-analyze current part');
+  // The part named is the one now shown: a piece, not the original.
+  await expect(page.getByTestId('auto-part')).toContainText('Part A');
+});
+
+test('keyboard: Cancel stops an analysis, and a component selection is usable with the keys', async ({
+  page,
+}) => {
+  await control(page, { scenario: 'vehicle-component', behaviour: 'slow' });
+  await openMesh(page, 'car.stl', carMultipart().mesh);
+  await enterAuto(page);
+  await accept(page, 'vehicle');
+  await page.getByTestId('auto-analyze').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('auto-cancel')).toBeVisible({ timeout: 60_000 });
+  await page.getByTestId('auto-cancel').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('auto-cancelled')).toBeVisible();
+
+  await control(page, { scenario: 'vehicle-component', behaviour: 'ok' });
+  await page.getByTestId('auto-analyze').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+  const wheel = page.locator('[data-testid^="auto-row-wheel:"]').first();
+  const id = ((await wheel.getAttribute('data-testid')) ?? '').replace('auto-row-', '');
+  await page.getByTestId(`auto-edit-${id}`).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('auto-components')).toBeVisible();
+  const box = page.locator('[data-testid^="auto-component-"]').nth(2);
+  await box.focus();
+  const before = await box.isChecked();
+  await page.keyboard.press('Space');
+  expect(await box.isChecked()).toBe(!before);
+  await page.getByTestId('auto-preview-selection').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 120_000 });
 });

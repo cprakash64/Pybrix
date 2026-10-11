@@ -7,10 +7,13 @@ and preparing 3D printing meshes. The repository, its packages and its
 deployment paths keep the `cad-fixer` / `@cadfixer` names; they are identifiers,
 not the product's name.
 
-**Your models never leave your machine.** Files are read, processed, and
-exported entirely in the browser using Web Workers, WebAssembly, and your own
-CPU and GPU. There is no server-side geometry processing, no upload endpoint,
-and no analytics.
+**Your original 3D file stays on your device.** Files are read, repaired,
+converted, split manually and exported entirely in the browser using Web
+Workers, WebAssembly, and your own CPU and GPU. There is no server-side
+geometry processing, no file-upload endpoint, and no analytics. The one
+exception is the optional, opt-in **Auto Split (Beta)**: after a disclosure you
+accept, it sends six rendered views and limited model metadata to Pybrix's own
+service for AI analysis.
 
 ## Technical Preview
 
@@ -25,7 +28,7 @@ feature set with clearer Repair results. See the
   flow also runs in Playwright's WebKit build; Safari, Firefox and real mobile
   devices are **not** release-qualified. See
   [BROWSER_SUPPORT.md](docs/release/BROWSER_SUPPORT.md).
-- All geometry is processed in your browser, and your files are never uploaded. The one exception is the opt-in **Auto Split (Beta)**, which — only after a disclosure the user accepts — sends six rendered views of the model and three bounded numbers to Pybrix's own same-origin service for AI part detection. Repair, Convert and Manual Split never make a network request.
+- Your original 3D file stays on your device; Repair, Convert and Manual Split never make a network request. Only the opt-in Auto Split (Beta) sends anything — six rendered views and limited model metadata, after a disclosure you accept, to Pybrix's own same-origin service.
 - Deliberately bounded: see
   [What is and is not implemented](#what-is-and-is-not-implemented).
 

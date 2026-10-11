@@ -58,6 +58,45 @@ const STATUSES = new Set(['SUGGESTED', 'NEEDS_ADJUSTMENT', 'UNAVAILABLE']);
 
 describe.skipIf(!live)('Auto Split live smoke (real provider, generated models only)', () => {
   const lines: Record<string, unknown>[] = [];
+  /** Every call that leaves for the provider is counted and described here, by NAME and COUNT only. */
+  const calls: Record<string, unknown>[] = [];
+  const LIVE_CAP = 4;
+
+  /**
+   * The provider call, observed. It refuses to send more than the authorised number of live requests
+   * in one process, and records what was SENT (model, store, schema strictness, image count) and what
+   * the provider ECHOED (model, store, status) without ever holding a key or an image in the report.
+   */
+  const observedFetch: typeof fetch = async (input, init) => {
+    if (calls.length >= LIVE_CAP) throw new Error('live request cap reached');
+    const sent = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+      string,
+      unknown
+    >;
+    const content =
+      (sent.input as { content?: { type?: string }[] }[] | undefined)?.[0]?.content ?? [];
+    const text = sent.text as { format?: { type?: string; strict?: boolean } } | undefined;
+    const record: Record<string, unknown> = {
+      sentModel: sent.model,
+      sentStore: sent.store,
+      sentSchemaType: text?.format?.type,
+      sentSchemaStrict: text?.format?.strict,
+      sentImages: content.filter((c) => c.type === 'input_image').length,
+      sentMaxOutputTokens: sent.max_output_tokens,
+    };
+    calls.push(record);
+    const response = await fetch(input, init);
+    record.httpStatus = response.status;
+    try {
+      const echoed = (await response.clone().json()) as Record<string, unknown>;
+      record.echoedModel = echoed.model;
+      record.echoedStore = echoed.store;
+      record.echoedStatus = echoed.status;
+    } catch {
+      record.echoNote = 'response body was not JSON';
+    }
+    return response;
+  };
   const logger: Logger = createLogger((line) => {
     lines.push(JSON.parse(line) as Record<string, unknown>);
   });
@@ -67,7 +106,13 @@ describe.skipIf(!live)('Auto Split live smoke (real provider, generated models o
     mesh: ReturnType<typeof humanFigure>['mesh'],
   ): Promise<void> {
     const config = parseConfig(
-      { ...process.env, AUTO_SPLIT_PORT: '1', AUTO_SPLIT_HOST: '127.0.0.1' },
+      {
+        ...process.env,
+        AUTO_SPLIT_PORT: '1',
+        AUTO_SPLIT_HOST: '127.0.0.1',
+        // One provider call per analysis, so the number of live requests is the number of analyses.
+        AUTO_SPLIT_PROVIDER_RETRIES: '0',
+      },
       { allowMock: false },
     );
     if (config.apiKey === undefined) throw new Error('no key');
@@ -77,6 +122,7 @@ describe.skipIf(!live)('Auto Split live smoke (real provider, generated models o
       model: config.model,
       maxOutputTokens: config.maxOutputTokens,
       timeoutMs: config.providerTimeoutMs,
+      fetchImpl: observedFetch,
     });
     const server = createAnalysisServer({ config, provider, logger });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -130,6 +176,8 @@ describe.skipIf(!live)('Auto Split live smoke (real provider, generated models o
             op: s.operation,
           })),
           service: logged,
+          provider: calls[calls.length - 1],
+          liveRequestsSoFar: calls.length,
         }),
       );
       // The log line has only whitelisted, payload-free fields.

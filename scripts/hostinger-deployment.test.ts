@@ -528,6 +528,13 @@ describe("HV-C30–HV-C37 — Auto Split's optional same-origin service (ADR 002
     expect(unit).toMatch(/^EnvironmentFile=\/etc\/cad-fixer\/auto-split\.env$/m);
     expect(unit).toMatch(/^NoNewPrivileges=true$/m);
     expect(unit).toMatch(/^ProtectSystem=strict$/m);
+    // Bounded restarts, no capabilities, the right command, and the right place to run it from.
+    expect(unit).toMatch(/^Restart=on-failure$/m);
+    expect(unit).toMatch(/^StartLimitBurst=\d+$/m);
+    expect(unit).toMatch(/^StartLimitIntervalSec=\d+$/m);
+    expect(unit).toMatch(/^CapabilityBoundingSet=$/m);
+    expect(unit).toMatch(/^ExecStart=\/usr\/bin\/node \/opt\/cad-fixer-auto-split\/main\.js$/m);
+    expect(unit).toMatch(/^WorkingDirectory=\/opt\/cad-fixer-auto-split$/m);
     expect(unit).not.toMatch(/OPENAI_API_KEY/);
     expect(unit).not.toMatch(/sk-/);
   });

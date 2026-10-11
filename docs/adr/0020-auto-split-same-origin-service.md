@@ -120,9 +120,8 @@ suggestions are shown, Preview and Edit are disabled, and the interface says
 
 Before the first request, in the interface, with Continue and Cancel:
 
-> Auto Split uses AI to identify parts. Pybrix sends six rendered views of your model and limited
-> geometry metadata for analysis. Your original 3D file is not uploaded. Repair and Manual Split remain
-> local.
+> Auto Split uses AI to identify parts. Your original 3D file stays on your device. Auto Split sends six
+> rendered views and limited model metadata for AI analysis. Repair and Manual Split remain local.
 
 Consent is kept **in memory for the page session only**; nothing is written to storage, so it is asked
 again after a reload. "Other" model types never reach the disclosure: they have no analysis, and the
@@ -153,7 +152,7 @@ build, and boundary tests assert that nothing that ships imports either.
 - Pybrix now has one optional server process and one outbound dependency (the provider). Both are
   declared here, in `docs/PRIVACY_ARCHITECTURE.md` and in `docs/DEPLOYMENT_REQUIREMENTS.md`.
 - The statement "nothing is uploaded" is no longer unconditional. It was replaced everywhere it appeared
-  by "your files are never uploaded" plus the one disclosed exception.
+  by "your original 3D file stays on your device" plus the one disclosed exception.
 - Auto Split can be switched off by not installing the snippet; nothing else depends on it.
 - A future change to what is sent (a seventh view, another number, a name) is a change to
   `AnalyzeRequest`, the service validator, the disclosure and this ADR together, and must be treated as a

@@ -37,7 +37,7 @@ export const AUTO_SPLIT_COPY = {
 
   disclosureHeading: 'Before Auto Split looks at your model',
   disclosure:
-    'Auto Split uses AI to identify parts. Pybrix sends six rendered views of your model and limited geometry metadata for analysis. Your original 3D file is not uploaded. Repair and Manual Split remain local.',
+    'Auto Split uses AI to identify parts. Your original 3D file stays on your device. Auto Split sends six rendered views and limited model metadata for AI analysis. Repair and Manual Split remain local.',
   disclosureContinue: 'Continue',
   disclosureCancel: 'Cancel',
 
@@ -53,11 +53,12 @@ export const AUTO_SPLIT_COPY = {
   openManual: 'Open Manual Split',
 
   analyze: 'Find parts',
-  reanalyze: 'Re-analyze',
+  reanalyze: 'Re-analyze current part',
+  currentPart: 'Part being analyzed',
   cancel: 'Cancel',
   tryAgain: 'Try again',
   startOver: 'Start over',
-  waitHint: 'This can take a minute or longer. You can cancel at any time.',
+  waitHint: 'This can take from several seconds to a minute or more. You can cancel at any time.',
   localNote: 'Your model is not changed while Auto Split looks at it.',
 
   resultsHeading: 'Suggested parts',
@@ -79,7 +80,7 @@ export const AUTO_SPLIT_COPY = {
 
   stale: 'The model changed after this analysis, so these suggestions are out of date.',
   afterApply:
-    'The split was applied. The remaining suggestions describe the earlier model, so re-analyze to find more parts.',
+    'The split was applied. These suggestions describe the earlier model. Re-analyze looks only at the part now shown, not at the rest of the original model.',
   approximateCut:
     'Manual Split can’t place this cut exactly, so the nearest cut it can place was loaded. Check it in the preview.',
   noModel: 'Load a model to use Auto Split.',

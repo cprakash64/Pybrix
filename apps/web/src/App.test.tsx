@@ -40,7 +40,7 @@ describe('application shell', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: 'Pybrix' })).toBeInTheDocument();
     expect(screen.getByTestId('privacy-badge')).toHaveTextContent(
-      'Models are processed locally in your browser',
+      'Your 3D file stays on this device',
     );
   });
 
@@ -61,7 +61,7 @@ describe('application shell', () => {
     expect(zone).toMatch(/geometry only/i);
     expect(zone).toMatch(/faces must be triangles/i);
     expect(zone).toMatch(/requires any other extension is refused/i);
-    expect(zone).toMatch(/never uploaded/i);
+    expect(zone).toMatch(/original 3D file is read on this device and is not uploaded/i);
     // Nothing that implies the whole of 3MF, or material fidelity, is supported.
     expect(zone).not.toMatch(/all 3MF|every 3MF|full 3MF|materials are preserved/i);
   });
@@ -143,11 +143,16 @@ describe('brand identity', () => {
     expect(within(about).getByTestId('about-status')).toHaveTextContent(
       'Technical Preview · v0.6.1',
     );
-    expect(about).toHaveTextContent('Models are processed locally in your browser.');
+    expect(about).toHaveTextContent('Your original 3D file stays on your device.');
+    expect(about).toHaveTextContent(
+      'Repair, Convert and Manual Split run locally in your browser.',
+    );
     // The one exception is stated where the claim is made, not left to be discovered.
-    expect(about).toHaveTextContent('Your files are never uploaded.');
     expect(about).toHaveTextContent('Auto Split (Beta), six rendered views of the model');
-    expect(about).toHaveTextContent('Repair, Convert and Manual Split stay local.');
+    expect(about).toHaveTextContent('limited model metadata are sent for AI analysis');
+    expect(about).not.toHaveTextContent(
+      /never uploaded|nothing is uploaded|processed locally in your browser\./i,
+    );
     expect(screen.getByTestId('third-party-notices')).toHaveAttribute(
       'href',
       'third-party-notices.txt',

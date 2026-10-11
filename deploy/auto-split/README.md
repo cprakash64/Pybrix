@@ -22,6 +22,7 @@ It never receives a model file, and it cannot: the request type has no field for
 ## Install
 
 ```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin cad-fixer-auto-split
 npm ci
 npm run build --workspace @cadfixer/auto-split-api      # -> apps/auto-split-api/dist/main.js
 sudo install -d /opt/cad-fixer-auto-split

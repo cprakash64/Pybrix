@@ -1,6 +1,6 @@
 # Privacy Architecture
 
-Pybrix's central promise is that a user's model never leaves their machine.
+Pybrix's central promise is that a user's original 3D file stays on their machine.
 This document defines what that means concretely, what network traffic is
 permitted, and how the constraint is enforced rather than merely intended.
 
@@ -16,7 +16,7 @@ network request. See §2 and `docs/adr/0020-auto-split-same-origin-service.md`.
 **Raw user geometry stays local by default.** Files are read, parsed, repaired,
 and exported entirely within the browser, using Web Workers, WebAssembly, and
 the machine's own CPU and GPU. There is no server-side geometry processing and
-no upload path.
+no file-upload path.
 
 The application header states this to the user. That statement is a factual
 claim about the build, and it must be removed or qualified the moment it stops

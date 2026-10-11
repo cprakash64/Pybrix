@@ -194,9 +194,9 @@ function HelpMenu(): ReactNode {
             </p>
             <p className="about__summary">{PRODUCT_SUMMARY}</p>
             <p className="menu__note">
-              Models are processed locally in your browser. Your files are never uploaded. If you
-              choose Auto Split (Beta), six rendered views of the model and limited geometry
-              metadata are sent for AI analysis; Repair, Convert and Manual Split stay local.
+              Your original 3D file stays on your device. Repair, Convert and Manual Split run
+              locally in your browser. If you choose Auto Split (Beta), six rendered views of the
+              model and limited model metadata are sent for AI analysis.
             </p>
           </section>
           {/* The licences of the third-party code and artwork this build

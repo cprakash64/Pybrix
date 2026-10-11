@@ -8,6 +8,10 @@
 Description=Pybrix Auto Split analysis service
 After=network-online.target
 Wants=network-online.target
+# Restart on failure, but not forever: five starts inside a minute stops the loop and leaves the unit
+# failed for a person to read, instead of hammering the provider or the host.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -22,6 +26,8 @@ RestartSec=3
 
 # The service makes outbound HTTPS requests to its provider and listens on loopback; it needs nothing else.
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true

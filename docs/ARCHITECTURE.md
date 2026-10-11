@@ -11,7 +11,9 @@ work has somewhere to go, and it is labelled as such.
 Four constraints shape every decision below.
 
 1. **Local-first.** Raw user geometry stays on the user's machine. There is no
-   server-side geometry processing and no upload path.
+   server-side geometry processing and no file-upload path. The one disclosed
+   exception is the opt-in Auto Split (Beta), which sends six rendered views and
+   limited model metadata for AI analysis (ADR 0020).
 2. **Off the UI thread.** Parsing, validation, repair, booleans, subdivision,
    displacement, hollowing, and export all run in workers. The interface stays
    responsive while they run.

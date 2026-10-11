@@ -144,8 +144,8 @@ export function ModelExportPanel(): ReactNode {
   return (
     <section className="panel" aria-label="Model export">
       <p className="panel__note">
-        Pybrix reads STL, OBJ and 3MF, and writes all three. Files are written on this device;
-        nothing is uploaded.
+        Pybrix reads STL, OBJ and 3MF, and writes all three. Files are written on this device and
+        are not uploaded.
       </p>
       <div className="panel__actions">
         <button type="button" className="action" onClick={openConvert} data-testid="open-convert">

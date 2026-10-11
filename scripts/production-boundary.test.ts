@@ -835,6 +835,26 @@ describe('Auto Split sends one same-origin request and nothing else (ADR 0020)',
     expect(offenders).toEqual([]);
   });
 
+  it('makes no claim broader than the product: nothing in the interface, the page or the README says nothing is uploaded', () => {
+    /*
+     * Auto Split sends six rendered views and limited model metadata. "Never uploaded", "nothing
+     * leaves your browser" and "everything stays local" stopped being true of the PRODUCT when it
+     * shipped, and are still true only of the original 3D file and of Repair, Convert and Manual Split.
+     * Release notes of past versions are history and are not scanned.
+     */
+    const BROAD =
+      /never (be )?uploaded|nothing (is|you open is) uploaded|nothing leaves|never leaves? (your|the) (browser|machine|device)|everything stays local|models are processed locally/i;
+    const copy = [
+      ...webSources,
+      join(REPO_ROOT, 'apps', 'web', 'index.html'),
+      join(REPO_ROOT, 'README.md'),
+    ];
+    for (const file of copy) {
+      const text = codeOf(file);
+      expect(text, relative(REPO_ROOT, file)).not.toMatch(BROAD);
+    }
+  });
+
   it('puts no provider key, provider name or API host in anything the browser build reads', () => {
     for (const file of webSources) {
       const contents = readFileSync(file, 'utf8');

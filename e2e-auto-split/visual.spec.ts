@@ -22,8 +22,8 @@ const SERVICE = 'http://127.0.0.1:8787';
 const OUT = join(import.meta.dirname, '..', 'artifacts', 'auto-split-visual');
 const SIZES = [
   { name: 'phone', width: 390, height: 844 },
-  { name: 'tablet', width: 820, height: 1180 },
-  { name: 'laptop', width: 1366, height: 768 },
+  { name: 'tablet', width: 768, height: 1024 },
+  { name: 'laptop', width: 1280, height: 800 },
   { name: 'desktop', width: 1600, height: 900 },
   { name: 'large', width: 2200, height: 1200 },
 ] as const;
@@ -53,7 +53,7 @@ async function openMesh(page: Page, name: string, mesh: CanonicalMesh): Promise<
   );
 }
 
-async function enter(page: Page): Promise<void> {
+async function enter(page: Page, opts: { manualShot?: () => Promise<void> } = {}): Promise<void> {
   // Wide windows have the workspace tabs; narrower ones a switcher, and the tool panel is a drawer.
   const direct = page.getByTestId('workflow-split');
   if (await direct.isVisible()) await direct.click();
@@ -63,6 +63,7 @@ async function enter(page: Page): Promise<void> {
   }
   if (!(await page.getByTestId('tool-panel').isVisible()))
     await page.getByTestId('toggle-tool-drawer').click();
+  if (opts.manualShot !== undefined) await opts.manualShot();
   await page.getByTestId('split-tab-auto').click();
 }
 
@@ -73,15 +74,22 @@ async function shot(page: Page, size: string, state: string): Promise<void> {
 }
 
 let ip = 0;
+/** A client address of its own for each stage: the service allows three analyses per address. */
+async function freshClient(page: Page): Promise<void> {
+  ip += 1;
+  await page.setExtraHTTPHeaders({
+    'x-real-ip': `10.${String(200 + (ip >> 8))}.${String(ip & 255)}.9`,
+  });
+}
+
 for (const size of SIZES) {
   test(`${size.name}: every Auto Split state`, async ({ page }) => {
-    ip += 1;
-    await page.setExtraHTTPHeaders({ 'x-real-ip': `10.200.${String(ip)}.9` });
+    await freshClient(page);
     await page.setViewportSize({ width: size.width, height: size.height });
     await page.request.post(`${SERVICE}/api/auto-split/__mock/reset`);
     await page.goto('/');
     await openMesh(page, 'figure.stl', humanFigure().mesh);
-    await enter(page);
+    await enter(page, { manualShot: () => shot(page, size.name, '00-manual-default') });
 
     await shot(page, size.name, '01-empty');
     await page.getByTestId('auto-kind-human').check({ force: true });
@@ -136,8 +144,8 @@ for (const size of SIZES) {
     expect(overflow).toBeLessThanOrEqual(0);
 
     // A vehicle, with its component highlight, and a model that must be repaired first.
+    await freshClient(page);
     await page.goto('/');
-    await page.setExtraHTTPHeaders({ 'x-real-ip': `10.201.${String(ip)}.9` });
     await control(page, { scenario: 'vehicle-component' });
     await openMesh(page, 'car.stl', carMultipart().mesh);
     await enter(page);
@@ -151,7 +159,22 @@ for (const size of SIZES) {
     await page.waitForTimeout(600);
     await shot(page, size.name, '10-vehicle-component-highlight');
 
+    await control(page, { scenario: 'vehicle-ambiguous-wheel' });
+    await freshClient(page);
+    await page.goto('/');
+    await openMesh(page, 'car2.stl', carMultipart().mesh);
+    await enter(page);
+    await page.getByTestId('auto-kind-vehicle').check({ force: true });
+    await page.getByTestId('auto-disclosure-continue').click();
+    await page.getByTestId('auto-analyze').click();
+    await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+    const loose = page.locator('[data-testid^="auto-edit-wheel:"]').first();
+    await loose.click();
+    await expect(page.getByTestId('auto-components')).toBeVisible();
+    await shot(page, size.name, '10b-review-selection');
+
     await control(page, { scenario: 'vehicle-truck-plane' });
+    await freshClient(page);
     await page.goto('/');
     await openMesh(page, 'truck.stl', truckFused().mesh);
     await enter(page);
@@ -162,6 +185,7 @@ for (const size of SIZES) {
     await page.getByTestId('auto-edit-cab_bed').click();
     await shot(page, size.name, '11-vehicle-cab-bed-plane');
 
+    await freshClient(page);
     await page.goto('/');
     await control(page, { scenario: 'human-ok' });
     await openMesh(page, 'open.stl', openCube().mesh);

@@ -58,7 +58,7 @@ Notably absent:
   `useSyncExternalStore`. A dependency would not earn its place at this size.
 - **No UI component library.** The shell is plain semantic HTML and CSS.
 - **No router.** The application is a single workspace view.
-- **No HTTP client.** By design — Pybrix makes no network requests.
+- **No HTTP client.** By design — the browser application makes exactly one same-origin request (Auto Split's analysis, ADR 0020) from one file, and Repair, Convert and Manual Split make none.
 - **Two geometry kernels, each confined to its own workers.** Geogram v1.10.0
   (Stage 3C-1B) runs the self-intersection diagnostic and the hole-fill
   narrowphase; Manifold (Stage 7A) runs the Boolean behind Split and Surface

@@ -82,7 +82,7 @@ export function StatusBar(): ReactNode {
 
       <p className="statusbar__privacy" data-testid="privacy-badge">
         <Icon name="lock" size={12} />
-        <span>Models are processed locally in your browser</span>
+        <span>Your 3D file stays on this device</span>
       </p>
 
       <span className="statusbar__spacer" />

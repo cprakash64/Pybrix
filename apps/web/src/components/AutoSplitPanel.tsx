@@ -106,6 +106,8 @@ export function AutoSplitSections({
   readonly editor: ReactNode;
 }): ReactNode {
   const editorRef = useRef<HTMLDivElement>(null);
+  /** An element id to focus once it exists: where focus goes when the disclosure closes. */
+  const focusAfter = useRef<string | undefined>(undefined);
   const selectedId = auto.selected?.id;
   // Choosing a cut to edit brings the manual controls that edit it into view: they sit below the list,
   // and a person who pressed Edit should not have to find them.
@@ -114,6 +116,15 @@ export function AutoSplitSections({
     if (selectedId !== undefined && node !== null && typeof node.scrollIntoView === 'function')
       node.scrollIntoView({ block: 'nearest' });
   }, [selectedId]);
+  // Runs after every render, and only acts when a close has asked for focus and the target now exists.
+  useEffect(() => {
+    const id = focusAfter.current;
+    if (id === undefined) return;
+    const target = document.getElementById(id);
+    if (target === null) return;
+    focusAfter.current = undefined;
+    target.focus();
+  });
   if (!hasPart)
     return (
       <PanelSection title={AUTO_SPLIT_COPY.name} testId="auto-split-panel">
@@ -133,9 +144,23 @@ export function AutoSplitSections({
         <p className="convert-workspace__note" data-testid="auto-tagline">
           {AUTO_SPLIT_COPY.tagline}
         </p>
+        {auto.partLabel === undefined ? null : (
+          <p className="auto-part" data-testid="auto-part">
+            <span className="auto-part__label">{AUTO_SPLIT_COPY.currentPart}</span>
+            <strong className="auto-part__name">{auto.partLabel}</strong>
+          </p>
+        )}
         <KindChoice auto={auto} disabled={auto.busy} compact={!showKinds} />
         {auto.kind === ModelKind.Other ? <OtherKind onOpenManual={onOpenManual} /> : null}
-        {auto.needsDisclosure ? <Disclosure auto={auto} /> : null}
+        {auto.needsDisclosure ? (
+          <Disclosure
+            auto={auto}
+            onAccepted={() => {
+              // The disclosure disappears: focus goes to what it unlocked, never to the document.
+              focusAfter.current = 'auto-analyze';
+            }}
+          />
+        ) : null}
         <Start auto={auto} />
         <Progress auto={auto} />
         <Failure auto={auto} />
@@ -238,7 +263,13 @@ function OtherKind({ onOpenManual }: { readonly onOpenManual: () => void }): Rea
 
 /* ---------------------------------------------------------- disclosure -- */
 
-function Disclosure({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
+function Disclosure({
+  auto,
+  onAccepted,
+}: {
+  readonly auto: AutoSplitControls;
+  readonly onAccepted: () => void;
+}): ReactNode {
   const headingId = useId();
   const bodyId = useId();
   const heading = useRef<HTMLParagraphElement>(null);
@@ -265,7 +296,11 @@ function Disclosure({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
         <button
           type="button"
           className="secondary-action"
-          onClick={auto.declineDisclosure}
+          onClick={() => {
+            auto.declineDisclosure();
+            // Cancel leaves for Manual Split: its tab is always on screen, so focus can go there now.
+            document.getElementById('split-tab-manual')?.focus();
+          }}
           data-testid="auto-disclosure-cancel"
         >
           {AUTO_SPLIT_COPY.disclosureCancel}
@@ -273,7 +308,10 @@ function Disclosure({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
         <button
           type="button"
           className="primary-action auto-card__primary"
-          onClick={auto.acceptDisclosure}
+          onClick={() => {
+            onAccepted();
+            auto.acceptDisclosure();
+          }}
           data-testid="auto-disclosure-continue"
         >
           {AUTO_SPLIT_COPY.disclosureContinue}
@@ -303,6 +341,7 @@ function Start({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
       ) : null}
       <button
         type="button"
+        id="auto-analyze"
         className="primary-action auto-start__button"
         disabled={!auto.canAnalyze}
         onClick={auto.analyze}

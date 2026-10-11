@@ -383,6 +383,35 @@ describe('the disclosure comes before anything is sent', () => {
   });
 });
 
+describe('focus and scope', () => {
+  it('moves focus to Find parts when the disclosure is accepted, and to Manual Split when it is cancelled', async () => {
+    mount();
+    await openAuto();
+    click('auto-kind-human');
+    await settle();
+    click('auto-disclosure-continue');
+    await settle();
+    expect(screen.getByTestId('auto-analyze')).toHaveFocus();
+
+    cleanup();
+    mount();
+    await openAuto();
+    click('auto-kind-vehicle');
+    await settle();
+    click('auto-disclosure-cancel');
+    await settle();
+    expect(screen.getByTestId('split-tab-manual')).toHaveFocus();
+  });
+
+  it('names the part an analysis looks at, and Re-analyze says it means that part', async () => {
+    mount();
+    await openAuto();
+    expect(screen.getByTestId('auto-part')).toHaveTextContent('Figure');
+    await findParts('human');
+    expect(screen.getByTestId('auto-reanalyze-fresh')).toHaveTextContent('Re-analyze current part');
+  });
+});
+
 describe('an analysis', () => {
   it('sends six views and three numbers, nothing else, and lists the suggestions with their statuses', async () => {
     const spies = mount();

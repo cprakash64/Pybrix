@@ -95,7 +95,7 @@ export function ImportDropZone({ children }: { readonly children: ReactNode }): 
               only. OBJ faces must be triangles, and OBJ material libraries and 3MF colours,
               materials and textures are not loaded. 3MF files that spread a model across several
               model parts are read; a 3MF that requires any other extension is refused with the
-              reason. Files are read on this device and never uploaded.
+              reason. Your original 3D file is read on this device and is not uploaded.
             </p>
           </div>
         </div>
