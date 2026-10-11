@@ -509,6 +509,9 @@ describe("HV-C30–HV-C37 — Auto Split's optional same-origin service (ADR 002
 
   it('HV-C34: the client address is set from the socket and credentials are never forwarded', () => {
     const analyze = body('= /api/auto-split/analyze');
+    // The browser's own Host, port included: the service's same-origin check compares it with Origin.
+    expect(analyze).toMatch(/proxy_set_header\s+Host\s+\$http_host;/);
+    expect(analyze).not.toMatch(/proxy_set_header\s+Host\s+\$host;/);
     expect(analyze).toMatch(/proxy_set_header\s+X-Real-IP\s+\$remote_addr;/);
     expect(analyze).toMatch(/proxy_set_header\s+X-Forwarded-For\s+"";/);
     expect(analyze).toMatch(/proxy_set_header\s+Authorization\s+"";/);
@@ -527,6 +530,8 @@ describe("HV-C30–HV-C37 — Auto Split's optional same-origin service (ADR 002
     expect(unit).toMatch(/^User=(?!root\b)\S+/m);
     expect(unit).toMatch(/^EnvironmentFile=\/etc\/cad-fixer\/auto-split\.env$/m);
     expect(unit).toMatch(/^NoNewPrivileges=true$/m);
+    // Files the service creates are private to it.
+    expect(unit).toMatch(/^UMask=0077$/m);
     expect(unit).toMatch(/^ProtectSystem=strict$/m);
     // Bounded restarts, no capabilities, the right command, and the right place to run it from.
     expect(unit).toMatch(/^Restart=on-failure$/m);

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { createServer as createHttpServer, type Server } from 'node:http';
+import { request as httpRequest, createServer as createHttpServer, type Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   AnalyzeErrorCode,
@@ -206,6 +206,37 @@ describe('the analysis route', () => {
     expect(foreignOrigin.status).toBe(400);
     const same = await post(h, JSON.parse(body) as unknown, { 'sec-fetch-site': 'same-origin' });
     expect(same.status).toBe(200);
+  });
+
+  it('compares the browser Origin with the Host it was sent, port included (why nginx forwards $http_host)', async () => {
+    const h = await start(okProvider());
+    const body = JSON.stringify(await makeRequest('human'));
+    const send = (host: string, origin: string): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const url = new URL(h.url);
+        const req = httpRequest(
+          {
+            host: url.hostname,
+            port: url.port,
+            path: ANALYZE_PATH,
+            method: 'POST',
+            headers: { host, origin, 'content-type': 'application/json' },
+          },
+          (res) => {
+            res.resume();
+            res.on('end', () => {
+              resolve(res.statusCode ?? 0);
+            });
+          },
+        );
+        req.on('error', reject);
+        req.end(body);
+      });
+    // A site on a non-default port: Host and Origin agree only if the proxy forwards the port.
+    expect(await send('app.example:18080', 'http://app.example:18080')).toBe(200);
+    expect(await send('app.example', 'http://app.example:18080')).toBe(400);
+    // The default port: both sides omit it.
+    expect(await send('app.example', 'https://app.example')).toBe(200);
   });
 
   it('serves a health route and 404s everything else', async () => {
