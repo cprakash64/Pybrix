@@ -8,7 +8,9 @@ async function openSplit(page: Parameters<typeof openHarness>[0]): Promise<void>
 }
 async function preview(page: Parameters<typeof openHarness>[0]): Promise<void> {
   await page.getByTestId('split-preview').click();
-  await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 30000 });
+  // A candidate label can appear while the scene is still committing; enabled Apply is ready.
+  await expect(page.getByTestId('split-apply')).toBeEnabled({ timeout: 30000 });
+  expect(await page.getByTestId('split-preview-label').isVisible()).toBe(true);
 }
 /**
  * Leaves Split & Connect. UI-04: a preview on screen is discarded first (its own
