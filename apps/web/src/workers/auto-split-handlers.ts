@@ -21,6 +21,7 @@ import {
   meshVolume,
   splitSourceReasons,
   describeSplitSourceRefusal,
+  SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
   splitTolerance,
   type DocumentHandle,
   type OperationContext,
@@ -278,7 +279,7 @@ export const autoSplitExtractCreateHandler: OperationHandler<'autosplit/extract-
   );
   if (reasons.length > 0)
     throw invalidState(describeSplitSourceRefusal(reasons), {
-      code: 'SPLIT_SOURCE_NOT_CLOSED_SOLID',
+      code: SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
       reasons: reasons.join(','),
       label: payload.partId,
     });

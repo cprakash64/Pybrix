@@ -623,13 +623,16 @@ describe('a part that cannot be split offers no way to try', () => {
     const spies = mount({ sourceReasons: ['OPEN_BOUNDARIES'] });
     await findParts('human');
     expect(screen.getByTestId('auto-source-not-ready')).toHaveTextContent(
-      'Part found, but this model needs Repair before it can be split.',
+      'This model needs repair before it can be split.',
     );
     expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Repair model first');
     expect(screen.getByTestId('auto-preview-head')).toBeDisabled();
     expect(screen.getByTestId('auto-edit-head')).toBeDisabled();
-    // Repair cannot close an opening, so it is not offered as the way out.
-    expect(screen.queryByTestId('auto-run-repair')).toBeNull();
+    // Repair is a safe next step; its copy does not promise that every opening can be closed.
+    expect(screen.getByTestId('auto-run-repair')).toBeVisible();
+    expect(screen.getByTestId('auto-source-not-ready')).toHaveTextContent(
+      'Repair may not be able to make every model splittable.',
+    );
     expect(screen.getByTestId('split-preview')).toBeDisabled();
     fireEvent.click(screen.getByTestId('auto-preview-head'));
     expect(spies.createSplit).not.toHaveBeenCalled();

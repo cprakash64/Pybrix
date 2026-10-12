@@ -292,8 +292,8 @@ test:e2e:auto-split-large`:
   has open boundaries; it has non-manifold edges or vertices", which is the file's own property and has
   nothing to do with its size (asserted: no size wording, and the export after the attempt is unchanged);
 - the Preview, Apply, Undo and Export chain therefore runs on the closed 1,992,704- and 2,000,000-triangle
-  fixtures above, which carry the same size and the same shape of work. Repair is the way into the real
-  file, and was not part of this stage.
+  fixtures above, which carry the same size and the same shape of work. The real-file acceptance is the topology refusal and unchanged export, not a successful cut.
+  Repair was subsequently observed, as recorded in section 13; it does not make this file splittable.
 - Its request body was **734,676 bytes**, against 26,135 for the synthetic fixtures at every size: the
   request does not depend on the triangle count but its six PNGs depend on what the views contain, and a
   detailed real model compresses worse than flat-shaded boxes. Both are far inside the request limits, and
@@ -384,3 +384,106 @@ to any host but the local origin, no other request body above 4 KiB, no filename
 or key. The 2,000,001-triangle refusal made **zero** requests to the service and the service saw **zero**
 provider attempts. The unit and end-to-end suites that audit the payload, the key shape and the release
 artefacts pass unchanged.
+
+## 13. Restart recovery and final topology presentation (2026-10-12)
+
+The supplied restart record identified an interrupted background wait-loop with no required output
+artifact. Recovery found the original worktree at `af01d32f434881dd015692678e63bc0486862a4b`, with the
+qualified feature commit `021f7bf6e15735570088b3399f76d8c92906f9ac` in its history. Unlike the earlier
+clean-status record, recovery found uncommitted topology presentation changes and the completed real
+Repair observation. Those changes and all existing evidence were preserved; the worktree was not
+reset or recreated.
+
+The incomplete work was final qualification and commitment of the new topology presentation, plus
+this recovery report. The old real-file browser assertion still addressed `split-error`, while the new
+presentation uses a neutral `split-not-closed` status. It was updated to verify the final product copy,
+safe navigation to Repair, the unchanged model, and absence of engine vocabulary or retry language.
+Both split tabs now say:
+
+> This model needs repair before it can be split.
+>
+> Your original model was not changed.
+
+The reason names are translated into plain words. The next action is **Repair model**, with the
+explicit qualification that Repair may not make every model splittable. Worker refusals are identified
+by the existing structured `SPLIT_SOURCE_NOT_CLOSED_SOLID` code; no topology validation was relaxed.
+Repair navigation selects the existing workflow and preserves the document.
+
+### Real-file Repair observation, reused
+
+`artifacts/auto-split-large/browser-repair1.jsonl` contains a completed before/preview/apply/after/verdict
+sequence. Before Repair: 13 open boundaries, 155 non-manifold vertices, 39 components. After Repair:
+48 open boundaries, zero non-manifold vertices, 39 components. Split remained unavailable because the
+surface was still open. The observed result is **REPAIR_IMPROVES_BUT_NOT_SPLITTABLE**: it improves the
+vertex condition, but the boundary count rises and the closed-solid condition remains unresolved.
+No Repair algorithm was changed and no claim of complete repair is made.
+
+### Evidence reuse and reruns
+
+The code-identity audit is saved as
+`artifacts/auto-split-large/recovery/reused-code-audit.json`. Scorer, extraction, checkpoint loops,
+shared ceiling, exact input indexing, Boolean limits, Repair algorithms, service, contract and
+deployment paths are unchanged from the qualified feature commit. Their existing performance,
+equivalence, many-shell and memory measurements remain applicable. They were not repeated just
+because the host restarted.
+
+The final real-file topology UX and 2,000,001 refusal were rerun because presentation and routing had
+changed. Both passed on the current source: the real file imported, Find parts completed, its semantic
+request was 734,676 bytes, both split tabs gave the topology decision, safe Repair navigation worked,
+and the final export retained the original digest and size. The over-ceiling case made zero provider
+requests and exported identically. The real-file run on the heavily loaded recovery host had a 364 ms
+largest Find parts frame gap (72 ms p99), compared with 134–147 ms in the earlier real-file runs; these
+are measured host-conditioned results, not a guaranteed frame-time bound.
+
+A current closed 2M chain and current regression checks are recorded in the final
+`AUTO_SPLIT_LARGE_MESH_02_REPORT` artifact. The initial default-concurrency unit run encountered
+five-second runner timeouts under heavy host pressure; its log is retained. The replacement uses one
+worker and a 60-second runner timeout, without altering correctness assertions or explicit performance
+thresholds. This is a test-runner setting, not a memory qualification.
+
+**LOWER_MEMORY_HARD_CAP = NOT_AVAILABLE_IN_CURRENT_ENVIRONMENT.** No hard 4 GiB/process/container
+qualification is claimed. Existing completed 8 GiB pressured-host runs, browser RSS, Node RSS, JS heap,
+array-buffer measurements, frame gaps, and no-crash/no-OOM results are the available evidence.
+`current-host-memory.txt` records the recovery host's measured pressure. A genuine lower-memory
+hard-cap environment remains a residual beta qualification gap. No host memory tricks, software
+installation, runtime-isolation changes, live provider request or deployment were performed.
+
+## 14. Final current-source qualification
+
+**RESULT: PASS WITH NOTES.** The notes are the unavailable genuine lower-memory hard cap and the
+existing multi-second viewport scene-rebuild gaps. The original truck is accepted at its size and
+truthfully refused for its open surface; the closed fixture proves exact splitting at the ceiling.
+
+The single recovery 2,000,000-triangle chain passed for wheel extraction and the cab/bed plane:
+Preview, Apply, Undo and Export. Both post-Undo exports were 100,000,084 bytes with the original digest
+`2fe534df0c9f40ff`. Find parts took 10,714 ms (largest frame gap 57 ms, p99 29 ms); cab/bed Preview
+27,933 ms, Apply 9,241 ms, Undo 14,361 ms, Export 5,640 ms. Peak sampled browser RSS was 750 MiB and
+there were no crashes, page errors or foreign requests. The largest scene-rebuild gap was 9,185 ms,
+so this is a responsive analysis result, not a claim of uninterrupted responsiveness across every edit.
+The two analyses each sent the bounded six-image payload (26,135 bytes for the original fixture).
+
+Current-source checks completed:
+
+- Full format, lint and type checks passed; final changed-file format/lint checks passed after the
+  last test-label/documentation edits. The production build passed through the Playwright servers.
+- Full unit suite, one worker and a 60-second runner timeout: **186 files passed; 3,919 tests passed,
+  10 skipped**. This includes scorer/extraction equivalence, exact boundary admission/refusal,
+  checkpoints, worker gates, component presentation, geometry runtime, Repair, strict schema,
+  `store: false`, privacy, and client/global/provider attempt limits.
+- **18 Auto Split browser regressions passed**, with the local deterministic provider: human and
+  vehicle cuts, component extraction, closed-solid refusal, cancellation, stale answers, privacy,
+  per-client and global refusals, keyboard use, long-latency state, and byte-identical Undo exports.
+- **9 Repair/Manual Split/connector browser regressions passed**, including real repair/fill,
+  transactional Apply/Undo, open-model plain-language refusal, two-colour split preview, selectable
+  applied pieces, connector geometry/exports, byte-identical Undo exports and an unsound-cut refusal
+  preserving settings.
+- The real 1,988,877-triangle file and deterministic 2,000,001-triangle refusal: **2 passed**.
+- The final closed 2,000,000-triangle full chain: **1 passed**.
+
+Logs are retained under `artifacts/auto-split-large/recovery/`, including the incomplete initial
+concurrent verification run. That initial `npm run verify` is not claimed as a completed pass; its
+successful checks were followed by the completed serial suite and production builds above.
+The extra gated/skipped large test in the small regression command was followed by the single
+explicitly enabled completed 2M chain, not counted as evidence itself.
+
+**READY_FOR_LARGE_MESH_RC. Not deployed.**

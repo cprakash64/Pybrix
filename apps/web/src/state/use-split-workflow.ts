@@ -27,6 +27,7 @@ import {
 import { planeSettingsFor } from './auto-split-plane';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { AppErrorCode, isAppError, type LengthUnit } from '@cadfixer/shared';
+import { NOT_CLOSED_COPY, notClosedReasonsOf } from './split-readiness-presentation';
 import { RESOURCE_REFUSAL_COPY, splitSizeNoticeFor } from './split-size-presentation';
 import type { SplitSizeNotice } from './split-size-presentation';
 import { millimetresToCoordinates, unitWord } from './unit-interpretation';
@@ -146,6 +147,11 @@ export interface SplitControls {
    * cut). Shown as a neutral status, never an alert, and never as a prompt to try another way.
    */
   readonly errorIsResourceLimit: boolean;
+  /**
+   * The reasons, when the worker refused the split because the part is not a closed solid. A status
+   * with Repair as the next step, never an alert and never a retry.
+   */
+  readonly sourceNotClosed: readonly string[] | undefined;
   /**
    * Set when the part has more triangles than the exact split supports. Deterministic and known from
    * the part's descriptor, so Preview is not offered and the page says why before anything runs.
@@ -306,7 +312,14 @@ export function useSplitWorkflow(): SplitControls {
     readonly progress: string;
   }>({ session: '', phase: SplitPhase.Idle, progress: '' });
   const [errorState, setErrorState] = useState<
-    { readonly key: string; readonly message: string; readonly resource: boolean } | undefined
+    | {
+        readonly key: string;
+        readonly message: string;
+        readonly resource: boolean;
+        /** Set when the worker refused because the part is not a closed solid: the reasons it gave. */
+        readonly notClosed?: readonly string[];
+      }
+    | undefined
   >(undefined);
   const [previewState, setPreviewState] = useState<
     { readonly key: string; readonly result: SplitCreateResult } | undefined
@@ -322,6 +335,7 @@ export function useSplitWorkflow(): SplitControls {
 
   const error = errorState?.key === session ? errorState.message : undefined;
   const errorIsResourceLimit = errorState?.key === session && errorState.resource;
+  const sourceNotClosed = errorState?.key === session ? errorState.notClosed : undefined;
   const partTriangles = part?.triangleCount;
   const sizeNotice = useMemo(() => splitSizeNoticeFor(partTriangles), [partTriangles]);
   const preview = previewState?.key === session ? previewState.result : undefined;
@@ -368,6 +382,13 @@ export function useSplitWorkflow(): SplitControls {
   const setError = useCallback(
     (message: string | undefined): void => {
       setErrorState(message === undefined ? undefined : { key: session, message, resource: false });
+    },
+    [session],
+  );
+  /** A refusal because the part is not a closed solid: the same slot, with the reasons the worker gave. */
+  const setNotClosedError = useCallback(
+    (message: string, reasons: readonly string[]): void => {
+      setErrorState({ key: session, message, resource: false, notClosed: reasons });
     },
     [session],
   );
@@ -578,6 +599,13 @@ export function useSplitWorkflow(): SplitControls {
         if (running.current !== operation) return;
         running.current = undefined;
         setPhase(SplitPhase.Idle);
+        const notClosed = notClosedReasonsOf(cause);
+        if (notClosed !== undefined) {
+          // A fact about the file, not a failure: a status with a way forward, never an error.
+          setNotClosedError(NOT_CLOSED_COPY.heading, notClosed);
+          store.pushStatus(StatusSeverity.Info, NOT_CLOSED_COPY.heading);
+          return;
+        }
         if (isResourceRefusal(cause)) {
           // A decision, not a defect: neutral words that name no limit's internals and no other way.
           setResourceError(RESOURCE_REFUSAL_COPY.body);
@@ -603,6 +631,7 @@ export function useSplitWorkflow(): SplitControls {
     setError,
     setPhase,
     setProgress,
+    setNotClosedError,
     setResourceError,
     sizeNotice,
     splitPlane,
@@ -747,6 +776,7 @@ export function useSplitWorkflow(): SplitControls {
     progress,
     error,
     errorIsResourceLimit,
+    sourceNotClosed,
     sizeNotice,
     preview,
     applied,

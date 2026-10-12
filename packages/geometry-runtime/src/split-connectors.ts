@@ -208,6 +208,9 @@ export function splitSourceReasons(report: {
   return reasons;
 }
 
+/** The `details.code` of the refusal `requireSolid` throws, so the page recognises it by name and not by wording. */
+export const SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE = 'SPLIT_SOURCE_NOT_CLOSED_SOLID';
+
 /**
  * The sentence for a set of reasons. TRUTHFUL ABOUT REPAIR: it points at Repair
  * only when every reason is one Repair's conservative operations address
@@ -246,7 +249,7 @@ function requireSolid(mesh: CanonicalMesh, label: string, cancellation: Cancella
   const reasons = splitSourceReasons(r);
   if (reasons.length > 0)
     throw invalidState(describeSplitSourceRefusal(reasons), {
-      code: 'SPLIT_SOURCE_NOT_CLOSED_SOLID',
+      code: SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
       // ErrorDetails hold scalars only, so the typed reasons travel comma-joined.
       reasons: reasons.join(','),
       label,

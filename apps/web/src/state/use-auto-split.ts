@@ -7,9 +7,7 @@ import {
   describeError,
   describeOperation,
   describePhase,
-  describeSourceNotReady,
   describeStatus,
-  repairCanHelp,
   type ErrorGuidance,
   type SuggestionStatusView,
 } from './auto-split-presentation';
@@ -20,6 +18,7 @@ import {
   ModelKind,
   type AutoSplitTarget,
 } from './auto-split-session';
+import { describeNotClosed, type NotClosedCopy } from './split-readiness-presentation';
 import { splitSizeNoticeFor, type SplitSizeNotice } from './split-size-presentation';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { SplitPhase, SplitSource, type SplitControls } from './use-split-workflow';
@@ -98,8 +97,11 @@ export interface AutoSplitControls {
   readonly appliedSinceAnalysis: boolean;
 
   readonly sourceReady: boolean;
-  readonly sourceNotReadyText: string;
-  readonly canRunRepair: boolean;
+  /**
+   * Set when the part is not a closed solid: what Pybrix found, the next step and that the original
+   * model is untouched. A status, never a retry: the same file is refused the same way every time.
+   */
+  readonly notClosed: NotClosedCopy | undefined;
   readonly openRepair: () => void;
 
   readonly selected: AutoSplitRow | undefined;
@@ -497,8 +499,7 @@ export function useAutoSplit(
     stale,
     appliedSinceAnalysis: stale && split.applied !== undefined,
     sourceReady,
-    sourceNotReadyText: describeSourceNotReady(sourceReasons),
-    canRunRepair: repairCanHelp(sourceReasons),
+    notClosed: sourceReady ? undefined : describeNotClosed(sourceReasons),
     openRepair,
     selected,
     components,

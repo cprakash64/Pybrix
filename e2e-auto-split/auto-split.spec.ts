@@ -305,13 +305,15 @@ test('a model that is not a closed solid shows its suggestions but cannot be pre
   await findParts(page);
   await expect(page.getByTestId('auto-source-not-ready')).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId('auto-source-not-ready')).toContainText(
-    'Part found, but this model needs Repair before it can be split.',
+    'This model needs repair before it can be split.',
   );
   await expect(page.getByTestId('auto-row-status-head')).toHaveText('Repair model first');
   await expect(page.getByTestId('auto-preview-head')).toBeDisabled();
   await expect(page.getByTestId('split-preview')).toBeDisabled();
-  // An opening is not something Repair's conservative operations close.
-  await expect(page.getByTestId('auto-run-repair')).toHaveCount(0);
+  await expect(page.getByTestId('auto-run-repair')).toBeVisible();
+  await expect(page.getByTestId('auto-source-not-ready')).toContainText(
+    'Repair may not be able to make every model splittable.',
+  );
 });
 
 test('cancel aborts the request, reaches the service, and leaves the model unchanged', async ({

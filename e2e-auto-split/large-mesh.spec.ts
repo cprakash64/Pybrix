@@ -556,15 +556,14 @@ test('screenshots: the size notice, the phases and the results at the ceiling', 
 });
 
 /**
- * THE REPORTED FILE, READ-ONLY. `LM_FILE=<path to a binary STL>` runs the whole chain on a real model:
- * import (the file is only read), Auto Split with the deterministic provider, every suggestion the model
- * lets be previewed (Preview, Apply, Undo, export identical to the original), and then a Manual Split cut
- * through the middle, which does not depend on what the provider said. The mock provider's answers
- * describe the synthetic truck, not this file, so which suggestions are executable is the MODEL'S
- * business: what is asserted is that nothing is refused for size, nothing crashes, and Undo restores the
- * original bytes whatever was applied.
+ * THE REPORTED FILE, READ-ONLY. `LM_FILE=<path to a binary STL>` tests size acceptance separately
+ * from closed-solid readiness. Import and Find parts must run without a size refusal. An open input
+ * must receive the plain topology status in both tabs, offer safe Repair navigation, and export the
+ * original bytes after refusal. A closed input can additionally Preview, Apply, Undo and export.
+ * The deterministic mock describes the synthetic truck; it does not promise usable cuts on every
+ * real model. The separate closed 2M fixture proves the complete exact-split chain.
  */
-test('the reported file: no size refusal, and Apply then Undo exports the original bytes', async ({
+test('the reported file: size acceptance and topology-aware splitting preserve the original export', async ({
   page,
 }) => {
   const file = process.env.LM_FILE;
@@ -652,9 +651,20 @@ test('the reported file: no size refusal, and Apply then Undo exports the origin
     // A property of the FILE, not of its size: a surface with openings cannot be split by either
     // tool until it is repaired. What must hold is that this is said as what it is, that no size verdict
     // is given, and that the attempt leaves the model exactly as it was.
+    const autoNotice = page.getByTestId('auto-source-not-ready');
+    await expect(autoNotice).toHaveAttribute('role', 'status');
+    await expect(autoNotice).toContainText('Your original model was not changed.');
+    await expect(autoNotice).toContainText('This model needs repair before it can be split.');
+    expect(await autoNotice.textContent()).not.toMatch(
+      /manifold|topology|triangle soup|workspace|try again/i,
+    );
+    await expect(page.getByTestId('auto-run-repair')).toBeVisible();
+    await page.getByTestId('auto-run-repair').click();
+    await expect(page.getByTestId('preview-repair')).toBeVisible();
+    await page.getByTestId('workflow-split').click();
     await page.getByTestId('split-tab-manual').click();
     await page.getByTestId('split-preview').click();
-    const refusal = page.getByTestId('split-error');
+    const refusal = page.getByTestId('split-not-closed');
     await expect(refusal).toBeVisible({ timeout: 300_000 });
     const text = ((await refusal.textContent()) ?? '').trim();
     log({
@@ -662,7 +672,12 @@ test('the reported file: no size refusal, and Apply then Undo exports the origin
       text: text.slice(0, 300),
       sizeVerdict: /too detailed|more room/i.test(text),
     });
-    expect(text).not.toMatch(/too detailed|more room|limit/i);
+    await expect(refusal).toHaveAttribute('role', 'status');
+    await expect(refusal).toContainText('Your original model was not changed.');
+    await expect(page.getByTestId('split-error')).toHaveCount(0);
+    expect(text).not.toMatch(
+      /too detailed|more room|limit|manifold|topology|triangle soup|workspace|try again/i,
+    );
     const unchanged = await exportDigest(page);
     log({
       phase: 'export-after-refusal',
@@ -703,4 +718,100 @@ test('the reported file: no size refusal, and Apply then Undo exports the origin
   expect(network.bigBodies).toEqual([]);
   log({ phase: 'end', problems, analyzeRequests: network.analyze });
   expect(problems).toEqual([]);
+});
+
+/**
+ * WHAT THE CURRENT REPAIR DOES FOR THE REPORTED FILE: an OBSERVATION, not a promise. `LM_FILE` and
+ * `LM_REPAIR=1`: open the file read-only, look at what Repair offers, build its conservative candidate
+ * and apply it (in memory; the file on disk is never written), then ask Split whether the part is ready.
+ * It decides nothing about Repair's scope; it records what Repair does today.
+ */
+test('the reported file in Repair: does the current Repair make it splittable', async ({
+  page,
+}) => {
+  const file = process.env.LM_FILE;
+  test.skip(file === undefined || process.env.LM_REPAIR !== '1', 'set LM_FILE and LM_REPAIR=1');
+  if (file === undefined) return;
+  test.setTimeout(3_600_000);
+  const dir = `${OUT}/screens`;
+  mkdirSync(dir, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const log = (row: Record<string, unknown>): void => {
+    mkdirSync(OUT, { recursive: true });
+    const line = JSON.stringify({ label: 'real-repair', ...row });
+    appendFileSync(`${OUT}/browser-${TAG}.jsonl`, `${line}\n`);
+    console.warn(line);
+  };
+  const readiness = async (): Promise<Record<string, unknown>> => {
+    await page.getByTestId('workflow-split').click();
+    await page.getByTestId('split-tab-auto').click();
+    await page.getByTestId('auto-kind-vehicle').check({ force: true });
+    if ((await page.getByTestId('auto-disclosure-continue').count()) > 0)
+      await page.getByTestId('auto-disclosure-continue').click();
+    await page.getByTestId('auto-analyze').click();
+    await expect(
+      page.locator('[data-testid="auto-results"], [data-testid="auto-error"]').first(),
+    ).toBeVisible({ timeout: 900_000 });
+    const notReady = (await page.getByTestId('auto-source-not-ready').count()) > 0;
+    const text = notReady
+      ? ((await page.getByTestId('auto-source-not-ready').textContent()) ?? '').trim()
+      : '';
+    return { splitReady: !notReady, notReadyText: text };
+  };
+  const counts = async (): Promise<Record<string, string>> => {
+    const out: Record<string, string> = {};
+    for (const element of await page.locator('[data-testid^="issue-count-"]').all())
+      out[((await element.getAttribute('data-testid')) ?? '').replace('issue-count-', '')] = (
+        (await element.textContent()) ?? ''
+      ).trim();
+    return out;
+  };
+
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('browse-button').click();
+  await (await chooser).setFiles(file);
+  await expect(page.getByTestId('fact-triangles')).toHaveText(/^[\d,]+$/, { timeout: 900_000 });
+  await page.waitForTimeout(4000);
+  const original = await exportDigest(page);
+  await page.getByTestId('workflow-repair').click();
+  await page.waitForTimeout(5000);
+  await openInspector(page);
+  log({ phase: 'before', counts: await counts() });
+  await page.screenshot({ path: `${dir}/20-real-repair-before.png` });
+
+  let t = Date.now();
+  await page.getByTestId('preview-repair').click();
+  const outcome = page.locator(
+    '[data-testid="apply-repair"], [data-testid="repair-no-safe-change"], [data-testid="repair-plan-error"], [data-testid="repair-candidate-error"]',
+  );
+  await expect(outcome.first()).toBeVisible({ timeout: 900_000 });
+  const applyOffered = (await page.getByTestId('apply-repair').count()) > 0;
+  log({
+    phase: 'repair-preview',
+    ms: Date.now() - t,
+    applyOffered,
+    noSafeChange: (await page.getByTestId('repair-no-safe-change').count()) > 0,
+    planError: (await page.getByTestId('repair-plan-error').count()) > 0,
+    candidateError: (await page.getByTestId('repair-candidate-error').count()) > 0,
+    notes: await page.getByTestId('repair-plan-warnings').allTextContents(),
+  });
+  await page.screenshot({ path: `${dir}/21-real-repair-preview.png` });
+  let after: Record<string, unknown> = {};
+  if (applyOffered) {
+    t = Date.now();
+    await page.getByTestId('apply-repair').click();
+    await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 900_000 });
+    await page.waitForTimeout(8000);
+    log({ phase: 'repair-applied', ms: Date.now() - t, counts: await counts() });
+    await page.screenshot({ path: `${dir}/22-real-repair-applied.png` });
+    after = await readiness();
+    log({ phase: 'split-readiness-after-repair', ...after });
+    await page.screenshot({ path: `${dir}/23-real-split-after-repair.png` });
+  }
+  const verdict = applyOffered
+    ? after.splitReady === true
+      ? 'REPAIR_MAKES_SPLITTABLE'
+      : 'REPAIR_IMPROVES_OR_CHANGES_BUT_NOT_SPLITTABLE'
+    : 'REPAIR_DOES_NOT_RESOLVE_TOPOLOGY';
+  log({ phase: 'verdict', verdict, originalSha: original.sha });
 });

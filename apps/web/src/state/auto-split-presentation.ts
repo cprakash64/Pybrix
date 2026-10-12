@@ -5,6 +5,7 @@ import {
   SuggestionStatus,
   type Suggestion,
 } from '@cadfixer/auto-split';
+import { NOT_CLOSED_COPY } from './split-readiness-presentation';
 import {
   AutoSplitPhase,
   LocalErrorCode,
@@ -74,9 +75,7 @@ export const AUTO_SPLIT_COPY = {
   componentsHint: 'Add or remove components, then preview the selection.',
   reviewSelection: 'Review selection',
 
-  needsRepairHeading: 'Part found, but this model needs Repair before it can be split.',
-  runRepair: 'Open Repair',
-  needsRepairOther: 'Manual Split can’t split it either until its surface is closed.',
+  needsRepairHeading: NOT_CLOSED_COPY.heading,
 
   stale: 'The model changed after this analysis, so these suggestions are out of date.',
   afterApply:
@@ -145,7 +144,7 @@ export interface SuggestionStatusView {
 export function describeStatus(suggestion: Suggestion, sourceReady: boolean): SuggestionStatusView {
   if (suggestion.status === SuggestionStatus.Unavailable)
     return { label: 'No safe split found', tone: 'unavailable' };
-  if (!sourceReady) return { label: 'Repair model first', tone: 'repair' };
+  if (!sourceReady) return { label: NOT_CLOSED_COPY.chip, tone: 'repair' };
   switch (suggestion.status) {
     case SuggestionStatus.Suggested:
       return { label: 'Suggested', tone: 'ready' };
@@ -188,35 +187,6 @@ export function describeReason(reason: SuggestionReason, sourceReady = true): st
     case SuggestionReason.NotLocated:
       return 'Auto Split could not tell where this part is.';
   }
-}
-
-/** Closed-solid reasons from the local gate, in words. */
-export function describeSourceReason(reason: string): string {
-  switch (reason) {
-    case 'OPEN_BOUNDARIES':
-      return 'the surface still has open boundaries';
-    case 'NON_MANIFOLD':
-      return 'it has non-manifold edges or vertices';
-    case 'WINDING_CONFLICT':
-      return 'its triangles don’t agree which side is outside';
-    case 'DEGENERATE_OR_DUPLICATE':
-      return 'it has zero-area or repeated triangles';
-    default:
-      return 'its surface is not a closed solid';
-  }
-}
-
-/** Repair's conservative operations address winding and degenerate or duplicate triangles, and only those. */
-export function repairCanHelp(reasons: readonly string[]): boolean {
-  return (
-    reasons.length > 0 &&
-    reasons.every((reason) => reason === 'WINDING_CONFLICT' || reason === 'DEGENERATE_OR_DUPLICATE')
-  );
-}
-
-export function describeSourceNotReady(reasons: readonly string[]): string {
-  const facts = reasons.map(describeSourceReason);
-  return facts.length === 0 ? '' : `This model isn’t ready to split: ${facts.join('; ')}.`;
 }
 
 export function describePhase(phase: AutoSplitPhase, note: string): string {
@@ -314,14 +284,5 @@ export function allAutoSplitCopy(): readonly string[] {
   for (const reason of Object.values(SuggestionReason))
     phrases.push(describeReason(reason), describeReason(reason, false));
   for (const phase of Object.values(AutoSplitPhase)) phrases.push(describePhase(phase, ''));
-  for (const code of [
-    'OPEN_BOUNDARIES',
-    'NON_MANIFOLD',
-    'WINDING_CONFLICT',
-    'DEGENERATE_OR_DUPLICATE',
-    'SOMETHING_ELSE',
-  ])
-    phrases.push(describeSourceReason(code));
-  phrases.push(describeSourceNotReady(['OPEN_BOUNDARIES', 'WINDING_CONFLICT']));
   return phrases;
 }

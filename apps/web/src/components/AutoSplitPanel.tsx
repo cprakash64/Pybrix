@@ -11,7 +11,7 @@ import { AutoSplitPhase, ModelKind } from '../state/auto-split-session';
 import type { AutoSplitControls, AutoSplitRow, SplitTab } from '../state/use-auto-split';
 import { Icon } from './shell/Icon';
 import { PanelSection } from './shell/primitives';
-import { ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
+import { NotClosedCard, ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
 
 /**
  * AUTO SPLIT — PRESENTATION of `useAutoSplit`.
@@ -466,23 +466,13 @@ function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
           </button>
         </div>
       ) : null}
-      {!auto.stale && !auto.sourceReady ? (
-        <div className="auto-card auto-card--repair" data-testid="auto-source-not-ready">
-          <p className="auto-card__title">{AUTO_SPLIT_COPY.needsRepairHeading}</p>
-          <p className="auto-card__body">{auto.sourceNotReadyText}</p>
-          {auto.canRunRepair ? (
-            <button
-              type="button"
-              className="secondary-action auto-card__action"
-              onClick={auto.openRepair}
-              data-testid="auto-run-repair"
-            >
-              {AUTO_SPLIT_COPY.runRepair}
-            </button>
-          ) : (
-            <p className="auto-card__body">{AUTO_SPLIT_COPY.needsRepairOther}</p>
-          )}
-        </div>
+      {!auto.stale && auto.notClosed !== undefined ? (
+        <NotClosedCard
+          copy={auto.notClosed}
+          onRepair={auto.openRepair}
+          testId="auto-source-not-ready"
+          actionTestId="auto-run-repair"
+        />
       ) : null}
       {auto.rows.length === 0 ? (
         <p className="panel__empty" data-testid="auto-none">

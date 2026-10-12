@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { NotClosedCopy } from '../state/split-readiness-presentation';
 import {
   describeTooDetailed,
   RESOURCE_REFUSAL_COPY,
@@ -52,6 +53,48 @@ export function ResourceRefusalCard({ testId }: { readonly testId: string }): Re
       <p className="auto-card__title">{RESOURCE_REFUSAL_COPY.heading}</p>
       <p className="auto-card__body">{RESOURCE_REFUSAL_COPY.body}</p>
       <p className="auto-card__body">{RESOURCE_REFUSAL_COPY.others}</p>
+    </div>
+  );
+}
+
+/**
+ * A MODEL THAT IS NOT A CLOSED SOLID, as a neutral status with ONE way forward. It is `role="status"`,
+ * has no retry (the same file is refused the same way every time), says the original model was not
+ * changed, and offers Repair as the next step without promising what Repair can do.
+ */
+export function NotClosedCard({
+  copy,
+  onRepair,
+  testId,
+  actionTestId,
+}: {
+  readonly copy: NotClosedCopy;
+  readonly onRepair: () => void;
+  readonly testId: string;
+  readonly actionTestId: string;
+}): ReactNode {
+  return (
+    <div className="auto-card auto-card--repair" role="status" data-testid={testId}>
+      <p className="auto-card__title" data-testid={`${testId}-heading`}>
+        {copy.heading}
+      </p>
+      <p className="auto-card__body" data-testid={`${testId}-found`}>
+        {copy.found}
+      </p>
+      <p className="auto-card__body" data-testid={`${testId}-advice`}>
+        {copy.advice}
+      </p>
+      <p className="auto-card__body" data-testid={`${testId}-unchanged`}>
+        {copy.unchanged}
+      </p>
+      <button
+        type="button"
+        className="secondary-action auto-card__action"
+        onClick={onRepair}
+        data-testid={actionTestId}
+      >
+        {copy.action}
+      </button>
     </div>
   );
 }

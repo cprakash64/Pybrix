@@ -21,6 +21,7 @@ import {
   type SplitPieceView,
 } from '../state/split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
+import { WorkflowId } from '../state/workflows';
 import { useAutoSplitControls, useSplitControls } from '../state/workflow-controllers';
 import {
   SplitExportState,
@@ -29,7 +30,8 @@ import {
   type SplitControls,
 } from '../state/use-split-workflow';
 import { AutoSplitSections, SplitModeTabs } from './AutoSplitPanel';
-import { ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
+import { NotClosedCard, ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
+import { describeNotClosed } from '../state/split-readiness-presentation';
 import { useOpenConvertWorkspace } from './shell/open-convert';
 import {
   ActionFooter,
@@ -711,12 +713,24 @@ function ExportSection({
 
 /** Every failure in full, at the end of the scrolling content. */
 function SplitOutcome({ split }: { readonly split: SplitControls }): ReactNode {
+  const store = useWorkspaceStore();
+  const openRepair = (): void => {
+    store.selectWorkflow(WorkflowId.Repair);
+  };
   const exportFailure =
     split.exportState === SplitExportState.Failed ? split.exportMessage : undefined;
   const key = [split.error, exportFailure].filter((message) => message !== undefined).join('|');
   return (
     <WorkspaceOutcome revealKey={key === '' ? undefined : key}>
-      {split.error === undefined ? null : split.errorIsResourceLimit ? (
+      {split.error === undefined ? null : split.sourceNotClosed !== undefined ? (
+        // A fact about the file, not a failure: a status with Repair as the next step, never a retry.
+        <NotClosedCard
+          copy={describeNotClosed(split.sourceNotClosed)}
+          onRepair={openRepair}
+          testId="split-not-closed"
+          actionTestId="split-repair-model"
+        />
+      ) : split.errorIsResourceLimit ? (
         // A limit the worker enforces is a decision with a reason, not a defect: a status, not an alert.
         <ResourceRefusalCard testId="split-resource-limit" />
       ) : (
@@ -775,7 +789,7 @@ function SplitFooter({
         : undefined;
   const working = split.phase === SplitPhase.Computing || split.phase === SplitPhase.Applying;
   const failureLine =
-    split.error !== undefined && !split.errorIsResourceLimit
+    split.error !== undefined && !split.errorIsResourceLimit && split.sourceNotClosed === undefined
       ? SPLIT_COPY.failedLine
       : split.exportState === SplitExportState.Failed && split.exportMessage !== undefined
         ? SPLIT_COPY.exportFailedLine

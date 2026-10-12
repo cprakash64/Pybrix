@@ -237,6 +237,7 @@ export {
   splitWithConnectors,
   splitSourceReasons,
   describeSplitSourceRefusal,
+  SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
   SplitSourceReason,
   SplitStage,
 } from './split-connectors';

@@ -12,7 +12,6 @@ import {
   describeError,
   describeOperation,
   describeStatus,
-  repairCanHelp,
 } from './auto-split-presentation';
 import { LocalErrorCode } from './auto-split-session';
 
@@ -74,7 +73,7 @@ describe('what Auto Split may say', () => {
       'This suggested cut isn’t safe on this model. Adjust the cut or use Manual Split.',
     );
     expect(AUTO_SPLIT_COPY.needsRepairHeading).toBe(
-      'Part found, but this model needs Repair before it can be split.',
+      'This model needs repair before it can be split.',
     );
   });
 
@@ -125,16 +124,6 @@ describe('the four statuses', () => {
         expect(describeStatus(suggestion({ status }), ready).label).not.toMatch(/\d/);
     for (const operation of Object.values(SuggestionOperation))
       expect(describeOperation(operation)).not.toMatch(/\d/);
-  });
-});
-
-describe('Repair is offered only where it can help', () => {
-  it('for winding and degenerate triangles, and not for openings or non-manifold edges', () => {
-    expect(repairCanHelp(['WINDING_CONFLICT'])).toBe(true);
-    expect(repairCanHelp(['WINDING_CONFLICT', 'DEGENERATE_OR_DUPLICATE'])).toBe(true);
-    expect(repairCanHelp(['OPEN_BOUNDARIES'])).toBe(false);
-    expect(repairCanHelp(['WINDING_CONFLICT', 'NON_MANIFOLD'])).toBe(false);
-    expect(repairCanHelp([])).toBe(false);
   });
 });
 
