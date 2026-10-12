@@ -1,3 +1,5 @@
+import { flushSync } from 'react-dom';
+import { afterPaint } from './after-paint';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   OperationHandle,
@@ -51,9 +53,11 @@ import { WorkflowId } from './workflows';
 
 export const SplitPhase = {
   Idle: 'idle',
+  Preparing: 'preparing',
   Computing: 'computing',
   Preview: 'preview',
   Applying: 'applying',
+  Undoing: 'undoing',
 } as const;
 export type SplitPhase = (typeof SplitPhase)[keyof typeof SplitPhase];
 
@@ -172,6 +176,8 @@ export interface SplitControls {
   readonly beginPlaneDrag: () => void;
   readonly dragPlane: (distanceAlongNormal: number) => void;
   readonly setConnector: (patch: Partial<ConnectorSettings>) => void;
+  readonly preparePreview: (load: () => void) => void;
+  readonly completePreparedPreview: () => void;
   readonly updatePreview: () => void;
   readonly discardPreview: () => void;
   readonly apply: () => void;
@@ -331,6 +337,7 @@ export function useSplitWorkflow(): SplitControls {
   >(undefined);
   const running = useRef<OperationHandle<SplitCreateResult> | undefined>(undefined);
   const previewRef = useRef<SplitCreateResult | undefined>(undefined);
+  const action = useRef<{ phase: SplitPhase } | undefined>(undefined);
   const dragStart = useRef<number | undefined>(undefined);
 
   const error = errorState?.key === session ? errorState.message : undefined;
@@ -339,12 +346,25 @@ export function useSplitWorkflow(): SplitControls {
   const partTriangles = part?.triangleCount;
   const sizeNotice = useMemo(() => splitSizeNoticeFor(partTriangles), [partTriangles]);
   const preview = previewState?.key === session ? previewState.result : undefined;
-  const rawPhase = work.session === session ? work.phase : SplitPhase.Idle;
-  const progress = work.session === session ? work.progress : '';
+  const rawPhase =
+    work.phase === SplitPhase.Applying ||
+    work.phase === SplitPhase.Undoing ||
+    work.session === session
+      ? work.phase
+      : SplitPhase.Idle;
+  const progress =
+    work.phase === SplitPhase.Applying ||
+    work.phase === SplitPhase.Undoing ||
+    work.session === session
+      ? work.progress
+      : '';
   const phase =
     rawPhase === SplitPhase.Preview && preview === undefined ? SplitPhase.Idle : rawPhase;
   /* The applied split ends when the document moves on — Undo, another edit, a new file. */
-  const applied = appliedState?.revision === model?.revision ? appliedState : undefined;
+  const applied =
+    rawPhase === SplitPhase.Undoing || appliedState?.revision === model?.revision
+      ? appliedState
+      : undefined;
   const exportState =
     applied !== undefined && exportRecord?.recordId === applied.recordId
       ? exportRecord.state
@@ -449,7 +469,7 @@ export function useSplitWorkflow(): SplitControls {
   const invalidate = useCallback((): void => {
     release();
     setPreviewState(undefined);
-    setPhase(SplitPhase.Idle);
+    if (action.current?.phase !== SplitPhase.Preparing) setPhase(SplitPhase.Idle);
   }, [release, setPhase]);
 
   /*
@@ -457,7 +477,17 @@ export function useSplitWorkflow(): SplitControls {
    * document, or leaving the workspace — and so does unmounting. Nothing
    * unapplied outlives the session it was made in.
    */
-  useEffect(() => release, [release, session]);
+  useEffect(
+    () => (): void => {
+      if (
+        action.current?.phase !== SplitPhase.Applying &&
+        action.current?.phase !== SplitPhase.Undoing
+      )
+        action.current = undefined;
+      release();
+    },
+    [release, session],
+  );
 
   /* The ONE plane the viewport draws, published from these settings only. */
   useEffect(() => {
@@ -470,6 +500,7 @@ export function useSplitWorkflow(): SplitControls {
 
   const edit = useCallback(
     (next: (current: SplitPlaneSettings) => SplitPlaneSettings): void => {
+      if (action.current !== undefined && action.current.phase !== SplitPhase.Preparing) return;
       invalidate();
       setError(undefined);
       setComponentState(undefined);
@@ -523,6 +554,7 @@ export function useSplitWorkflow(): SplitControls {
   );
   const setComponentSource = useCallback(
     (ranks: readonly number[] | undefined): void => {
+      if (action.current !== undefined && action.current.phase !== SplitPhase.Preparing) return;
       invalidate();
       setError(undefined);
       setComponentState(
@@ -533,6 +565,7 @@ export function useSplitWorkflow(): SplitControls {
   );
 
   const beginPlaneDrag = useCallback(() => {
+    if (action.current !== undefined) return;
     invalidate();
     setComponentState(undefined);
     dragStart.current = offset;
@@ -550,6 +583,7 @@ export function useSplitWorkflow(): SplitControls {
 
   const setConnector = useCallback(
     (patch: Partial<ConnectorSettings>) => {
+      if (action.current !== undefined && action.current.phase !== SplitPhase.Preparing) return;
       invalidate();
       setError(undefined);
       setConnectorState((current) => ({ ...current, ...patch }));
@@ -557,120 +591,198 @@ export function useSplitWorkflow(): SplitControls {
     [invalidate, setError],
   );
 
+  const runPreview = useCallback(
+    (prepared = false): void => {
+      if (prepared ? action.current?.phase !== SplitPhase.Preparing : action.current !== undefined)
+        return;
+      const abandonPreparation = (): void => {
+        if (prepared) {
+          action.current = undefined;
+          setPhase(SplitPhase.Idle);
+        }
+      };
+      if (client === undefined || model === undefined || part === undefined) {
+        abandonPreparation();
+        return;
+      }
+      // Above the supported size nothing can be previewed: the page already says so, and the worker
+      // would only refuse. Asking it would turn a known fact into a failure.
+      if (sizeNotice !== undefined) {
+        abandonPreparation();
+        return;
+      }
+      const byComponents = componentRanks.length > 0;
+      // Components are separate shells: there is no cut face to put a connector on, so the connector
+      // settings are neither read nor validated for them.
+      if (
+        !byComponents &&
+        connector.kind !== 'none' &&
+        (!available || connectorProblem !== undefined)
+      ) {
+        abandonPreparation();
+        return;
+      }
+      const token = { phase: SplitPhase.Computing };
+      action.current = token;
+      const showBusy = (): void => {
+        setError(undefined);
+        setPhase(SplitPhase.Computing, byComponents ? 'Checking selection…' : 'Checking split…');
+      };
+      if (prepared) showBusy();
+      else flushSync(showBusy);
+      void (async (): Promise<void> => {
+        try {
+          await afterPaint();
+          if (action.current !== token) return;
+          release();
+          setPreviewState(undefined);
+          const onProgress = (update: { readonly note?: string }): void => {
+            setProgress(update.note ?? 'Computing…');
+          };
+          const operation = byComponents
+            ? client.createComponentSplit(model.handle, part.partId, componentRanks, onProgress)
+            : client.createSplit(
+                model.handle,
+                part.partId,
+                { plane: splitPlane, connector: connectorRequest(connector, unitValue) },
+                onProgress,
+              );
+          running.current = operation;
+          const result = await operation.promise;
+          {
+            if (running.current !== operation) return;
+            running.current = undefined;
+            previewRef.current = result;
+            setPreviewState({ key: session, result });
+            store.setSplitPreview(model.handle, result.render, result.parts);
+            await afterPaint();
+            if (action.current === token) setPhase(SplitPhase.Preview);
+          }
+        } catch (cause: unknown) {
+          if (action.current !== token) return;
+          running.current = undefined;
+          setPhase(SplitPhase.Idle);
+          const notClosed = notClosedReasonsOf(cause);
+          if (notClosed !== undefined) {
+            // A fact about the file, not a failure: a status with a way forward, never an error.
+            setNotClosedError(NOT_CLOSED_COPY.heading, notClosed);
+            store.pushStatus(StatusSeverity.Info, NOT_CLOSED_COPY.heading);
+            return;
+          }
+          if (isResourceRefusal(cause)) {
+            // A decision, not a defect: neutral words that name no limit's internals and no other way.
+            setResourceError(RESOURCE_REFUSAL_COPY.body);
+            store.pushStatus(StatusSeverity.Info, RESOURCE_REFUSAL_COPY.heading);
+            return;
+          }
+          const message = messageOf(cause, 'The split could not be completed.');
+          setError(message);
+          store.pushStatus(StatusSeverity.Error, message);
+        } finally {
+          if (action.current === token) action.current = undefined;
+        }
+      })();
+    },
+    [
+      available,
+      client,
+      componentRanks,
+      connector,
+      connectorProblem,
+      unitValue,
+      release,
+      model,
+      part,
+      session,
+      setError,
+      setPhase,
+      setProgress,
+      setNotClosedError,
+      setResourceError,
+      sizeNotice,
+      splitPlane,
+      store,
+    ],
+  );
+
   const updatePreview = useCallback((): void => {
-    if (client === undefined || model === undefined || part === undefined) return;
-    // Above the supported size nothing can be previewed: the page already says so, and the worker
-    // would only refuse. Asking it would turn a known fact into a failure.
-    if (sizeNotice !== undefined) return;
-    const byComponents = componentRanks.length > 0;
-    // Components are separate shells: there is no cut face to put a connector on, so the connector
-    // settings are neither read nor validated for them.
-    if (
-      !byComponents &&
-      connector.kind !== 'none' &&
-      (!available || connectorProblem !== undefined)
-    )
-      return;
-    invalidate();
-    setError(undefined);
-    setPhase(SplitPhase.Computing, byComponents ? 'Checking selection…' : 'Checking split…');
-    const onProgress = (update: { readonly note?: string }): void => {
-      setProgress(update.note ?? 'Computing…');
-    };
-    const operation = byComponents
-      ? client.createComponentSplit(model.handle, part.partId, componentRanks, onProgress)
-      : client.createSplit(
-          model.handle,
-          part.partId,
-          { plane: splitPlane, connector: connectorRequest(connector, unitValue) },
-          onProgress,
-        );
-    running.current = operation;
-    operation.promise.then(
-      (result) => {
-        if (running.current !== operation) return;
-        running.current = undefined;
-        previewRef.current = result;
-        setPreviewState({ key: session, result });
-        store.setSplitPreview(model.handle, result.render, result.parts);
-        setPhase(SplitPhase.Preview);
-      },
-      (cause: unknown) => {
-        if (running.current !== operation) return;
-        running.current = undefined;
-        setPhase(SplitPhase.Idle);
-        const notClosed = notClosedReasonsOf(cause);
-        if (notClosed !== undefined) {
-          // A fact about the file, not a failure: a status with a way forward, never an error.
-          setNotClosedError(NOT_CLOSED_COPY.heading, notClosed);
-          store.pushStatus(StatusSeverity.Info, NOT_CLOSED_COPY.heading);
-          return;
+    runPreview();
+  }, [runPreview]);
+  const completePreparedPreview = useCallback((): void => {
+    runPreview(true);
+  }, [runPreview]);
+  const preparePreview = useCallback(
+    (load: () => void): void => {
+      if (action.current !== undefined) return;
+      const token = { phase: SplitPhase.Preparing };
+      action.current = token;
+      flushSync(() => {
+        setPhase(SplitPhase.Preparing, 'Checking split…');
+      });
+      void (async (): Promise<void> => {
+        try {
+          await afterPaint();
+          if (action.current === token) load();
+        } catch (cause: unknown) {
+          if (action.current !== token) return;
+          action.current = undefined;
+          setPhase(SplitPhase.Idle);
+          const message = messageOf(cause, 'The split could not be completed.');
+          setError(message);
+          store.pushStatus(StatusSeverity.Error, message);
         }
-        if (isResourceRefusal(cause)) {
-          // A decision, not a defect: neutral words that name no limit's internals and no other way.
-          setResourceError(RESOURCE_REFUSAL_COPY.body);
-          store.pushStatus(StatusSeverity.Info, RESOURCE_REFUSAL_COPY.heading);
-          return;
-        }
-        const message = messageOf(cause, 'The split could not be completed.');
-        setError(message);
-        store.pushStatus(StatusSeverity.Error, message);
-      },
-    );
-  }, [
-    available,
-    client,
-    componentRanks,
-    connector,
-    connectorProblem,
-    unitValue,
-    invalidate,
-    model,
-    part,
-    session,
-    setError,
-    setPhase,
-    setProgress,
-    setNotClosedError,
-    setResourceError,
-    sizeNotice,
-    splitPlane,
-    store,
-  ]);
+      })();
+    },
+    [setPhase, setError, store],
+  );
 
   const apply = useCallback((): void => {
     if (client === undefined || model === undefined || part === undefined) return;
     const current = previewRef.current;
     if (current === undefined) return;
-    setPhase(SplitPhase.Applying);
-    client.commitSplit(current.candidate, model.handle, part.partId).promise.then(
-      (result) => {
-        if (!store.applySplitResult(result)) {
-          setPhase(SplitPhase.Preview);
-          setError('The model changed before the split could be applied.');
-          return;
+    if (action.current !== undefined) return;
+    const token = { phase: SplitPhase.Applying };
+    action.current = token;
+    flushSync(() => {
+      setPhase(SplitPhase.Applying);
+    });
+    void (async (): Promise<void> => {
+      try {
+        await afterPaint();
+        if (action.current !== token) return;
+        const result = await client.commitSplit(current.candidate, model.handle, part.partId)
+          .promise;
+        {
+          if (!store.applySplitResult(result)) {
+            setPhase(SplitPhase.Preview);
+            setError('The model changed before the split could be applied.');
+            return;
+          }
+          previewRef.current = undefined;
+          setPreviewState(undefined);
+
+          setApplied({
+            pieceA: result.pieceAId,
+            pieceB: result.pieceBId,
+            recordId: result.recordId,
+            metrics: result.metrics,
+            section: result.section,
+            connector: result.connector,
+            revision: store.getSnapshot().model?.revision ?? -1,
+          });
+          store.pushStatus(StatusSeverity.Success, 'Split applied. Piece A and Piece B are ready.');
+          await afterPaint();
+          if (action.current === token) setPhase(SplitPhase.Idle);
         }
-        previewRef.current = undefined;
-        setPreviewState(undefined);
-        setPhase(SplitPhase.Idle);
-        setApplied({
-          pieceA: result.pieceAId,
-          pieceB: result.pieceBId,
-          recordId: result.recordId,
-          metrics: result.metrics,
-          section: result.section,
-          connector: result.connector,
-          revision: store.getSnapshot().model?.revision ?? -1,
-        });
-        store.pushStatus(StatusSeverity.Success, 'Split applied. Piece A and Piece B are ready.');
-      },
-      (cause: unknown) => {
+      } catch (cause: unknown) {
         const message = messageOf(cause, 'The split could not be applied.');
         setPhase(SplitPhase.Preview);
         setError(message);
         store.pushStatus(StatusSeverity.Error, message);
-      },
-    );
+      } finally {
+        if (action.current === token) action.current = undefined;
+      }
+    })();
   }, [client, model, part, setError, setPhase, store]);
 
   /**
@@ -680,6 +792,12 @@ export function useSplitWorkflow(): SplitControls {
    * not giving up.
    */
   const cancel = useCallback((): void => {
+    if (
+      action.current?.phase === SplitPhase.Applying ||
+      action.current?.phase === SplitPhase.Undoing
+    )
+      return;
+    action.current = undefined;
     invalidate();
     setError(undefined);
     setPlaneState({ key: '', settings: DEFAULT_PLANE });
@@ -689,25 +807,42 @@ export function useSplitWorkflow(): SplitControls {
   }, [invalidate, setError, store]);
 
   const undo = useCallback((): void => {
-    if (client === undefined || model === undefined || applied === undefined) return;
-    client
-      .undoRepair(model.handle, applied.recordId, () => undefined)
-      .promise.then(
-        (result) => {
-          if (!store.applyUndoResult(result)) {
-            setError('The model changed before Undo completed.');
-            return;
-          }
-          setApplied(undefined);
-          store.pushStatus(StatusSeverity.Success, 'Split undone.');
-        },
-        (cause: unknown) => {
-          const message = messageOf(cause, 'The split could not be undone.');
-          setError(message);
-          store.pushStatus(StatusSeverity.Error, message);
-        },
-      );
-  }, [applied, client, model, setError, store]);
+    if (
+      client === undefined ||
+      model === undefined ||
+      applied === undefined ||
+      action.current !== undefined
+    )
+      return;
+    const token = { phase: SplitPhase.Undoing };
+    action.current = token;
+    flushSync(() => {
+      setError(undefined);
+      setPhase(SplitPhase.Undoing, 'Undoing split…');
+    });
+    void (async (): Promise<void> => {
+      try {
+        await afterPaint();
+        if (action.current !== token) return;
+        const result = await client.undoRepair(model.handle, applied.recordId, () => undefined)
+          .promise;
+        if (!store.applyUndoResult(result))
+          throw new Error('The model changed before Undo completed.');
+        store.pushStatus(StatusSeverity.Success, 'Split undone.');
+        await afterPaint();
+        setApplied(undefined);
+      } catch (cause: unknown) {
+        const message = messageOf(cause, 'The split could not be undone.');
+        setError(message);
+        store.pushStatus(StatusSeverity.Error, message);
+      } finally {
+        if (action.current === token) {
+          action.current = undefined;
+          setPhase(SplitPhase.Idle);
+        }
+      }
+    })();
+  }, [applied, client, model, setError, setPhase, store]);
 
   /**
    * Each piece through the existing one-part binary STL export, one after the
@@ -716,6 +851,7 @@ export function useSplitWorkflow(): SplitControls {
    */
   const exportPieces = useCallback((): void => {
     if (client === undefined || model === undefined || applied === undefined) return;
+    if (action.current !== undefined) return;
     const handle = model.handle;
     const sourceName = model.source.fileName;
     const recordId = applied.recordId;
@@ -793,6 +929,8 @@ export function useSplitWorkflow(): SplitControls {
     beginPlaneDrag,
     dragPlane,
     setConnector,
+    preparePreview,
+    completePreparedPreview,
     updatePreview,
     discardPreview: invalidate,
     apply,

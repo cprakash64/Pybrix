@@ -619,7 +619,7 @@ function Components({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
       <button
         type="button"
         className="primary-action auto-card__action"
-        disabled={count === 0}
+        disabled={count === 0 || auto.rows.every((row) => !row.executable)}
         onClick={auto.previewSelection}
         data-testid="auto-preview-selection"
       >

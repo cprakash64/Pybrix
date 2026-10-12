@@ -292,6 +292,9 @@ function render_(
   );
 }
 
+// Paint is verified in Chromium; component tests advance this boundary deterministically.
+vi.mock('../state/after-paint', () => ({ afterPaint: (): Promise<void> => Promise.resolve() }));
+
 const settle = async (): Promise<void> => {
   await act(async () => {
     for (let i = 0; i < 10; i += 1) await Promise.resolve();
@@ -455,6 +458,7 @@ describe('an analysis', () => {
     await findParts('human');
     expect(screen.getByTestId('auto-progress')).toBeInTheDocument();
     expect(screen.getByTestId('auto-status')).toHaveTextContent(/looking for parts/i);
+    expect(screen.getByTestId('split-footer')).not.toHaveTextContent('Find parts first');
     expect(screen.getByTestId('auto-progress').textContent).not.toMatch(/\d\s*%/);
     expect(spies.signals[0]?.aborted).toBe(false);
     click('auto-cancel');
@@ -557,6 +561,9 @@ describe('a suggestion is a setting of Manual Split, and a preview is asked for,
     expect(call[2].plane.origin[2]).toBeCloseTo(80, 6);
     expect(call[2].plane.normal).toEqual([0, 0, 1]);
     expect(call[2].connector.kind).toBe('none');
+    expect(screen.getByTestId('auto-preview-head')).toBeDisabled();
+    expect(screen.getByTestId('auto-preview-left_arm')).toBeDisabled();
+    expect(screen.getByTestId('split-preview')).toBeDisabled();
     // Previewing is not applying.
     expect(spies.commitSplit).not.toHaveBeenCalled();
   });

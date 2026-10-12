@@ -132,7 +132,10 @@ export function SplitWorkspace(): ReactNode {
 }
 
 const busy = (split: SplitControls): boolean =>
-  split.phase === SplitPhase.Computing || split.phase === SplitPhase.Applying;
+  split.phase === SplitPhase.Preparing ||
+  split.phase === SplitPhase.Computing ||
+  split.phase === SplitPhase.Applying ||
+  split.phase === SplitPhase.Undoing;
 
 /* ------------------------------------------------------------ cut plane -- */
 
@@ -674,7 +677,9 @@ function ExportSection({
   readonly onMode: (mode: ExportMode) => void;
 }): ReactNode {
   const { model } = useWorkspaceState();
-  const applied = split.applied !== undefined && split.phase === SplitPhase.Idle;
+  const applied =
+    split.applied !== undefined &&
+    (split.phase === SplitPhase.Idle || split.phase === SplitPhase.Undoing);
   const saved =
     split.exportMessage !== undefined && split.exportState === SplitExportState.Done
       ? split.exportMessage
@@ -787,7 +792,11 @@ function SplitFooter({
       : connectorBlocked
         ? (split.connectorProblem ?? SPLIT_COPY.connectorsNeedMillimetres)
         : undefined;
-  const working = split.phase === SplitPhase.Computing || split.phase === SplitPhase.Applying;
+  const working =
+    split.phase === SplitPhase.Preparing ||
+    split.phase === SplitPhase.Computing ||
+    split.phase === SplitPhase.Applying ||
+    split.phase === SplitPhase.Undoing;
   const failureLine =
     split.error !== undefined && !split.errorIsResourceLimit && split.sourceNotClosed === undefined
       ? SPLIT_COPY.failedLine
@@ -815,11 +824,14 @@ function SplitFooter({
         {line}
       </div>
 
-      {applied !== undefined && split.phase === SplitPhase.Idle ? (
+      {applied !== undefined &&
+      (split.phase === SplitPhase.Idle || split.phase === SplitPhase.Undoing) ? (
         <div className="convert-footer__actions">
           <button
             type="button"
             className="secondary-action convert-footer__cancel"
+            disabled={working}
+            aria-busy={split.phase === SplitPhase.Undoing}
             onClick={split.undo}
             data-testid="split-undo"
           >
@@ -828,7 +840,7 @@ function SplitFooter({
           <button
             type="button"
             className="primary-action convert-footer__primary"
-            disabled={!piecesPresent || split.exportState === SplitExportState.Exporting}
+            disabled={working || !piecesPresent || split.exportState === SplitExportState.Exporting}
             aria-busy={split.exportState === SplitExportState.Exporting}
             onClick={() => {
               if (exportMode === 'stl') {
@@ -851,6 +863,7 @@ function SplitFooter({
           <button
             type="button"
             className="secondary-action convert-footer__cancel"
+            disabled={split.phase === SplitPhase.Applying}
             onClick={
               onCancelAnalysis ??
               (split.phase === SplitPhase.Preview ? split.discardPreview : split.cancel)
@@ -885,21 +898,14 @@ function SplitFooter({
             <button
               type="button"
               className="primary-action convert-footer__primary"
-              disabled={
-                !hasPart ||
-                connectorBlocked ||
-                previewBlocked ||
-                split.phase === SplitPhase.Computing
-              }
-              aria-busy={split.phase === SplitPhase.Computing}
+              disabled={!hasPart || connectorBlocked || previewBlocked || working}
+              aria-busy={working}
               {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
               onClick={split.updatePreview}
               data-testid="split-preview"
             >
               <Icon name="split" size={16} />
-              <span>
-                {split.phase === SplitPhase.Computing ? 'Computing…' : SPLIT_COPY.previewButton}
-              </span>
+              <span>{working ? 'Computing…' : SPLIT_COPY.previewButton}</span>
             </button>
           )}
         </div>

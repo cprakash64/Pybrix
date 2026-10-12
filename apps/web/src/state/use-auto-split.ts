@@ -151,7 +151,8 @@ export function useAutoSplit(
     source: splitSource,
     setComponentSource,
     loadSuggestedPlane,
-    updatePreview,
+    preparePreview,
+    completePreparedPreview,
     discardPreview,
     phase: splitPhase,
     error: splitError,
@@ -212,6 +213,10 @@ export function useAutoSplit(
         operationLabel: describeOperation(suggestion.operation),
         status: describeStatus(suggestion, sourceReady),
         executable:
+          splitPhase !== SplitPhase.Preparing &&
+          splitPhase !== SplitPhase.Computing &&
+          splitPhase !== SplitPhase.Applying &&
+          splitPhase !== SplitPhase.Undoing &&
           sourceReady &&
           !stale &&
           suggestion.status !== SuggestionStatus.Unavailable &&
@@ -220,7 +225,7 @@ export function useAutoSplit(
         selected: snap.selectedId === suggestion.id,
         suggestion,
       })),
-    [result, snap.selectedId, snap.shownId, sourceReady, stale],
+    [result, snap.selectedId, snap.shownId, sourceReady, stale, splitPhase],
   );
   const selected = rows.find((row) => row.selected);
 
@@ -253,7 +258,9 @@ export function useAutoSplit(
         if (splitPhase === SplitPhase.Applying) return AutoSplitPhase.Applying;
         if (
           selected !== undefined &&
-          (splitPhase === SplitPhase.Computing || splitPhase === SplitPhase.Preview)
+          (splitPhase === SplitPhase.Preparing ||
+            splitPhase === SplitPhase.Computing ||
+            splitPhase === SplitPhase.Preview)
         )
           return AutoSplitPhase.Previewing;
         return sourceReady ? AutoSplitPhase.SuggestionsReady : AutoSplitPhase.SourceNotReady;
@@ -270,27 +277,34 @@ export function useAutoSplit(
   useEffect(() => {
     if (previewTick === handledTick.current) return;
     handledTick.current = previewTick;
-    updatePreview();
-  }, [previewTick, updatePreview]);
+    completePreparedPreview();
+  }, [previewTick, completePreparedPreview]);
 
   const load = useCallback(
     (id: string, thenPreview: boolean): void => {
       const row = rows.find((candidate) => candidate.id === id);
       if (!row?.executable) return;
-      session.select(id);
-      setApproximate(false);
-      if (row.suggestion.operation === SuggestionOperation.Plane && row.suggestion.plane !== null) {
-        const loaded = loadSuggestedPlane({
-          origin: row.suggestion.plane.origin,
-          normal: row.suggestion.plane.normal,
-        });
-        setApproximate(loaded?.exact === false);
-      } else {
-        setComponentSource(row.suggestion.components);
-      }
-      if (thenPreview) setPreviewTick((tick) => tick + 1);
+      const loadCut = (): void => {
+        session.select(id);
+        setApproximate(false);
+        if (
+          row.suggestion.operation === SuggestionOperation.Plane &&
+          row.suggestion.plane !== null
+        ) {
+          const loaded = loadSuggestedPlane({
+            origin: row.suggestion.plane.origin,
+            normal: row.suggestion.plane.normal,
+          });
+          setApproximate(loaded?.exact === false);
+        } else {
+          setComponentSource(row.suggestion.components);
+        }
+        if (thenPreview) setPreviewTick((tick) => tick + 1);
+      };
+      if (thenPreview) preparePreview(loadCut);
+      else loadCut();
     },
-    [loadSuggestedPlane, rows, session, setComponentSource],
+    [loadSuggestedPlane, rows, session, setComponentSource, preparePreview],
   );
   const preview = useCallback(
     (id: string): void => {
@@ -314,9 +328,11 @@ export function useAutoSplit(
   const previewSelection = useCallback((): void => {
     const next = session.getSnapshot().selection;
     if (next === undefined || next.length === 0) return;
-    setComponentSource(next);
-    setPreviewTick((tick) => tick + 1);
-  }, [session, setComponentSource]);
+    preparePreview(() => {
+      setComponentSource(next);
+      setPreviewTick((tick) => tick + 1);
+    });
+  }, [session, setComponentSource, preparePreview]);
 
   const toggleShown = useCallback(
     (id: string): void => {
@@ -458,15 +474,17 @@ export function useAutoSplit(
   const footerBlock: string | undefined =
     tooDetailed !== undefined
       ? AUTO_SPLIT_COPY.tooDetailedHint
-      : result === undefined
-        ? 'Find parts first, or switch to Manual Split.'
-        : stale
-          ? AUTO_SPLIT_COPY.stale
-          : !sourceReady
-            ? AUTO_SPLIT_COPY.needsRepairHeading
-            : selected === undefined
-              ? 'Choose a suggestion to preview.'
-              : undefined;
+      : snap.run === 'analyzing' || snap.run === 'preparing'
+        ? 'Looking for parts…'
+        : result === undefined
+          ? 'Find parts first, or switch to Manual Split.'
+          : stale
+            ? AUTO_SPLIT_COPY.stale
+            : !sourceReady
+              ? AUTO_SPLIT_COPY.needsRepairHeading
+              : selected === undefined
+                ? 'Choose a suggestion to preview.'
+                : undefined;
 
   return {
     tab,
