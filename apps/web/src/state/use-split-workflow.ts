@@ -467,9 +467,17 @@ export function useSplitWorkflow(): SplitControls {
 
   /** Release, and retire this session's preview — for the user's own edits. */
   const invalidate = useCallback((): void => {
+    if (
+      action.current?.phase === SplitPhase.Applying ||
+      action.current?.phase === SplitPhase.Undoing
+    )
+      return;
     release();
     setPreviewState(undefined);
-    if (action.current?.phase !== SplitPhase.Preparing) setPhase(SplitPhase.Idle);
+    if (action.current?.phase !== SplitPhase.Preparing) {
+      action.current = undefined;
+      setPhase(SplitPhase.Idle);
+    }
   }, [release, setPhase]);
 
   /*
@@ -572,6 +580,8 @@ export function useSplitWorkflow(): SplitControls {
   }, [invalidate, offset]);
   const dragPlane = useCallback(
     (distance: number) => {
+      // The viewport sends move events after start: suppress both while an action owns the plane.
+      if (action.current !== undefined) return;
       const start = dragStart.current ?? offset;
       setPlane((current) => ({
         ...current,

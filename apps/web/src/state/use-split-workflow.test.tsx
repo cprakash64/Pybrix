@@ -224,6 +224,7 @@ describe('Split action guards and painted phases', () => {
     await applied(s);
     act(() => {
       s.result.current.undo();
+      s.result.current.discardPreview();
       s.result.current.undo();
     });
     expect(s.result.current.phase).toBe(SplitPhase.Undoing);
@@ -260,6 +261,35 @@ describe('Split action guards and painted phases', () => {
     await frame();
     expect(s.undo).toHaveBeenCalledTimes(2);
   });
+  it('keeps the plane fixed when a viewport drag arrives during Preview', () => {
+    const s = setup();
+    const offset = s.result.current.offset;
+    act(() => {
+      s.result.current.updatePreview();
+      s.result.current.beginPlaneDrag();
+      s.result.current.dragPlane(10);
+    });
+    expect(s.result.current.offset).toBe(offset);
+    expect(s.create).not.toHaveBeenCalled();
+  });
+  it('discard before paint cancels the queued Preview and releases its guard', async () => {
+    const s = setup();
+    act(() => {
+      s.result.current.updatePreview();
+      s.result.current.discardPreview();
+    });
+    await frame();
+    expect(s.create).not.toHaveBeenCalled();
+    expect(s.result.current.phase).toBe(SplitPhase.Idle);
+    expect(s.status).not.toHaveBeenCalled();
+    act(() => {
+      s.result.current.updatePreview();
+    });
+    await frame();
+    await frame();
+    expect(s.create).toHaveBeenCalledTimes(1);
+    expect(s.result.current.phase).toBe(SplitPhase.Preview);
+  });
   it('Apply dispatches one commit and recovers', async () => {
     const s = setup();
     act(() => {
@@ -269,6 +299,7 @@ describe('Split action guards and painted phases', () => {
     await frame();
     act(() => {
       s.result.current.apply();
+      s.result.current.discardPreview();
       s.result.current.apply();
     });
     expect(s.result.current.phase).toBe(SplitPhase.Applying);
