@@ -4521,8 +4521,8 @@
 }
 
 .auto-card--failure {
-  border-color: var(--cad-error);
-  background: var(--cad-error-soft);
+  border-color: var(--cad-warning);
+  background: var(--cad-control-raised);
 }
 
 .auto-card--repair,
