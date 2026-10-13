@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -159,10 +160,13 @@ test('current Repair, Apply, plain Split, Undo restores repaired export', async 
   await importTruck(page);
   await page.getByTestId('workflow-repair').click();
   await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 180_000 });
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 180_000 });
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 180_000 });
   await openInspector(page);
   await expect(page.getByTestId('fact-triangles')).toHaveText('1,988,892', { timeout: 180_000 });

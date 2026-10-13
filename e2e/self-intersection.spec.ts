@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { isAppOrigin, isInlineResource } from './app-origin';
 import {
@@ -276,9 +277,12 @@ test('SI-P09: applying a repair invalidates the previous revision’s verdict', 
     timeout: 60_000,
   });
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
 
   /*
@@ -295,6 +299,7 @@ test('SI-P09: applying a repair invalidates the previous revision’s verdict', 
   await expect(page.getByTestId('self-intersection-work-summary')).toBeVisible();
 
   // The applied repair is real: the model changed.
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible();
 });
 
@@ -312,9 +317,12 @@ test('SI-P10: undoing a repair re-derives the diagnostic for the restored revisi
   });
   const trianglesBefore = await page.getByTestId('fact-triangles').textContent();
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('self-intersection-headline')).toHaveText('None found', {
     timeout: 60_000,
@@ -447,6 +455,7 @@ test('SI-P12: a diagnostic worker that fails to load is reported, released and r
 
   // The authoritative model is untouched and the app is still usable.
   await expect(page.getByTestId('fact-triangles')).toHaveText('2');
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible();
 
   // RETRY on a fresh worker succeeds: only the first construction was sabotaged.

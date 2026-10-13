@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { enter, openBox, openDefects, selectFace } from './ui-fixtures';
 import { openInspector } from './inspector';
@@ -253,6 +254,7 @@ test('HUDs stay in their band, clear of the toolbar and the view cube', async ({
     await openDefects(page);
     // An issue with occurrences: its HUD shows in Repair.
     if (width < 900) await page.getByTestId('toggle-tool-drawer').click();
+    await revealControl(page, page.getByTestId('issue-row-degenerate-faces'));
     await page.getByTestId('issue-row-degenerate-faces').click();
     if (width < 900) await page.keyboard.press('Escape');
     await expect(page.getByTestId('issue-hud')).toBeVisible();

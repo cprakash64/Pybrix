@@ -11,7 +11,7 @@ import { AutoSplitPhase, ModelKind } from '../state/auto-split-session';
 import type { AutoSplitControls, AutoSplitRow, SplitTab } from '../state/use-auto-split';
 import { Icon } from './shell/Icon';
 import { PanelSection } from './shell/primitives';
-import { NotClosedCard, ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
+import { ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
 
 /**
  * AUTO SPLIT — PRESENTATION of `useAutoSplit`.
@@ -134,66 +134,51 @@ export function AutoSplitSections({
         </p>
       </PanelSection>
     );
-  const showKinds = auto.phase === AutoSplitPhase.Idle || auto.kind === undefined;
+  const showKinds = !auto.busy && !auto.hasResult && auto.error === undefined;
   return (
     <>
-      <PanelSection
-        title={AUTO_SPLIT_COPY.name}
-        meta={AUTO_SPLIT_COPY.badge}
-        testId="auto-split-panel"
-      >
-        <p className="convert-workspace__note" data-testid="auto-tagline">
-          {AUTO_SPLIT_COPY.tagline}
-        </p>
-        {auto.partLabel === undefined ? null : (
-          <p className="auto-part" data-testid="auto-part">
-            <span className="auto-part__label">{AUTO_SPLIT_COPY.currentPart}</span>
-            <strong className="auto-part__name">{auto.partLabel}</strong>
-          </p>
-        )}
-        {auto.tooDetailed === undefined ? (
-          <KindChoice auto={auto} disabled={auto.busy} compact={!showKinds} />
-        ) : (
-          // The verdict precedes the question: a part above the supported size is told so before it is
-          // asked what kind of model it is, because no answer would make Find parts available.
-          <TooDetailedCard tool="Auto Split" notice={auto.tooDetailed} testId="auto-too-detailed" />
-        )}
-        {auto.tooDetailed === undefined && auto.kind === ModelKind.Other ? (
-          <OtherKind onOpenManual={onOpenManual} />
-        ) : null}
-        {auto.tooDetailed === undefined && auto.needsDisclosure ? (
-          <Disclosure
-            auto={auto}
-            onAccepted={() => {
-              // The disclosure disappears: focus goes to what it unlocked, never to the document.
-              focusAfter.current = 'auto-analyze';
-            }}
-          />
-        ) : null}
-        <Start auto={auto} />
-        <Progress auto={auto} />
-        <Failure auto={auto} />
-      </PanelSection>
+      {showKinds ? (
+        <PanelSection title="Split model" testId="auto-split-panel">
+          {auto.tooDetailed === undefined ? (
+            <KindChoice auto={auto} disabled={auto.busy} compact={false} />
+          ) : (
+            <TooDetailedCard
+              tool="Auto Split"
+              notice={auto.tooDetailed}
+              testId="auto-too-detailed"
+            />
+          )}
+          {auto.kind === ModelKind.Other ? <OtherKind onOpenManual={onOpenManual} /> : null}
+          {auto.tooDetailed === undefined && auto.needsDisclosure ? (
+            <Disclosure
+              auto={auto}
+              onAccepted={() => {
+                focusAfter.current = 'auto-analyze';
+              }}
+            />
+          ) : null}
+          <Start auto={auto} />
+        </PanelSection>
+      ) : null}
+      <Progress auto={auto} />
+      <Failure auto={auto} />
       <Results auto={auto} />
+      {!auto.busy ? (
+        <PanelSection title="Details" defaultOpen={false} testId="auto-details">
+          <p data-testid="auto-part">{auto.partLabel}</p>
+          <p data-testid="auto-tagline">{AUTO_SPLIT_COPY.tagline}</p>
+          <p>{auto.statusText}</p>
+        </PanelSection>
+      ) : null}
       {auto.selected?.operation === SuggestionOperation.Component ? (
         <Components auto={auto} />
       ) : null}
       {auto.selected?.operation === SuggestionOperation.Plane ? (
-        <>
-          {auto.planeApproximate ? (
-            <p className="convert-workspace__caution" data-testid="auto-approximate">
-              {AUTO_SPLIT_COPY.approximateCut}
-            </p>
-          ) : null}
+        <PanelSection title="Adjust cut" defaultOpen={false}>
           <div ref={editorRef}>{editor}</div>
-        </>
+        </PanelSection>
       ) : null}
       {auto.cutNeedsMoreRoom ? <ResourceRefusalCard testId="auto-needs-room" /> : null}
-      {auto.unsafeCut ? (
-        <p className="convert-footer__failure" role="alert" data-testid="auto-unsafe">
-          {AUTO_SPLIT_COPY.unsafeCut}
-        </p>
-      ) : null}
     </>
   );
 }
@@ -261,7 +246,7 @@ function OtherKind({ onOpenManual }: { readonly onOpenManual: () => void }): Rea
       <p className="auto-card__body">{AUTO_SPLIT_COPY.otherBody}</p>
       <button
         type="button"
-        className="secondary-action auto-card__action"
+        className="primary-action auto-card__action"
         onClick={onOpenManual}
         data-testid="auto-open-manual"
       >
@@ -361,7 +346,6 @@ function Start({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
         <Icon name="scan" size={16} />
         <span>{AUTO_SPLIT_COPY.analyze}</span>
       </button>
-      <p className="auto-start__note">{AUTO_SPLIT_COPY.localNote}</p>
     </div>
   );
 }
@@ -375,7 +359,7 @@ function Progress({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
       {/* A polite live region, written when the phase sentence changes, never per tick. */}
       <p className="auto-progress__line" role="status" aria-live="polite" data-testid="auto-status">
         <Icon name="loader" size={14} className="spin" />
-        <span>{auto.statusText}</span>
+        <span>Finding parts…</span>
       </p>
       <p className="auto-progress__hint">{AUTO_SPLIT_COPY.waitHint}</p>
       {auto.cancellable ? (
@@ -412,9 +396,11 @@ function Failure({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
         {auto.error.message}
       </p>
       {auto.error.detail === undefined ? null : (
-        <p className="auto-card__body" data-testid="auto-error-detail">
-          {auto.error.detail}
-        </p>
+        <PanelSection title="Details" defaultOpen={false}>
+          <p className="auto-card__body" data-testid="auto-error-detail">
+            {auto.error.detail}
+          </p>
+        </PanelSection>
       )}
       <div className="auto-card__actions">
         <button
@@ -452,12 +438,10 @@ function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
     >
       {auto.stale ? (
         <div className="auto-card auto-card--stale" role="status" data-testid="auto-stale">
-          <p className="auto-card__body">
-            {auto.appliedSinceAnalysis ? AUTO_SPLIT_COPY.afterApply : AUTO_SPLIT_COPY.stale}
-          </p>
+          <p className="auto-card__body">The model changed. Find parts again to continue.</p>
           <button
             type="button"
-            className="secondary-action auto-card__action"
+            className="primary-action auto-card__action"
             disabled={!auto.canAnalyze}
             onClick={auto.reanalyze}
             data-testid="auto-reanalyze"
@@ -465,14 +449,6 @@ function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
             {AUTO_SPLIT_COPY.reanalyze}
           </button>
         </div>
-      ) : null}
-      {!auto.stale && auto.notClosed !== undefined ? (
-        <NotClosedCard
-          copy={auto.notClosed}
-          onRepair={auto.openRepair}
-          testId="auto-source-not-ready"
-          actionTestId="auto-run-repair"
-        />
       ) : null}
       {auto.rows.length === 0 ? (
         <p className="panel__empty" data-testid="auto-none">
@@ -485,7 +461,6 @@ function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
               <Row key={row.id} row={row} auto={auto} />
             ))}
           </ul>
-          <p className="auto-start__note">{AUTO_SPLIT_COPY.oneAtATime}</p>
         </>
       )}
       {!auto.stale ? (
@@ -523,21 +498,22 @@ function Row({
         <span className="auto-row__name" data-testid={`auto-row-name-${row.id}`}>
           {row.label}
         </span>
-        <span className="auto-row__op">{row.operationLabel}</span>
       </div>
       <p className="auto-row__status" data-testid={`auto-row-status-${row.id}`}>
-        <Icon
-          name={
-            row.status.tone === 'ready' ? 'ok' : row.status.tone === 'unavailable' ? 'x' : 'alert'
-          }
-          size={13}
-        />
-        <span>{row.status.label}</span>
+        {row.selected && auto.unsafeCut
+          ? "Can't split this area safely"
+          : row.executable
+            ? 'Suggested cut'
+            : 'No separate part found'}
       </p>
-      <p className="auto-row__reason" id={reasonId}>
-        {describeReason(row.suggestion.reason, auto.sourceReady)}
-      </p>
-      <div className="auto-row__actions">
+      <PanelSection title="Details" defaultOpen={false}>
+        <p className="auto-row__reason" id={reasonId}>
+          {describeReason(row.suggestion.reason, auto.sourceReady)}
+        </p>
+        <p>
+          {row.operationLabel} · {row.status.label}
+        </p>
+
         <button
           type="button"
           className="auto-row__icon"
@@ -563,10 +539,12 @@ function Row({
         >
           {AUTO_SPLIT_COPY.edit}
         </button>
+      </PanelSection>
+      <div className="auto-row__actions">
         <button
           type="button"
-          className="primary-action auto-row__button"
-          disabled={!row.executable}
+          className={`${auto.selected?.operation !== SuggestionOperation.Component && row.id === auto.rows.find((candidate) => candidate.executable && !(candidate.selected && auto.unsafeCut))?.id ? 'primary-action' : 'secondary-action'} auto-row__button`}
+          disabled={!row.executable || (row.selected && auto.unsafeCut)}
           aria-describedby={reasonId}
           onClick={() => {
             auto.preview(row.id);

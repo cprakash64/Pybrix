@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
@@ -74,6 +75,7 @@ test('BQ25: repair refuses rather than becoming uninterruptible', async ({ page 
   test.setTimeout(120_000);
   await page.goto(`http://localhost:${String(port)}/`);
   await openFile(page, 'small.stl', binaryStl(600).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
   /*
@@ -106,6 +108,7 @@ test('BQ25, BQ58: the rest of the product still works without isolation', async 
    * them down with it — that is the difference between a safe refusal and a
    * self-inflicted outage.
    */
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('health-triangles')).toHaveText((500).toLocaleString());
 

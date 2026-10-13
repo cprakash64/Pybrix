@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { gridForTriangles, holedCubeStl } from '../scripts/boundary-fill-fixture.mjs';
 import { boxWithOneOpeningStl } from './hole-fill-fixtures';
@@ -41,6 +42,7 @@ async function open(page: Page, name: string, bytes: Uint8Array | Buffer): Promi
   await page.goto('/');
   await pick(page, name, 'model/stl', Buffer.from(bytes));
   await enter(page, 'repair');
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId('repair-op-status-fill-openings')).not.toHaveText(/Checking/, {
     timeout: 120_000,
@@ -48,7 +50,8 @@ async function open(page: Page, name: string, bytes: Uint8Array | Buffer): Promi
 }
 
 async function repair(page: Page): Promise<void> {
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
   await page.getByTestId('apply-repair').click();
   await expect(page.getByTestId('repair-applied')).not.toHaveAttribute('data-outcome', 'checking', {

@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { repairHeavyStl } from './stl-fixtures';
 
@@ -124,10 +125,14 @@ test.describe('repair browser benchmark', () => {
       const warmUp = repairHeavyStl(20);
       await page.goto('/');
       await openFile(page, 'warm-up.stl', warmUp.bytes);
+      await revealControl(page, page.getByTestId('repair-operations'));
       await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 600_000 });
-      await page.getByTestId('preview-repair').click();
+      await revealControl(page, page.getByTestId('advanced-preview-repair'));
+      await page.getByTestId('advanced-preview-repair').click();
+      await revealControl(page, page.getByTestId('repair-candidate'));
       await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 600_000 });
       await page.getByTestId('apply-repair').click();
+      await revealControl(page, page.getByTestId('repair-applied'));
       await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 600_000 });
     }
 
@@ -145,9 +150,11 @@ test.describe('repair browser benchmark', () => {
       // Analysis runs automatically; the plan follows it. Both are measured from
       // the moment the model became visible, because that is when a user could
       // first have asked for a repair.
+      await revealControl(page, page.getByTestId('issue-list'));
       await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 600_000 });
       const analysisMs = Date.now() - importedAt;
 
+      await revealControl(page, page.getByTestId('repair-operations'));
       await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 600_000 });
       const planMs = Date.now() - importedAt - analysisMs;
 
@@ -158,7 +165,9 @@ test.describe('repair browser benchmark', () => {
       // regression would show up.
       await startFrameSampling(page);
       const candidateStart = Date.now();
-      await page.getByTestId('preview-repair').click();
+      await revealControl(page, page.getByTestId('advanced-preview-repair'));
+      await page.getByTestId('advanced-preview-repair').click();
+      await revealControl(page, page.getByTestId('repair-candidate'));
       await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 600_000 });
       const candidateMs = Date.now() - candidateStart;
       const preparation = await readFrameGaps(page);
@@ -203,6 +212,7 @@ test.describe('repair browser benchmark', () => {
 
       const applyStart = Date.now();
       await page.getByTestId('apply-repair').click();
+      await revealControl(page, page.getByTestId('repair-applied'));
       await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 600_000 });
       const applyMs = Date.now() - applyStart;
 

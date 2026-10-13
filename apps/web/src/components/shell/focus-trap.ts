@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from 'react';
 
-const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE =
+  'button, summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /**
  * The controls a keyboard user can actually reach inside `root`, in order.
@@ -13,6 +14,8 @@ export function focusableWithin(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
     (element) =>
       !element.hasAttribute('disabled') &&
+      element.closest('[hidden], [inert]') === null &&
+      (element.closest('details:not([open])') === null || element.tagName === 'SUMMARY') &&
       element.tabIndex !== -1 &&
       element.getClientRects().length > 0,
   );

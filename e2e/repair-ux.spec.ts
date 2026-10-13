@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { openAdvancedDiagnostics } from './repair-ui';
 import { binaryStlFrom, type Point } from './stl-fixtures';
@@ -72,7 +73,7 @@ async function openToolDrawerIfClosed(page: Page): Promise<void> {
 async function importModel(page: Page): Promise<void> {
   await page.goto('/');
   await pick(page, 'Hitem3d-synthetic.stl', 'model/stl', MODEL);
-  await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId('issue-list')).toBeAttached({ timeout: 120_000 });
   // The plan is derived automatically from the report.
   await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 120_000 });
 }
@@ -103,9 +104,9 @@ test('RUX01: the primary action and the main findings are in reach at every supp
       const primary = page.getByTestId('preview-repair');
       await expect(primary, label).toBeVisible();
       expect(await inWindow(page, primary), `${label}: primary action in the window`).toBe(true);
-      await expect(page.getByTestId('health-summary'), label).toBeVisible();
-      expect(await inWindow(page, page.getByTestId('health-summary')), label).toBe(true);
-      await expect(page.getByTestId('issue-row-open-boundaries'), label).toBeVisible();
+      await expect(page.getByTestId('health-summary'), label).toBeHidden();
+      await expect(page.getByTestId('issue-row-open-boundaries'), label).toBeHidden();
+      await expect(page.getByTestId('repair-intent'), label).toBeVisible();
 
       // No horizontal page scroll at any width.
       const overflow = await page.evaluate(
@@ -114,6 +115,7 @@ test('RUX01: the primary action and the main findings are in reach at every supp
       expect(overflow, `${label}: horizontal overflow`).toBeLessThanOrEqual(0);
 
       // An explanation opens inside the panel and inside the window.
+      await revealControl(page, page.getByTestId('issue-info-non-manifold-vertices'));
       await page.getByTestId('issue-info-non-manifold-vertices').click();
       const panel = page.getByTestId('issue-info-panel-non-manifold-vertices');
       await expect(panel, label).toBeVisible();
@@ -123,16 +125,10 @@ test('RUX01: the primary action and the main findings are in reach at every supp
       await page.keyboard.press('Escape');
       await expect(panel, label).toBeHidden();
 
-      // At the tall desktop sizes the whole answer fits without scrolling:
-      // heading, summary, action and the main issue rows.
-      if (width >= 1280 && height >= 800) {
-        for (const id of ['open-boundaries', 'non-manifold-vertices', 'degenerate-faces']) {
-          expect(
-            await inWindow(page, page.getByTestId(`issue-row-${id}`)),
-            `${label}: ${id} without scrolling`,
-          ).toBe(true);
-        }
-      }
+      const details = page
+        .getByTestId('repair-details')
+        .getByRole('button', { name: 'Details', exact: true });
+      await details.click();
     });
   }
 });
@@ -156,6 +152,7 @@ test('RUX02: the default view is concise; explanations and the full report are o
   ]) {
     await expect(page.getByTestId(id), id).toBeHidden();
   }
+  await revealControl(page, page.getByTestId('advanced-diagnostics'));
   const advancedToggle = page
     .getByTestId('advanced-diagnostics')
     .getByRole('button', { name: 'Advanced diagnostics', exact: true });
@@ -163,6 +160,7 @@ test('RUX02: the default view is concise; explanations and the full report are o
 
   // ⓘ by keyboard: Enter opens, Escape closes and focus returns to the button.
   const info = page.getByTestId('issue-info-open-boundaries');
+  await revealControl(page, info);
   await info.focus();
   await page.keyboard.press('Enter');
   await expect(info).toHaveAttribute('aria-expanded', 'true');
@@ -175,6 +173,7 @@ test('RUX02: the default view is concise; explanations and the full report are o
 
   await openAdvancedDiagnostics(page);
   await expect(advancedToggle).toHaveAttribute('aria-expanded', 'true');
+  await revealControl(page, page.getByTestId('health-topology'));
   await expect(page.getByTestId('health-topology')).toBeVisible();
   await expect(page.getByTestId('topo-nonmanifold-vertices')).toHaveText('12');
   await expect(page.getByTestId('repair-exclusions')).toBeVisible();
@@ -200,6 +199,7 @@ test('RUX03: a large model is described honestly — limits stated, nothing impl
     { timeout: 120_000 },
   );
   await expect(page.getByTestId('issue-detail-open-boundaries')).toContainText('complex');
+  await revealControl(page, page.getByTestId('hole-fill-size-limit'));
   await expect(page.getByTestId('hole-fill-size-limit')).toBeVisible();
   // REPAIR-CORE-06B: pinched vertices are what the local repair attempts.
   await expect(page.getByTestId('issue-status-non-manifold-vertices')).toHaveText(
@@ -225,7 +225,8 @@ test('RUX04: Repair model previews; Cancel discards; Apply commits; the result i
   await expect(triangles).toHaveText('259,227');
 
   // Repair model builds a validated candidate — it does not commit.
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 120_000 });
   await expect(page.getByTestId('repair-preview-ready')).toBeVisible();
   await expect(triangles).toHaveText('259,227');
@@ -237,9 +238,11 @@ test('RUX04: Repair model previews; Cancel discards; Apply commits; the result i
   await expect(triangles).toHaveText('259,227');
 
   // Apply commits the validated candidate.
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 120_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 120_000 });
   await expect(triangles).toHaveText('259,224');
   await expect(page.getByTestId('repair-applied-changes')).toContainText(

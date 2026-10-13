@@ -367,13 +367,12 @@ describe('workflow navigation', () => {
   it('describes Repair as safe automatic repair rather than as repairing everything', () => {
     renderApp();
 
-    const summary = screen.getByText(/Safe automatic repair: remove duplicate/);
+    const summary = screen.getByText('Check and fix common model issues.');
     expect(summary).toBeInTheDocument();
     // REPAIR-CORE-06B: Repair now separates pinched vertices and fills simple openings, so the
     // summary names them. It must still never promise more than that: no claim of a complete,
     // printable or guaranteed result, and the qualifier says each step is checked.
-    expect(summary.textContent).toMatch(/pinched vertices/);
-    expect(summary.textContent).toMatch(/only where each can be checked/);
+    expect(summary.textContent).toMatch(/common model issues/);
     expect(summary.textContent).not.toMatch(/everything|all issues|printable|watertight|perfect/i);
   });
 });
@@ -500,16 +499,15 @@ describe('status log', () => {
 
     fireEvent.click(screen.getByTestId('clear-status'));
 
-    expect(screen.getByTestId('status-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('status-list')).not.toBeInTheDocument();
   });
 
-  it('disables the clear control once the log is empty', () => {
+  it('omits an empty Activity log', () => {
     renderApp();
-
+    // jsdom cannot initialize WebGL; clearing that real diagnostic leaves an empty log.
     fireEvent.click(screen.getByTestId('clear-status'));
-
-    expect(screen.getByTestId('status-empty')).toBeInTheDocument();
-    expect(screen.getByTestId('clear-status')).toBeDisabled();
+    expect(screen.queryByTestId('status-list')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('clear-status')).not.toBeInTheDocument();
   });
 });
 

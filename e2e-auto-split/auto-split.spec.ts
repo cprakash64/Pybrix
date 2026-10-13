@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { expect, test, type Page, type Request } from '@playwright/test';
 import {
   carFused,
@@ -195,9 +196,9 @@ test('character: disclosure, six views and three numbers, a head suggestion, pre
   await expect(page.getByTestId('inspector')).toBeHidden();
 
   // Suggestions are rows with a status, never a number.
-  await expect(page.getByTestId('auto-row-status-head')).toHaveText('Suggested');
-  await expect(page.getByTestId('auto-row-status-left_arm')).toHaveText('Review cut');
-  await expect(page.getByTestId('auto-row-status-right_arm')).toHaveText('Review cut');
+  await expect(page.getByTestId('auto-row-status-head')).toHaveText('Suggested cut');
+  await expect(page.getByTestId('auto-row-status-left_arm')).toHaveText('Suggested cut');
+  await expect(page.getByTestId('auto-row-status-right_arm')).toHaveText('Suggested cut');
   await expect(page.getByTestId('auto-results')).not.toContainText('%');
 
   // READY IS NOT APPLIED: the model is exactly what was imported.
@@ -237,7 +238,7 @@ test('vehicle: separate wheels become components that preview, apply and undo', 
   await expect(wheel).toBeVisible();
   const testId = (await wheel.getAttribute('data-testid')) ?? '';
   const id = testId.replace('auto-row-', '');
-  await expect(page.getByTestId(`auto-row-status-${id}`)).toHaveText(/Suggested|Review selection/);
+  await expect(page.getByTestId(`auto-row-status-${id}`)).toHaveText(/Suggested cut/);
 
   // Highlight before preview: the eye draws the components on the model.
   await page.getByTestId(`auto-show-${id}`).click();
@@ -248,6 +249,7 @@ test('vehicle: separate wheels become components that preview, apply and undo', 
   );
 
   await previewAndApply(page, id);
+  await revealControl(page, page.getByTestId('split-piece-a'));
   await expect(page.getByTestId('split-piece-a')).toBeVisible();
   await page.getByTestId('split-undo').click();
   await expect(page.getByTestId('fact-triangles')).toHaveText(triangles.toLocaleString('en-US'), {
@@ -264,13 +266,15 @@ test('vehicle: a fused cab and bed is offered as one cut to review, and it previ
   await accept(page, 'vehicle');
   await findParts(page);
   await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByTestId('auto-row-status-cab_bed')).toHaveText('Review cut');
+  await expect(page.getByTestId('auto-row-status-cab_bed')).toHaveText('Suggested cut');
   await expect(page.getByTestId('auto-row-cab_bed')).toContainText('Beta');
   // Editing it is editing Manual Split's own plane.
+  await revealControl(page, page.getByTestId('auto-edit-cab_bed'));
   await page.getByTestId('auto-edit-cab_bed').click();
   await expect(page.getByTestId('split-position-slider')).toBeVisible();
   // A binary STL states no unit: analysis was allowed, and connectors stay locked until the person
   // chooses how to read the numbers.
+  await revealControl(page, page.getByTestId('split-connectors-unit'));
   await expect(page.getByTestId('split-connectors-unit')).toBeVisible();
   await expect(page.getByTestId('split-connector-pin')).toBeDisabled();
   await expect(page.getByTestId('split-connector-dovetail')).toBeDisabled();
@@ -291,7 +295,7 @@ test('wheels fused into a body are "No safe split found", with nothing to previe
   await findParts(page);
   await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
   await expect(page.locator('[data-testid^="auto-row-status-"]').first()).toHaveText(
-    'No safe split found',
+    'No separate part found',
   );
   await expect(page.locator('[data-testid^="auto-preview-"]').first()).toBeDisabled();
 });
@@ -454,7 +458,7 @@ test('keyboard only: type, disclosure, analysis and preview are all reachable, a
     'aria-label',
     /Show on model: Head/,
   );
-  await expect(page.getByTestId('auto-row-status-head')).toHaveText('Suggested');
+  await expect(page.getByTestId('auto-row-status-head')).toHaveText('Suggested cut');
   await expect(page.getByTestId('auto-preview-head')).toHaveAccessibleDescription(/clear match/i);
 
   await page.getByTestId('auto-preview-head').focus();
@@ -550,7 +554,7 @@ test('after an Apply, the list says its scope: the current part, not the rest of
   await expect(page.getByTestId('auto-stale')).toContainText(
     'Re-analyze looks only at the part now shown, not at the rest of the original model.',
   );
-  await expect(page.getByTestId('auto-reanalyze')).toHaveText('Re-analyze current part');
+  await expect(page.getByTestId('auto-reanalyze')).toHaveText('Find again');
   // The part named is the one now shown: a piece, not the original.
   await expect(page.getByTestId('auto-part')).toContainText('Part A');
 });

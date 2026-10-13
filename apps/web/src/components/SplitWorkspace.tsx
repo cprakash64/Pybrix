@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import {
   CONNECTOR_OPTIONS,
   PIN_COUNTS,
@@ -7,7 +7,6 @@ import {
   MAX_SPLIT_TILT_DEGREES,
   describeConnectorResult,
   describeCut,
-  describeExportParts,
   describePlaneName,
   describePositionLabel,
   describeRollLabel,
@@ -21,7 +20,6 @@ import {
   type SplitPieceView,
 } from '../state/split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
-import { WorkflowId } from '../state/workflows';
 import { useAutoSplitControls, useSplitControls } from '../state/workflow-controllers';
 import {
   SplitExportState,
@@ -30,8 +28,7 @@ import {
   type SplitControls,
 } from '../state/use-split-workflow';
 import { AutoSplitSections, SplitModeTabs } from './AutoSplitPanel';
-import { NotClosedCard, ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
-import { describeNotClosed } from '../state/split-readiness-presentation';
+import { ResourceRefusalCard, TooDetailedCard } from './SplitSizeNoticeCard';
 import { useOpenConvertWorkspace } from './shell/open-convert';
 import {
   ActionFooter,
@@ -66,62 +63,159 @@ export function SplitWorkspace(): ReactNode {
    * and acted on from the footer; when both lived in the footer the applied
    * state was 162 px tall inside a 140 px scroll area.
    */
+  const [editingPreview, setEditingPreview] = useState<SplitControls['preview']>(undefined);
+  const adjustCut = split.preview !== undefined && editingPreview === split.preview;
+  const [editingApplied, setEditingApplied] = useState<string | undefined>(undefined);
+  const splitAgain = split.applied !== undefined && editingApplied === split.applied.recordId;
+  const [connectorIntent, setConnectorIntent] = useState<
+    { readonly documentId: string | undefined; readonly kind: ConnectorKind } | undefined
+  >(undefined);
+  const pendingConnector =
+    connectorIntent?.documentId === model?.handle.documentId &&
+    connectorIntent !== undefined &&
+    connectorIntent.kind !== split.connector.kind
+      ? connectorIntent.kind
+      : 'none';
+  const setPendingConnector = (kind: ConnectorKind): void => {
+    setConnectorIntent({ documentId: model?.handle.documentId, kind });
+  };
+  const { connectorsAvailable, setConnector, connector } = split;
+  useEffect(() => {
+    if (pendingConnector !== 'none' && connectorsAvailable && connector.kind !== pendingConnector)
+      setConnector({ kind: pendingConnector });
+  }, [pendingConnector, connectorsAvailable, connector.kind, setConnector]);
   const [exportMode, setExportMode] = useState<ExportMode>('stl');
 
   return (
     <div className="convert-workspace split-workspace" data-testid="split-workspace">
       <div className="convert-workspace__sections">
-        <SplitModeTabs tab={auto.tab} onTab={auto.setTab} />
-        {model === undefined || split.part === undefined ? (
-          <PanelSection title={SPLIT_COPY.planeSection}>
-            <p className="panel__empty" data-testid="split-empty">
-              {SPLIT_COPY.noPart}
-            </p>
-          </PanelSection>
-        ) : auto.tab === 'manual' ? (
-          <div role="tabpanel" id="split-tabpanel-manual" aria-labelledby="split-tab-manual">
-            {split.sizeNotice === undefined ? null : (
-              <TooDetailedCard
-                tool="Manual Split"
-                notice={split.sizeNotice}
-                testId="split-too-detailed"
-              />
-            )}
-            <CutPlaneSection split={split} />
-            <ConnectorSection split={split} />
-            <ResultSection split={split} />
-            <ExportSection split={split} mode={exportMode} onMode={setExportMode} />
-          </div>
-        ) : (
-          <div role="tabpanel" id="split-tabpanel-auto" aria-labelledby="split-tab-auto">
-            <AutoSplitSections
-              auto={auto}
-              hasPart
-              onOpenManual={() => {
-                auto.setTab('manual');
-              }}
-              editor={
-                <>
-                  <CutPlaneSection split={split} />
-                  <ConnectorSection split={split} />
-                </>
+        {(split.preview === undefined && (split.applied === undefined || splitAgain)) ||
+        adjustCut ? (
+          <SplitModeTabs tab={auto.tab} onTab={auto.setTab} />
+        ) : null}
+        {split.preview !== undefined || (split.applied !== undefined && !splitAgain) ? (
+          <section className="workflow-intent" data-testid="split-intent">
+            <h2>{split.preview !== undefined ? 'Preview' : 'Split complete'}</h2>
+            <p
+              data-testid={
+                split.preview === undefined ? 'split-applied-label' : 'split-preview-label'
               }
-            />
-            <ResultSection split={split} />
-            <ExportSection split={split} mode={exportMode} onMode={setExportMode} />
-          </div>
-        )}
-        <SplitOutcome split={split} />
+            >
+              {split.preview !== undefined ? '2 pieces' : '2 pieces created.'}
+            </p>
+            {split.preview === undefined ? (
+              <button
+                type="button"
+                className="secondary-action"
+                data-testid="split-again"
+                onClick={() => {
+                  setEditingApplied(split.applied?.recordId);
+                  auto.setTab('manual');
+                }}
+              >
+                Split again
+              </button>
+            ) : null}
+            {split.preview !== undefined ? (
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => {
+                  setEditingPreview(adjustCut ? undefined : split.preview);
+                }}
+              >
+                Adjust cut
+              </button>
+            ) : null}
+          </section>
+        ) : null}
+        <div
+          hidden={
+            (split.preview !== undefined || (split.applied !== undefined && !splitAgain)) &&
+            !adjustCut
+          }
+        >
+          {model === undefined || split.part === undefined ? (
+            <PanelSection title={SPLIT_COPY.planeSection}>
+              <p className="panel__empty" data-testid="split-empty">
+                {SPLIT_COPY.noPart}
+              </p>
+            </PanelSection>
+          ) : auto.tab === 'manual' ? (
+            <div role="tabpanel" id="split-tabpanel-manual" aria-labelledby="split-tab-manual">
+              {split.sizeNotice === undefined ? null : (
+                <TooDetailedCard
+                  tool="Manual Split"
+                  notice={split.sizeNotice}
+                  testId="split-too-detailed"
+                />
+              )}
+              <CutPlaneSection split={split} />
+              <ConnectorSection
+                split={split}
+                pending={pendingConnector}
+                onPending={setPendingConnector}
+              />
+            </div>
+          ) : (
+            <div role="tabpanel" id="split-tabpanel-auto" aria-labelledby="split-tab-auto">
+              <AutoSplitSections
+                auto={auto}
+                hasPart
+                onOpenManual={() => {
+                  auto.setTab('manual');
+                }}
+                editor={
+                  <>
+                    <CutPlaneSection split={split} />
+                    <ConnectorSection
+                      split={split}
+                      pending={pendingConnector}
+                      onPending={setPendingConnector}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      data-testid="auto-preview-adjusted"
+                      disabled={
+                        busy(split) || auto.footerBlock !== undefined || pendingConnector !== 'none'
+                      }
+                      onClick={split.updatePreview}
+                    >
+                      Preview adjusted cut
+                    </button>
+                  </>
+                }
+              />
+            </div>
+          )}
+        </div>
+        <PanelSection title="Details" defaultOpen={false} testId="split-details">
+          <ResultSection split={split} />
+          <ExportSection split={split} mode={exportMode} onMode={setExportMode} />
+        </PanelSection>
+        {auto.tab === 'manual' ||
+        (auto.hasResult && auto.selected !== undefined && !split.errorIsResourceLimit) ||
+        split.exportState === SplitExportState.Failed ? (
+          <SplitOutcome split={split} autoMode={auto.tab === 'auto'} />
+        ) : null}
       </div>
       <SplitFooter
         split={split}
+        splitAgain={splitAgain}
+        onEndSplitAgain={() => {
+          setEditingApplied(undefined);
+        }}
+        hideIdle={auto.tab === 'auto'}
         exportMode={exportMode}
         previewBlock={
-          auto.tab === 'auto'
-            ? auto.footerBlock
-            : split.sizeNotice === undefined
-              ? undefined
-              : SPLIT_COPY.tooDetailedHint
+          pendingConnector !== 'none'
+            ? 'Choose model units to add the connector.'
+            : auto.tab === 'auto'
+              ? auto.footerBlock
+              : split.sizeNotice === undefined
+                ? undefined
+                : SPLIT_COPY.tooDetailedHint
         }
         {...(auto.tab === 'auto' && auto.busy && auto.cancellable
           ? { onCancelAnalysis: auto.cancel }
@@ -157,13 +251,9 @@ function CutPlaneSection({ split }: { readonly split: SplitControls }): ReactNod
   }));
 
   return (
-    <PanelSection
-      title={SPLIT_COPY.planeSection}
-      meta={describePlaneName(axis)}
-      testId="split-plane-section"
-    >
+    <PanelSection title={SPLIT_COPY.planeSection} testId="split-plane-section">
       <p className="convert-workspace__note" data-testid="split-part">
-        Cutting <strong className="split-workspace__part">{part.name ?? part.partId}</strong>
+        Move the plane to where you want the model separated.
       </p>
       <SegmentedControl
         label={SPLIT_COPY.planeGroup}
@@ -199,80 +289,81 @@ function CutPlaneSection({ split }: { readonly split: SplitControls }): ReactNod
             }}
             data-testid="split-position-slider"
           />
-          <NumberField
-            label={`${describePositionLabel(axis)} value`}
-            value={split.offset}
-            min={split.range.min}
-            max={split.range.max}
-            step={step}
-            {...suffixProp}
-            disabled={disabled}
-            onCommit={split.setOffset}
-            testId="split-position-value"
-          />
         </div>
       </div>
-
-      <div className="split-field split-field--inline">
-        <label className="format-options__label" htmlFor={tiltId}>
-          {describeTiltLabel(axis)}
-        </label>
+      <PanelSection title="Advanced" defaultOpen={false} testId="split-advanced">
         <NumberField
-          id={tiltId}
-          label={`${describeTiltLabel(axis)}, degrees`}
-          value={split.plane.tilt}
-          min={-MAX_SPLIT_TILT_DEGREES}
-          max={MAX_SPLIT_TILT_DEGREES}
-          step={1}
-          suffix="°"
+          label={`${describePositionLabel(axis)} value`}
+          value={split.offset}
+          min={split.range.min}
+          max={split.range.max}
+          step={step}
+          {...suffixProp}
           disabled={disabled}
-          onCommit={split.setTilt}
-          testId="split-tilt"
+          onCommit={split.setOffset}
+          testId="split-position-value"
         />
-      </div>
 
-      <div className="split-field split-field--inline">
-        <label className="format-options__label" htmlFor={rollId}>
-          {describeRollLabel(axis)}
-        </label>
-        <NumberField
-          id={rollId}
-          label={`${describeRollLabel(axis)}, degrees`}
-          value={split.plane.roll}
-          min={-MAX_SPLIT_TILT_DEGREES}
-          max={MAX_SPLIT_TILT_DEGREES}
-          step={1}
-          suffix="°"
-          disabled={disabled}
-          onCommit={split.setRoll}
-          testId="split-roll"
-        />
-      </div>
+        <div className="split-field split-field--inline">
+          <label className="format-options__label" htmlFor={tiltId}>
+            {describeTiltLabel(axis)}
+          </label>
+          <NumberField
+            id={tiltId}
+            label={`${describeTiltLabel(axis)}, degrees`}
+            value={split.plane.tilt}
+            min={-MAX_SPLIT_TILT_DEGREES}
+            max={MAX_SPLIT_TILT_DEGREES}
+            step={1}
+            suffix="°"
+            disabled={disabled}
+            onCommit={split.setTilt}
+            testId="split-tilt"
+          />
+        </div>
 
-      <div className="split-workspace__plane-actions">
-        <button
-          type="button"
-          className="secondary-action split-workspace__reset"
-          onClick={split.resetPlane}
-          disabled={disabled}
-          data-testid="split-reset-plane"
-        >
-          <Icon name="home" size={14} />
-          {SPLIT_COPY.resetPlane}
-        </button>
-        <button
-          type="button"
-          className="secondary-action split-workspace__flip"
-          onClick={split.flipPlane}
-          disabled={disabled}
-          aria-pressed={split.plane.flipped}
-          title={SPLIT_COPY.flipHint}
-          data-testid="split-flip-plane"
-        >
-          {SPLIT_COPY.flipPlane}
-        </button>
-      </div>
-      <p className="convert-workspace__note">{SPLIT_COPY.oneCut}</p>
+        <div className="split-field split-field--inline">
+          <label className="format-options__label" htmlFor={rollId}>
+            {describeRollLabel(axis)}
+          </label>
+          <NumberField
+            id={rollId}
+            label={`${describeRollLabel(axis)}, degrees`}
+            value={split.plane.roll}
+            min={-MAX_SPLIT_TILT_DEGREES}
+            max={MAX_SPLIT_TILT_DEGREES}
+            step={1}
+            suffix="°"
+            disabled={disabled}
+            onCommit={split.setRoll}
+            testId="split-roll"
+          />
+        </div>
+
+        <div className="split-workspace__plane-actions">
+          <button
+            type="button"
+            className="secondary-action split-workspace__reset"
+            onClick={split.resetPlane}
+            disabled={disabled}
+            data-testid="split-reset-plane"
+          >
+            <Icon name="home" size={14} />
+            {SPLIT_COPY.resetPlane}
+          </button>
+          <button
+            type="button"
+            className="secondary-action split-workspace__flip"
+            onClick={split.flipPlane}
+            disabled={disabled}
+            aria-pressed={split.plane.flipped}
+            title={SPLIT_COPY.flipHint}
+            data-testid="split-flip-plane"
+          >
+            {SPLIT_COPY.flipPlane}
+          </button>
+        </div>
+      </PanelSection>
     </PanelSection>
   );
 }
@@ -285,20 +376,30 @@ const PIECE_VIEW_OPTIONS: readonly SegmentedOption<SplitPieceView>[] = [
 
 /* ------------------------------------------------------------ connectors -- */
 
-function ConnectorSection({ split }: { readonly split: SplitControls }): ReactNode {
+function ConnectorSection({
+  split,
+  pending,
+  onPending,
+}: {
+  readonly split: SplitControls;
+  readonly pending: ConnectorKind;
+  readonly onPending: (kind: ConnectorKind) => void;
+}): ReactNode {
   const noteId = useId();
   const disabled = busy(split);
   const connector = split.connector;
   return (
     <PanelSection
-      title={SPLIT_COPY.connectorsSection}
-      meta={SPLIT_COPY.connectorsMeta}
+      title={split.connector.kind === 'none' ? 'Connector · None' : 'Connector'}
+      defaultOpen={false}
       testId="split-connectors"
     >
-      <UnitInterpretationPrompt
-        reason="Connector sizes are physical, so Pybrix needs to know what this model’s numbers mean."
-        testId="split-unit-interpretation"
-      />
+      {connector.kind === 'none' && pending === 'none' ? null : (
+        <UnitInterpretationPrompt
+          reason="Connector sizes are physical, so Pybrix needs to know what this model’s numbers mean."
+          testId="split-unit-interpretation"
+        />
+      )}
       <div
         className="connector-grid"
         role="radiogroup"
@@ -307,7 +408,7 @@ function ConnectorSection({ split }: { readonly split: SplitControls }): ReactNo
       >
         {CONNECTOR_OPTIONS.map((option) => {
           const unavailable = option.kind !== 'none' && !split.connectorsAvailable;
-          const selected = connector.kind === option.kind;
+          const selected = (pending === 'none' ? connector.kind : pending) === option.kind;
           return (
             <label
               key={option.kind}
@@ -321,9 +422,14 @@ function ConnectorSection({ split }: { readonly split: SplitControls }): ReactNo
                 className="format-card__input"
                 value={option.kind}
                 checked={selected}
-                disabled={disabled || unavailable}
+                disabled={disabled}
                 aria-label={`${option.name}, ${option.detail.toLowerCase()}`}
                 onChange={() => {
+                  if (unavailable) {
+                    onPending(option.kind);
+                    return;
+                  }
+                  onPending('none');
                   split.setConnector({ kind: option.kind });
                 }}
                 data-testid={`split-connector-${option.kind}`}
@@ -340,15 +446,15 @@ function ConnectorSection({ split }: { readonly split: SplitControls }): ReactNo
           );
         })}
       </div>
-      {split.connectorsAvailable ? null : (
+      {split.connectorsAvailable || (connector.kind === 'none' && pending === 'none') ? null : (
         <p className="convert-workspace__caution" id={noteId} data-testid="split-connectors-unit">
           {SPLIT_COPY.connectorsNeedMillimetres}
         </p>
       )}
+      <p className="convert-workspace__note">{SPLIT_COPY.placementNote}</p>
       {connector.kind === 'none' ? null : (
         <ConnectorParameters split={split} connector={connector} disabled={disabled} />
       )}
-      <p className="convert-workspace__note">{SPLIT_COPY.placementNote}</p>
     </PanelSection>
   );
 }
@@ -596,8 +702,8 @@ function ResultSection({ split }: { readonly split: SplitControls }): ReactNode 
     >
       {preview === undefined ? null : (
         <>
-          <p className="split-result__badge" data-testid="split-preview-label">
-            {SPLIT_COPY.previewLabel}
+          <p className="split-result__badge" data-testid="split-preview-detail-label">
+            Preview details
           </p>
           <SegmentedControl
             label={SPLIT_COPY.viewGroup}
@@ -615,7 +721,7 @@ function ResultSection({ split }: { readonly split: SplitControls }): ReactNode 
           </dt>
           <dd className="property-row__value property-row__value--mono" data-testid="split-piece-a">
             {triangles(aId)} triangles
-            {metrics === undefined
+            {metrics === undefined || metrics.volumeInterpretable === false
               ? ''
               : ` · ${formatVolume(metrics.pieceAFinalVolume, split.unit)}`}
           </dd>
@@ -627,7 +733,7 @@ function ResultSection({ split }: { readonly split: SplitControls }): ReactNode 
           </dt>
           <dd className="property-row__value property-row__value--mono" data-testid="split-piece-b">
             {triangles(bId)} triangles
-            {metrics === undefined
+            {metrics === undefined || metrics.volumeInterpretable === false
               ? ''
               : ` · ${formatVolume(metrics.pieceBFinalVolume, split.unit)}`}
           </dd>
@@ -646,12 +752,14 @@ function ResultSection({ split }: { readonly split: SplitControls }): ReactNode 
                 {SPLIT_COPY.piecesValidated}
               </dd>
             </div>
-            <div className="property-row">
-              <dt className="property-row__label">Volume check</dt>
-              <dd className="property-row__value property-row__value--mono">
-                {(preview.metrics.volumeRelativeError * 100).toFixed(5)}% difference
-              </dd>
-            </div>
+            {preview.metrics.volumeInterpretable === false ? null : (
+              <div className="property-row">
+                <dt className="property-row__label">Volume check</dt>
+                <dd className="property-row__value property-row__value--mono">
+                  {(preview.metrics.volumeRelativeError * 100).toFixed(5)}% difference
+                </dd>
+              </div>
+            )}
           </>
         )}
       </dl>
@@ -717,29 +825,36 @@ function ExportSection({
 /* --------------------------------------------------------------- outcome -- */
 
 /** Every failure in full, at the end of the scrolling content. */
-function SplitOutcome({ split }: { readonly split: SplitControls }): ReactNode {
-  const store = useWorkspaceStore();
-  const openRepair = (): void => {
-    store.selectWorkflow(WorkflowId.Repair);
-  };
+function SplitOutcome({
+  split,
+  autoMode,
+}: {
+  readonly split: SplitControls;
+  readonly autoMode: boolean;
+}): ReactNode {
   const exportFailure =
     split.exportState === SplitExportState.Failed ? split.exportMessage : undefined;
   const key = [split.error, exportFailure].filter((message) => message !== undefined).join('|');
   return (
     <WorkspaceOutcome revealKey={key === '' ? undefined : key}>
-      {split.error === undefined ? null : split.sourceNotClosed !== undefined ? (
-        // A fact about the file, not a failure: a status with Repair as the next step, never a retry.
-        <NotClosedCard
-          copy={describeNotClosed(split.sourceNotClosed)}
-          onRepair={openRepair}
-          testId="split-not-closed"
-          actionTestId="split-repair-model"
-        />
-      ) : split.errorIsResourceLimit ? (
-        // A limit the worker enforces is a decision with a reason, not a defect: a status, not an alert.
+      {split.error === undefined ? null : split.errorIsResourceLimit ? (
         <ResourceRefusalCard testId="split-resource-limit" />
+      ) : split.errorIsOperationFailure ? (
+        <OutcomeAlert testId="split-error">
+          Split could not be completed. Your model is unchanged.
+          <PanelSection title="Details" defaultOpen={false}>
+            <p>{split.error}</p>
+          </PanelSection>
+        </OutcomeAlert>
       ) : (
-        <OutcomeAlert testId="split-error">{split.error} The model is unchanged.</OutcomeAlert>
+        <section className="workflow-limitation" role="status" data-testid="split-error">
+          <div data-testid={autoMode ? 'auto-unsafe' : undefined}>
+            <p>This cut can't be made safely.</p> <p>Try moving the cut or choose another part.</p>
+          </div>
+          <PanelSection title="Details" defaultOpen={false}>
+            <p>{split.error}</p>
+          </PanelSection>
+        </section>
       )}
       {exportFailure === undefined ? null : (
         <OutcomeAlert testId="split-export-failure">{exportFailure}</OutcomeAlert>
@@ -761,9 +876,15 @@ function SplitFooter({
   exportMode,
   previewBlock,
   onCancelAnalysis,
+  hideIdle,
+  splitAgain,
+  onEndSplitAgain,
 }: {
   readonly split: SplitControls;
   readonly exportMode: ExportMode;
+  readonly hideIdle: boolean;
+  readonly splitAgain: boolean;
+  readonly onEndSplitAgain: () => void;
   /** While an Auto Split analysis runs, the footer's Cancel cancels THAT, not the whole split. */
   readonly onCancelAnalysis?: () => void;
   /** Why Preview cannot be asked for in the Auto Split tab, or undefined. Never blocks Apply or Undo. */
@@ -798,7 +919,7 @@ function SplitFooter({
     split.phase === SplitPhase.Applying ||
     split.phase === SplitPhase.Undoing;
   const failureLine =
-    split.error !== undefined && !split.errorIsResourceLimit && split.sourceNotClosed === undefined
+    split.error !== undefined && split.errorIsOperationFailure === true
       ? SPLIT_COPY.failedLine
       : split.exportState === SplitExportState.Failed && split.exportMessage !== undefined
         ? SPLIT_COPY.exportFailedLine
@@ -820,116 +941,130 @@ function SplitFooter({
 
   return (
     <ActionFooter testId="split-footer" className="split-footer">
-      <div className="convert-footer__status" aria-live="polite">
-        {line}
-      </div>
+      <div
+        hidden={
+          (hideIdle || previewBlock !== undefined) &&
+          !working &&
+          split.phase === SplitPhase.Idle &&
+          applied === undefined
+        }
+      >
+        <div className="convert-footer__status" aria-live="polite">
+          {line}
+        </div>
 
-      {applied !== undefined &&
-      (split.phase === SplitPhase.Idle || split.phase === SplitPhase.Undoing) ? (
-        <div className="convert-footer__actions">
-          <button
-            type="button"
-            className="secondary-action convert-footer__cancel"
-            disabled={working}
-            aria-busy={split.phase === SplitPhase.Undoing}
-            onClick={split.undo}
-            data-testid="split-undo"
-          >
-            {SPLIT_COPY.undoButton}
-          </button>
-          <button
-            type="button"
-            className="primary-action convert-footer__primary"
-            disabled={working || !piecesPresent || split.exportState === SplitExportState.Exporting}
-            aria-busy={split.exportState === SplitExportState.Exporting}
-            onClick={() => {
-              if (exportMode === 'stl') {
-                split.exportPieces();
-                return;
+        {applied !== undefined &&
+        !splitAgain &&
+        (split.phase === SplitPhase.Idle || split.phase === SplitPhase.Undoing) ? (
+          <div className="convert-footer__actions">
+            <button
+              type="button"
+              className="secondary-action convert-footer__cancel"
+              disabled={working}
+              aria-busy={split.phase === SplitPhase.Undoing}
+              onClick={split.undo}
+              data-testid="split-undo"
+            >
+              {SPLIT_COPY.undoButton}
+            </button>
+            <button
+              type="button"
+              className="primary-action convert-footer__primary"
+              disabled={
+                working || !piecesPresent || split.exportState === SplitExportState.Exporting
               }
-              store.setConversionTarget('3mf');
-              openConvert();
-            }}
-            data-testid="split-export"
-          >
-            <Icon name="download" size={16} />
-            <span>
-              {exportMode === 'stl' ? describeExportParts(2) : SPLIT_COPY.exportThreeMfAction}
-            </span>
-          </button>
-        </div>
-      ) : (
-        <div className="convert-footer__actions">
-          <button
-            type="button"
-            className="secondary-action convert-footer__cancel"
-            disabled={split.phase === SplitPhase.Applying}
-            onClick={
-              onCancelAnalysis ??
-              (split.phase === SplitPhase.Preview ? split.discardPreview : split.cancel)
-            }
-            data-testid={
-              onCancelAnalysis
-                ? 'split-cancel-analysis'
-                : split.phase === SplitPhase.Preview
-                  ? 'split-discard'
-                  : 'split-cancel'
-            }
-          >
-            {onCancelAnalysis
-              ? 'Cancel analysis'
-              : split.phase === SplitPhase.Preview
-                ? SPLIT_COPY.discardButton
-                : SPLIT_COPY.cancelButton}
-          </button>
-          {split.phase === SplitPhase.Preview || split.phase === SplitPhase.Applying ? (
+              aria-busy={split.exportState === SplitExportState.Exporting}
+              onClick={() => {
+                if (exportMode === 'stl') {
+                  split.exportPieces();
+                  return;
+                }
+                store.setConversionTarget('3mf');
+                openConvert();
+              }}
+              data-testid="split-export"
+            >
+              <Icon name="download" size={16} />
+              <span>{exportMode === 'stl' ? 'Export pieces' : SPLIT_COPY.exportThreeMfAction}</span>
+            </button>
+          </div>
+        ) : (
+          <div className="convert-footer__actions">
             <button
               type="button"
-              className="primary-action convert-footer__primary"
+              className="secondary-action convert-footer__cancel"
               disabled={split.phase === SplitPhase.Applying}
-              aria-busy={split.phase === SplitPhase.Applying}
-              onClick={split.apply}
-              data-testid="split-apply"
+              onClick={
+                onCancelAnalysis ??
+                (split.phase === SplitPhase.Preview
+                  ? split.discardPreview
+                  : splitAgain && split.phase === SplitPhase.Idle
+                    ? onEndSplitAgain
+                    : split.cancel)
+              }
+              data-testid={
+                onCancelAnalysis
+                  ? 'split-cancel-analysis'
+                  : split.phase === SplitPhase.Preview
+                    ? 'split-discard'
+                    : 'split-cancel'
+              }
             >
-              <Icon name="ok" size={16} />
-              <span>{SPLIT_COPY.applyButton}</span>
+              {onCancelAnalysis
+                ? 'Cancel analysis'
+                : split.phase === SplitPhase.Preview
+                  ? SPLIT_COPY.discardButton
+                  : SPLIT_COPY.cancelButton}
             </button>
-          ) : (
-            <button
-              type="button"
-              className="primary-action convert-footer__primary"
-              disabled={!hasPart || connectorBlocked || previewBlocked || working}
-              aria-busy={working}
-              {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
-              onClick={split.updatePreview}
-              data-testid="split-preview"
-            >
-              <Icon name="split" size={16} />
-              <span>{working ? 'Computing…' : SPLIT_COPY.previewButton}</span>
-            </button>
-          )}
-        </div>
-      )}
-      {hint === undefined ? null : (
-        <p
-          // ONE LINE AT A TIME: drawn only when nothing else occupies the region.
-          className={line === undefined ? 'convert-footer__hint' : 'visually-hidden'}
-          id={hintId}
-          title={hint}
-          data-testid="split-unavailable"
-        >
-          {hint}
-        </p>
-      )}
-      {model !== undefined && split.part !== undefined ? (
-        <p className="visually-hidden" aria-live="polite" data-testid="split-announce">
-          {split.phase === SplitPhase.Preview
-            ? `Preview ready. ${describeCut(split.plane, split.offset, split.unit)}.`
-            : applied !== undefined
-              ? 'Split applied. Piece A and Piece B are separate parts.'
-              : ''}
-        </p>
-      ) : null}
+            {split.phase === SplitPhase.Preview || split.phase === SplitPhase.Applying ? (
+              <button
+                type="button"
+                className="primary-action convert-footer__primary"
+                disabled={split.phase === SplitPhase.Applying}
+                aria-busy={split.phase === SplitPhase.Applying}
+                onClick={split.apply}
+                data-testid="split-apply"
+              >
+                <Icon name="ok" size={16} />
+                <span>{SPLIT_COPY.applyButton}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary-action convert-footer__primary"
+                disabled={!hasPart || connectorBlocked || previewBlocked || working}
+                aria-busy={working}
+                {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
+                onClick={split.updatePreview}
+                data-testid="split-preview"
+              >
+                <Icon name="split" size={16} />
+                <span>{working ? 'Computing…' : SPLIT_COPY.previewButton}</span>
+              </button>
+            )}
+          </div>
+        )}
+        {hint === undefined ? null : (
+          <p
+            // ONE LINE AT A TIME: drawn only when nothing else occupies the region.
+            className={line === undefined ? 'convert-footer__hint' : 'visually-hidden'}
+            id={hintId}
+            title={hint}
+            data-testid="split-unavailable"
+          >
+            {hint}
+          </p>
+        )}
+        {model !== undefined && split.part !== undefined ? (
+          <p className="visually-hidden" aria-live="polite" data-testid="split-announce">
+            {split.phase === SplitPhase.Preview
+              ? `Preview ready. ${describeCut(split.plane, split.offset, split.unit)}.`
+              : applied !== undefined
+                ? 'Split applied. Piece A and Piece B are separate parts.'
+                : ''}
+          </p>
+        ) : null}
+      </div>
     </ActionFooter>
   );
 }

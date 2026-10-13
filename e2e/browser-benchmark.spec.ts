@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { analysisHeavyStl } from './stl-fixtures';
 import { openInspector } from './inspector';
@@ -80,6 +81,7 @@ test.describe('browser benchmark', () => {
       );
       const firstVisibleMs = Date.now() - startedAt;
 
+      await revealControl(page, page.getByTestId('issue-list'));
       await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 300_000 });
       const healthReadyMs = Date.now() - startedAt;
 

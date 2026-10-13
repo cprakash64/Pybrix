@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test } from '@playwright/test';
 import { enter, inWindow, openBox, openDefects, selectFace, watchErrors } from './ui-fixtures';
 import { openInspector } from './inspector';
@@ -49,6 +50,7 @@ test('I-02: the inspector leads with the workspace’s context, in view without 
 
   await openDefects(page);
   await expect(titles).toHaveText(['Selection', 'Model', 'Export', 'Runtime']);
+  await revealControl(page, page.getByTestId('issue-row-winding-conflicts'));
   await page.getByTestId('issue-row-winding-conflicts').click();
   const body = page.locator('.inspector__body');
   // No scroll was needed to reach it, and none happened.
@@ -187,7 +189,8 @@ test('I-08: legacy and workspace secondary buttons are one control', async ({ pa
   await page.goto('/');
   await openDefects(page);
   // The Repair workspace's secondary action: Cancel preview, beside Apply.
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   const legacy = page.getByTestId('discard-preview');
   await expect(legacy).toBeVisible({ timeout: 60_000 });
   await openInspector(page);

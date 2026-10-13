@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { enter, openBox, openDefects } from './ui-fixtures';
 import { openInspector } from './inspector';
@@ -111,11 +112,14 @@ test('leaving the page asks first only while applied work is unexported', async 
 
   // Apply a real repair.
   await openDefects(page);
+  await revealControl(page, page.getByTestId('issue-row-degenerate-faces'));
   await page.getByTestId('issue-row-degenerate-faces').click();
   await openInspector(page);
+  await revealControl(page, page.getByTestId('issue-preview-repair'));
   await page.getByTestId('issue-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
 
   // Now leaving would discard it, so the page asks...
@@ -156,14 +160,19 @@ test('at 200% browser zoom the critical controls stay usable', async ({ browser 
     await page.getByTestId(`workspace-option-${id}`).click();
     if ((await page.locator('.app').getAttribute('data-tool-drawer')) !== 'open')
       await page.getByTestId('toggle-tool-drawer').click();
-    const primary = page.getByTestId(
-      {
-        repair: 'preview-repair',
-        convert: 'convert-export',
-        split: 'split-preview',
-        texture: 'texture-generate',
-      }[id],
-    );
+    const primary =
+      id === 'repair'
+        ? page.locator(
+            '[data-testid=preview-repair]:visible, [data-testid=repair-continue]:visible',
+          )
+        : page.getByTestId(
+            {
+              repair: 'preview-repair',
+              convert: 'convert-export',
+              split: 'split-preview',
+              texture: 'texture-generate',
+            }[id],
+          );
     await primary.scrollIntoViewIfNeeded();
     const box = await primary.boundingBox();
     expect(box, id).not.toBeNull();

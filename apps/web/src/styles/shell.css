@@ -4791,3 +4791,81 @@
   color: var(--cad-text-strong);
   overflow-wrap: anywhere;
 }
+
+/* Intent first; disclosure bodies retain their operation owners. */
+.workflow-intent {
+  padding: 1.25rem 1rem;
+}
+.workflow-intent h2 {
+  margin: 0 0 0.75rem;
+  color: var(--cad-text-strong);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+.workflow-intent p {
+  margin: 0 0 1.25rem;
+  color: var(--cad-text-muted);
+  line-height: 1.6;
+}
+.workflow-intent button {
+  margin: 0 0.5rem 0.5rem 0;
+}
+.workflow-limitation {
+  padding: 1rem;
+  color: var(--cad-text-muted);
+  line-height: 1.6;
+}
+.activity-disclosure > summary {
+  padding: 0.75rem 1rem;
+  color: var(--cad-text-muted);
+  cursor: pointer;
+}
+.activity-disclosure > summary:focus-visible {
+  outline: 2px solid var(--cad-accent);
+  outline-offset: -3px;
+}
+.split-workspace .auto-row {
+  border: 0;
+  border-bottom: 1px solid var(--cad-border-subtle);
+  border-radius: 0;
+  background: transparent;
+  padding: 1rem 0;
+}
+.split-workspace .auto-row__status {
+  color: var(--cad-text-muted);
+}
+.split-workspace .auto-row__name {
+  font-size: 0.9375rem;
+}
+.split-workspace .split-field__range {
+  display: none;
+}
+.repair-workspace .issue-row__icon,
+.repair-workspace .issue-row__count,
+.repair-workspace .health-summary {
+  color: var(--cad-text-muted);
+}
+.repair-workspace .issue-row__count {
+  font-family: var(--font-body);
+  font-weight: 500;
+}
+.action-footer[hidden] {
+  display: none;
+}
+.repair-workspace .workspace-outcome__alert,
+.split-workspace .workspace-outcome__alert {
+  border-left-color: var(--cad-warning);
+  background: var(--cad-control-raised);
+}
+.split-hud__disclosure > summary {
+  color: var(--cad-text-strong);
+  cursor: pointer;
+  font-size: var(--fs-secondary);
+}
+.split-hud__disclosure > summary:focus-visible {
+  outline: 2px solid var(--cad-accent);
+  outline-offset: 3px;
+}
+.split-hud__disclosure[open] .split-hud__lines {
+  margin-top: 0.5rem;
+}

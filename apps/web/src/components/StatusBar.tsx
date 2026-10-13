@@ -42,16 +42,16 @@ export function StatusBar(): ReactNode {
       ? undefined
       : summary.tone === 'neutral'
         ? {
-            text: analysing ? 'Checking topology' : 'Not analysed',
+            text: 'Model details',
             tooltip: summary.qualifier,
             tone: 'neutral',
             icon: 'info',
           }
         : {
-            text: summary.text,
+            text: 'Model details',
             tooltip: summary.qualifier,
-            tone: summary.tone,
-            icon: summary.tone === 'ok' ? 'ok' : summary.tone === 'error' ? 'error' : 'alert',
+            tone: 'neutral',
+            icon: 'info',
           };
 
   return (
@@ -70,7 +70,7 @@ export function StatusBar(): ReactNode {
             <span className="statusbar__spinner" aria-hidden="true">
               <Icon name="loader" size={13} />
             </span>
-            <span className="statusbar__job-label">Analyzing topology</span>
+            <span className="statusbar__job-label">Checking model…</span>
           </>
         ) : (
           <>

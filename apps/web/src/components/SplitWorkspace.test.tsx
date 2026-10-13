@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
 import type {
   DocumentHandle,
@@ -227,6 +227,9 @@ describe('connectors', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
+    fireEvent.click(
+      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
+    );
     const group = screen.getByRole('radiogroup', { name: 'Connector type' });
     const radios = [...group.querySelectorAll('input[type="radio"]')];
     expect(radios).toHaveLength(3);
@@ -238,8 +241,11 @@ describe('connectors', () => {
     mount((store) => {
       load(store, undefined);
     });
-    expect(screen.getByTestId('split-connector-pin')).toBeDisabled();
-    expect(screen.getByTestId('split-connector-dovetail')).toBeDisabled();
+    expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
+    expect(screen.getByTestId('split-connector-dovetail')).toBeEnabled();
+    expect(screen.queryByTestId('split-unit-interpretation')).toBeNull();
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    expect(screen.getByTestId('split-preview')).toBeDisabled();
     expect(screen.getByTestId('split-connector-none')).toBeEnabled();
     expect(screen.getByTestId('split-connectors-unit')).toHaveTextContent('Choose its units');
     // Nothing is preselected: no radio is checked until the user chooses.
@@ -251,6 +257,7 @@ describe('connectors', () => {
     mount((store) => {
       load(store, undefined);
     });
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
     fireEvent.click(screen.getByTestId('split-unit-interpretation-inch'));
     expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
     expect(screen.getByTestId('split-unit-interpretation-inch')).toBeChecked();
@@ -269,6 +276,9 @@ describe('connectors', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
+    fireEvent.click(
+      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
+    );
     fireEvent.click(screen.getByTestId('split-connector-pin'));
     expect(screen.getByLabelText('Clearance, per side, millimetres')).toHaveValue(0.2);
     expect(screen.getByTestId('split-socket-size')).toHaveTextContent(
@@ -282,6 +292,9 @@ describe('connectors', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
+    fireEvent.click(
+      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
+    );
     fireEvent.click(screen.getByTestId('split-connector-dovetail'));
     expect(screen.getByTestId('split-slot-size')).toHaveTextContent('Slot 8.4 × 12.4 mm');
     expect(screen.getByRole('group', { name: 'Dovetail orientation' })).toBeInTheDocument();
@@ -291,6 +304,9 @@ describe('connectors', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
+    fireEvent.click(
+      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
+    );
     fireEvent.click(screen.getByTestId('split-connector-pin'));
     fireEvent.change(screen.getByTestId('split-pin-diameter'), { target: { value: '0' } });
     expect(screen.getByTestId('split-connector-problem')).toHaveTextContent('Pin diameter');

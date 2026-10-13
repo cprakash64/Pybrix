@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { gridForTriangles, holedCubeStl } from '../scripts/boundary-fill-fixture.mjs';
 import { canvas, enter, openBox, pick } from './ui-fixtures';
@@ -249,7 +250,8 @@ for (const viewport of VIEWPORTS) {
     ]);
 
     // PREVIEW, then CANCELLED: discarding returns to the same usable state.
-    await page.getByTestId('preview-repair').click();
+    await revealControl(page, page.getByTestId('advanced-preview-repair'));
+    await page.getByTestId('advanced-preview-repair').click();
     await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
     await expectState(page, 'repair/preview', 'repair-footer', [
       'issue-status-open-boundaries',
@@ -269,7 +271,8 @@ for (const viewport of VIEWPORTS) {
     ]);
 
     // APPLIED: the result is content, and everything above it still scrolls.
-    await page.getByTestId('preview-repair').click();
+    await revealControl(page, page.getByTestId('advanced-preview-repair'));
+    await page.getByTestId('advanced-preview-repair').click();
     await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
     await page.getByTestId('apply-repair').click();
     // The fresh analysis of the NEW revision settles the card (a complete repair has no
@@ -328,6 +331,7 @@ for (const viewport of VIEWPORTS) {
 
     // CONFIGURED: a connector with its own parameters.
     await page.getByTestId('split-connector-pin').scrollIntoViewIfNeeded();
+    await revealControl(page, page.getByTestId('split-connector-pin'));
     await page.getByTestId('split-connector-pin').check({ force: true });
     await expectState(page, 'split/configured', 'split-footer', [
       'split-position-slider',

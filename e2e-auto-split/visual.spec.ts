@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -116,6 +117,7 @@ for (const size of SIZES) {
     await page.getByTestId('auto-analyze').click();
     await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
     await shot(page, size.name, '07-human-suggestions');
+    await revealControl(page, page.getByTestId('auto-edit-left_arm'));
     await page.getByTestId('auto-edit-left_arm').click();
     await shot(page, size.name, '08-plane-edit');
     await page.getByTestId('auto-preview-head').click();
@@ -182,6 +184,7 @@ for (const size of SIZES) {
     await page.getByTestId('auto-disclosure-continue').click();
     await page.getByTestId('auto-analyze').click();
     await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+    await revealControl(page, page.getByTestId('auto-edit-cab_bed'));
     await page.getByTestId('auto-edit-cab_bed').click();
     await shot(page, size.name, '11-vehicle-cab-bed-plane');
 

@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Download, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
 import { isAppOrigin } from './app-origin';
@@ -890,7 +891,8 @@ test('repair then export writes the repaired revision, and undo then export writ
   await importFile(page, { name: 'defect.3mf', mimeType: 'model/3mf', buffer: duplicated });
   await expect(page.getByTestId('fact-triangles')).toHaveText('5');
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
   await expect(page.getByTestId('fact-triangles')).toHaveText('4', { timeout: 60_000 });

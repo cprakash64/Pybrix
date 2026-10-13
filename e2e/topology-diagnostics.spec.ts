@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { openAdvancedDiagnostics } from './repair-ui';
 import {
@@ -28,6 +29,7 @@ async function openFile(page: Page, name: string, bytes: Buffer): Promise<void> 
 
 /** Waits for automatic analysis to produce a report for the loaded model. */
 async function waitForReport(page: Page): Promise<void> {
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
 }
 

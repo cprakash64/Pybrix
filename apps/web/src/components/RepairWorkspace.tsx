@@ -39,7 +39,7 @@ import {
   REPAIR_CHECKING_MODEL_LINE,
   describeLimitLikely,
 } from '../state/repair-preview-summary';
-import { useWorkspaceState } from '../state/store-context';
+import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
 import { totalDefectCount } from '../state/topology-presentation';
 import { useRepairWorkspace, type RepairWorkspaceView } from '../state/use-repair-workspace';
 import { useAnalysisControls, useRepairControls } from '../state/workflow-controllers';
@@ -61,28 +61,9 @@ import { InfoButton, InfoPanel, useInfoDisclosure, type InfoDisclosure } from '.
 import { PanelSection } from './shell/primitives';
 
 /**
- * THE REPAIR WORKSPACE — REPAIR-UX-01.
- *
- * Answers three questions by default and nothing else: what is wrong (the
- * health line and Detected issues), what Pybrix can repair (each row's
- * fixability line and Repair options), and what to click (the one primary
- * action in the sticky footer). Explanations sit behind ⓘ buttons; the full
- * report is in Advanced diagnostics, collapsed.
- *
- * THE FOOTER'S PRIMARY ACTION NEVER MOVES. It reads Analyze model, Repair
- * model or Apply repairs depending on the state, and when nothing safe can
- * run it is still there, disabled, with the reason beside it — a hidden
- * button reads as a missing feature.
- *
- * THE FOOTER IS THE SHARED BOUNDED ACTION REGION (WORKSPACE-UX-03): the action
- * row and one line. The applied result and its Undo, the full text of a
- * failure and the explanation behind the reason's ⓘ are scrolling content.
- *
- * NOTHING HERE COMMITS. Repair model builds and validates a candidate through
- * the existing transactional workflow; Apply repairs asks the worker, which
- * re-checks every guard; Discard preview discards; Undo restores the retained
- * mesh. The panels stay mounted while hidden, because their hooks own worker
- * operations.
+ * Intent first. Details retains mounted diagnostic and advanced-control owners,
+ * so disclosure changes never cancel work or release a validated candidate.
+ * Repair still uses its qualified Preview → Apply → Undo transaction.
  */
 export function RepairWorkspace(): ReactNode {
   const { model } = useWorkspaceState();
@@ -92,32 +73,141 @@ export function RepairWorkspace(): ReactNode {
    * explanation inside the pinned region is how the region outgrew the panel.
    */
   const reasonInfo = useInfoDisclosure();
+  const currentApplied = useCurrentAppliedRepair();
+  const repairControls = useRepairControls();
 
   return (
     <div className="convert-workspace repair-workspace" data-testid="repair-workspace">
       <div className="convert-workspace__sections">
-        {model === undefined ? null : <RepairOverview view={view} />}
-        <MeshAnalysisSection />
-        <RepairPanel />
-        <OpenBoundaryPanel />
-        {model === undefined ? null : (
-          <PanelSection
-            title="Advanced diagnostics"
-            testId="advanced-diagnostics"
-            defaultOpen={false}
-            info={ADVANCED_INFO}
-          >
-            <MeshHealthPanel />
-            <div className="panel" data-testid="advanced-limits">
-              <RepairExclusions />
-              <OpenBoundaryLimits />
-            </div>
+        {model === undefined ? null : <RepairIntent view={view} />}
+        <PanelSection title="Details" testId="repair-details" defaultOpen={false}>
+          {model === undefined ? null : <RepairOverview view={view} />}
+          <MeshAnalysisSection />
+          <PanelSection title="Advanced repair options" defaultOpen={false}>
+            <button
+              type="button"
+              className="secondary-action"
+              data-testid="advanced-preview-repair"
+              disabled={view.action !== RepairActionKind.Ready}
+              onClick={repairControls.previewRepair}
+            >
+              Preview repairs
+            </button>
+            <RepairPanel />
+            <OpenBoundaryPanel />
           </PanelSection>
-        )}
+          {model === undefined ? null : (
+            <PanelSection
+              title="Advanced diagnostics"
+              testId="advanced-diagnostics"
+              defaultOpen={false}
+              info={ADVANCED_INFO}
+            >
+              <MeshHealthPanel />
+              <div className="panel" data-testid="advanced-limits">
+                <RepairExclusions />
+                <OpenBoundaryLimits />
+              </div>
+            </PanelSection>
+          )}
+        </PanelSection>
         <RepairOutcome view={view} reasonInfo={reasonInfo} />
       </div>
-      <RepairFooter view={view} reasonInfo={reasonInfo} />
+      <RepairFooter
+        view={view}
+        reasonInfo={reasonInfo}
+        hidden={
+          (currentApplied !== undefined && view.reportIsCurrent) ||
+          view.action === RepairActionKind.NothingFound ||
+          view.action === RepairActionKind.NothingSafe
+        }
+      />
     </div>
+  );
+}
+
+/** A quiet action summary; diagnostics retain their mounted owners in Details. */
+function RepairIntent({ view }: { readonly view: RepairWorkspaceView }): ReactNode {
+  const applied = useCurrentAppliedRepair();
+  const controls = useRepairControls();
+  const store = useWorkspaceStore();
+  const { selectedWorkflow } = useWorkspaceState();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const previousAction = useRef(view.action);
+  useEffect(() => {
+    const changed = previousAction.current !== view.action;
+    previousAction.current = view.action;
+    if (
+      selectedWorkflow === WorkflowId.Repair &&
+      changed &&
+      document.activeElement === document.body
+    )
+      heading.current?.focus();
+  }, [view.action, selectedWorkflow]);
+  const checking =
+    view.action === RepairActionKind.Analyzing || view.action === RepairActionKind.Planning;
+  const repairing =
+    view.action === RepairActionKind.Building || view.action === RepairActionKind.Applying;
+  const complete = applied !== undefined && view.reportIsCurrent && !checking && !repairing;
+  const healthy = view.action === RepairActionKind.NothingFound;
+  const noSafeChange = view.action === RepairActionKind.NothingSafe;
+  return (
+    <section className="workflow-intent" aria-live="polite" data-testid="repair-intent">
+      <h2 tabIndex={-1} ref={heading}>
+        {complete
+          ? 'Repair complete'
+          : checking
+            ? 'Checking your model…'
+            : repairing
+              ? 'Repairing your model…'
+              : noSafeChange
+                ? 'Model checked'
+                : healthy
+                  ? 'Your model looks good.'
+                  : view.action === RepairActionKind.Preview
+                    ? 'Review repair'
+                    : 'This model can be improved.'}
+      </h2>
+      <p>
+        {complete
+          ? view.detectedIssueTypes > 0
+            ? 'Your model was improved. Some complex geometry was left unchanged to protect the shape.'
+            : 'Your model is ready.'
+          : checking || repairing
+            ? 'Please wait while Pybrix works on your model.'
+            : noSafeChange
+              ? 'Some complex geometry was left unchanged to protect the shape.'
+              : healthy
+                ? 'No repair is needed.'
+                : view.action === RepairActionKind.Preview
+                  ? 'Review the changes before applying them.'
+                  : 'Pybrix chooses safe repairs automatically.'}
+      </p>
+      {complete || healthy || noSafeChange ? (
+        <button
+          type="button"
+          className="primary-action"
+          data-testid="repair-continue"
+          onClick={() => {
+            store.selectWorkflow(WorkflowId.Convert);
+          }}
+        >
+          {healthy ? 'Done' : 'Continue'}
+        </button>
+      ) : null}
+      {complete && applied.undoable ? (
+        <button
+          type="button"
+          className="secondary-action"
+          data-testid="repair-intent-undo"
+          disabled={view.action === RepairActionKind.Undoing}
+          aria-busy={view.action === RepairActionKind.Undoing}
+          onClick={controls.undoLastRepair}
+        >
+          Undo
+        </button>
+      ) : null}
+    </section>
   );
 }
 
@@ -297,28 +387,51 @@ function RepairOutcome({
     <WorkspaceOutcome revealKey={revealKey === '' ? undefined : revealKey}>
       {failures.analysis === undefined ? null : (
         <OutcomeAlert testId="analysis-error">
-          {failures.analysis} The model is still loaded and can be viewed and exported.
+          The model could not be checked. You can still view and export it.
+          <PanelSection title="Details" defaultOpen={false}>
+            <p>{failures.analysis}</p>
+          </PanelSection>
         </OutcomeAlert>
       )}
       {failures.plan === undefined ? null : (
         <OutcomeAlert testId="repair-plan-error">
-          {failures.plan} Your model is unchanged.
+          Repair could not be prepared. Your model is unchanged.
+          <PanelSection title="Details" defaultOpen={false}>
+            <p>{failures.plan}</p>
+          </PanelSection>
         </OutcomeAlert>
       )}
       {failures.candidate === undefined ? null : (
-        <OutcomeAlert testId="repair-candidate-error">{failures.candidate}</OutcomeAlert>
+        <OutcomeAlert testId="repair-candidate-error">
+          Repair could not be completed. Your model is unchanged.
+          <PanelSection title="Details" defaultOpen={false}>
+            <p>{failures.candidate}</p>
+          </PanelSection>
+        </OutcomeAlert>
       )}
       {failures.notice === undefined ? null : (
-        <OutcomeNote testId="repair-no-safe-change">{failures.notice}</OutcomeNote>
+        <OutcomeNote testId="repair-no-safe-change">
+          No safe changes were found.
+          <PanelSection title="Details" defaultOpen={false}>
+            <p>{failures.notice}</p>
+          </PanelSection>
+        </OutcomeNote>
       )}
       {/* ADVISORY ONLY: it never disables Repair and never predicts the outcome. */}
       {action === RepairActionKind.Ready && limitAdvisory !== undefined ? (
-        <p className="repair-advisory" data-testid="repair-limit-advisory">
-          {limitAdvisory}
-        </p>
+        <PanelSection title="Details" defaultOpen={false}>
+          <p className="repair-advisory" data-testid="repair-limit-advisory">
+            {limitAdvisory}
+          </p>
+        </PanelSection>
       ) : null}
       {failures.commit === undefined ? null : (
-        <OutcomeAlert testId="repair-commit-error">{failures.commit}</OutcomeAlert>
+        <OutcomeAlert testId="repair-commit-error">
+          Repair could not be applied.
+          <PanelSection title="Details" defaultOpen={false}>
+            <p>{failures.commit}</p>
+          </PanelSection>
+        </OutcomeAlert>
       )}
       {action === RepairActionKind.Unavailable ? (
         <InfoPanel disclosure={reasonInfo} label="repair availability">
@@ -349,11 +462,13 @@ function RepairOutcome({
 function RepairFooter({
   view,
   reasonInfo,
+  hidden,
 }: {
+  readonly hidden: boolean;
   readonly view: RepairWorkspaceView;
   readonly reasonInfo: InfoDisclosure;
 }): ReactNode {
-  const { analysis, repair } = useWorkspaceState();
+  const { analysis, repair, model, activePartId } = useWorkspaceState();
   const analysisControls = useAnalysisControls();
   const controls = useRepairControls();
   const hintId = useId();
@@ -368,6 +483,23 @@ function RepairFooter({
   const failures = repairFailures(action, analysis, repair);
   const cancelling = repair.candidateState === RepairCandidateState.Cancelling;
   const applied = useCurrentAppliedRepair();
+  const automaticApply = useRef(false);
+  useEffect(() => {
+    automaticApply.current = false;
+  }, [model?.handle.documentId, model?.handle.revision, activePartId]);
+  // Only the explicit Repair model action arms this continuation. Advanced Preview
+  // remains reviewable. Every commit still passes the existing controller/worker guards.
+  useEffect(() => {
+    if (action === RepairActionKind.Preview && automaticApply.current) {
+      automaticApply.current = false;
+      if (previewable) controls.applyRepair();
+    } else if (
+      repair.candidateState === RepairCandidateState.Cancelled ||
+      repair.candidateState === RepairCandidateState.Failed
+    ) {
+      automaticApply.current = false;
+    }
+  }, [action, previewable, repair.candidateState, controls]);
   /*
    * ONE SENTENCE, ONCE — REPAIR-UX-04. The outcome is announced here, when the
    * analysis of the repaired mesh has settled what it is: "Partial repair
@@ -492,7 +624,7 @@ function RepairFooter({
     stateLine;
 
   return (
-    <ActionFooter testId="repair-footer" className="repair-footer">
+    <ActionFooter testId="repair-footer" className="repair-footer" hidden={hidden}>
       <div className="convert-footer__status" aria-live="polite">
         {line}
       </div>
@@ -557,7 +689,10 @@ function RepairFooter({
           previewable={previewable}
           canAnalyze={analysisControls.canRetry}
           onAnalyze={analysisControls.runAnalysis}
-          onRepair={controls.previewRepair}
+          onRepair={() => {
+            automaticApply.current = true;
+            controls.previewRepair();
+          }}
           onApply={controls.applyRepair}
           hintId={hintId}
         />
@@ -646,7 +781,7 @@ function PrimaryAction({
       data-testid="preview-repair"
     >
       <Icon name={building ? 'loader' : 'zap'} size={16} className={building ? 'spin' : ''} />
-      <span>{building ? 'Preparing preview…' : REPAIR_MODEL_ACTION}</span>
+      <span>{building ? 'Repairing…' : REPAIR_MODEL_ACTION}</span>
     </button>
   );
 }
@@ -716,7 +851,7 @@ function FooterHint({
     action === RepairActionKind.NothingFound ||
     action === RepairActionKind.Unavailable;
   const hint = (
-    <p className="convert-footer__hint" id={hintId} title={text.text} {...testId}>
+    <p className="visually-hidden" id={hintId} title={text.text} {...testId}>
       {text.text}
     </p>
   );

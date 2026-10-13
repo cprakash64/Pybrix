@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { openAdvancedDiagnostics } from './repair-ui';
 import { analysisHeavyStl, cleanGridStl } from './stl-fixtures';
@@ -70,6 +71,7 @@ test('J1: topology analysis does not block the UI thread', async ({ page }) => {
    */
   const heavy = analysisHeavyStl(300);
   await openFile(page, 'heavy.stl', heavy.bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
 
   const idleGap = await measureWorstGap(page, 1500);
@@ -81,6 +83,7 @@ test('J1: topology analysis does not block the UI thread', async ({ page }) => {
   await rerun.click();
 
   const busyGap = await measureWorstGap(page, 2500);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
 
   const ceiling = Math.max(idleGap * 10, 250);

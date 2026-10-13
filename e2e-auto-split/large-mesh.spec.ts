@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -780,7 +781,8 @@ test('the reported file in Repair: does the current Repair make it splittable', 
   await page.screenshot({ path: `${dir}/20-real-repair-before.png` });
 
   let t = Date.now();
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   const outcome = page.locator(
     '[data-testid="apply-repair"], [data-testid="repair-no-safe-change"], [data-testid="repair-plan-error"], [data-testid="repair-candidate-error"]',
   );
@@ -800,6 +802,7 @@ test('the reported file in Repair: does the current Repair make it splittable', 
   if (applyOffered) {
     t = Date.now();
     await page.getByTestId('apply-repair').click();
+    await revealControl(page, page.getByTestId('repair-applied'));
     await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 900_000 });
     await page.waitForTimeout(8000);
     log({ phase: 'repair-applied', ms: Date.now() - t, counts: await counts() });

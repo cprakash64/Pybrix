@@ -420,7 +420,7 @@ describe('focus and scope', () => {
     await openAuto();
     expect(screen.getByTestId('auto-part')).toHaveTextContent('Figure');
     await findParts('human');
-    expect(screen.getByTestId('auto-reanalyze-fresh')).toHaveTextContent('Re-analyze current part');
+    expect(screen.getByTestId('auto-reanalyze-fresh')).toHaveTextContent('Find again');
   });
 });
 
@@ -439,9 +439,9 @@ describe('an analysis', () => {
     expect(request?.views).toHaveLength(6);
     expect(request?.mode).toBe('human');
     expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Suggested');
-    expect(screen.getByTestId('auto-row-status-left_arm')).toHaveTextContent('Review cut');
+    expect(screen.getByTestId('auto-row-status-left_arm')).toHaveTextContent('Suggested cut');
     expect(screen.getByTestId('auto-row-status-right_arm')).toHaveTextContent(
-      'No safe split found',
+      'No separate part found',
     );
     expect(screen.getByTestId('auto-preview-right_arm')).toBeDisabled();
     expect(screen.getByTestId('auto-edit-right_arm')).toBeDisabled();
@@ -457,7 +457,7 @@ describe('an analysis', () => {
     const spies = mount({ response: () => pending });
     await findParts('human');
     expect(screen.getByTestId('auto-progress')).toBeInTheDocument();
-    expect(screen.getByTestId('auto-status')).toHaveTextContent(/looking for parts/i);
+    expect(screen.getByTestId('auto-status')).toHaveTextContent(/finding parts/i);
     expect(screen.getByTestId('split-footer')).not.toHaveTextContent('Find parts first');
     expect(screen.getByTestId('auto-progress').textContent).not.toMatch(/\d\s*%/);
     expect(spies.signals[0]?.aborted).toBe(false);

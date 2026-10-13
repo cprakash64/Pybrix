@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStlFrom, type Point } from './stl-fixtures';
 
@@ -307,6 +308,7 @@ test.describe('Manual Split', () => {
     await openBox(page);
     await enterSplit(page);
     await chooseMillimetres(page);
+    await revealControl(page, page.getByTestId('split-position-value'));
     await page.getByTestId('split-position-value').fill('25');
     await page.getByTestId('split-position-value').blur();
     await previewSplit(page);
@@ -326,10 +328,13 @@ test.describe('Manual Split', () => {
     await openBox(page);
     await enterSplit(page);
     await chooseMillimetres(page);
+    await revealControl(page, page.getByTestId('split-position-value'));
     await page.getByTestId('split-position-value').fill('30');
     await page.getByTestId('split-position-value').blur();
+    await revealControl(page, page.getByTestId('split-tilt'));
     await page.getByTestId('split-tilt').fill('15');
     await page.getByTestId('split-tilt').blur();
+    await revealControl(page, page.getByTestId('split-roll'));
     await page.getByTestId('split-roll').fill('10');
     await page.getByTestId('split-roll').blur();
     await expect(page.getByTestId('split-hud-cut')).toContainText('tilted 15.0°');
@@ -350,10 +355,12 @@ test.describe('Manual Split', () => {
     await openBox(page);
     await enterSplit(page);
     await chooseMillimetres(page);
+    await revealControl(page, page.getByTestId('split-position-value'));
     await page.getByTestId('split-position-value').fill('25');
     await page.getByTestId('split-position-value').blur();
     await previewSplit(page);
     const before = await page.getByTestId('split-piece-a').innerText();
+    await revealControl(page, page.getByTestId('split-flip-plane'));
     await page.getByTestId('split-flip-plane').click();
     // Changing the cut retires the preview; a new one swaps the sides.
     await expect(page.getByTestId('split-preview-label')).toHaveCount(0);
@@ -370,10 +377,13 @@ test.describe('Manual Split', () => {
     await chooseMillimetres(page);
     await previewSplit(page);
     await expect(canvas(page)).toHaveAttribute('data-hidden-parts', '0');
+    await revealControl(page, page.getByTestId('split-view-a'));
     await page.getByTestId('split-view-a').click();
     await expect(canvas(page)).toHaveAttribute('data-hidden-parts', '1');
+    await revealControl(page, page.getByTestId('split-view-b'));
     await page.getByTestId('split-view-b').click();
     await expect(canvas(page)).toHaveAttribute('data-hidden-parts', '1');
+    await revealControl(page, page.getByTestId('split-view-both'));
     await page.getByTestId('split-view-both').click();
     await expect(canvas(page)).toHaveAttribute('data-hidden-parts', '0');
     // Presentation only: nothing was applied.
@@ -403,6 +413,7 @@ test.describe('Manual Split', () => {
     await enterSplit(page);
     await page.getByTestId('split-unit-interpretation-inch').check();
     // The box is 40 x 20 x 60 UNITS, i.e. inches: the default 4 mm pin fits easily.
+    await revealControl(page, page.getByTestId('split-connector-pin'));
     await page.getByTestId('split-connector-pin').check();
     await previewSplit(page);
     await expect(page.getByTestId('split-result-connector')).toHaveText('Round pins and sockets');
@@ -438,12 +449,14 @@ test('T: the whole manual cut is operable from the keyboard', async ({ page }) =
   await enterSplit(page);
   await chooseMillimetres(page);
 
+  await revealControl(page, page.getByTestId('split-position-value'));
   await page.getByTestId('split-position-value').focus();
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type('30');
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('split-hud-cut')).toContainText('Z = 30.0 mm');
 
+  await revealControl(page, page.getByTestId('split-flip-plane'));
   await page.getByTestId('split-flip-plane').focus();
   await page.keyboard.press('Space');
   await expect(page.getByTestId('split-flip-plane')).toHaveAttribute('aria-pressed', 'true');

@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   boundaryOfSizeStl,
@@ -45,7 +46,9 @@ async function openFile(page: Page, name: string, bytes: Buffer): Promise<void> 
 /** Imports a file and waits until the open-boundary inventory has been built. */
 async function importAndList(page: Page, name: string, bytes: Buffer): Promise<void> {
   await openFile(page, name, bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
+  await revealControl(page, page.getByTestId('hole-fill-count'));
   await expect(page.getByTestId('hole-fill-count')).toBeVisible({ timeout: 60_000 });
 }
 
@@ -69,6 +72,7 @@ async function requestPreview(page: Page): Promise<void> {
 
 async function applyFill(page: Page): Promise<void> {
   await page.getByTestId('apply-fill').click();
+  await revealControl(page, page.getByTestId('hole-fill-applied'));
   await expect(page.getByTestId('hole-fill-applied')).toBeVisible({ timeout: 60_000 });
 }
 
@@ -139,6 +143,7 @@ test('HFUX01: import, select, preview, apply, undo — the whole workflow', asyn
 
   // 4-5. choose it; the rim highlights.
   await selectOpening(page, 1);
+  await revealControl(page, page.getByTestId('hole-fill-selection'));
   await expect(page.getByTestId('hole-fill-selection')).toBeVisible();
 
   // 6-9. preview it.
@@ -286,6 +291,7 @@ test('HFUX05, HFUX06: 512 rim points fill and 513 are refused before anything ru
   await expect(opening(page, 1)).toHaveAttribute('data-fillable', 'true');
   await selectOpening(page, 1);
   await requestPreview(page);
+  await revealControl(page, page.getByTestId('hole-fill-candidate'));
   await expect(page.getByTestId('hole-fill-candidate')).toBeVisible();
 
   await importAndList(page, 'rim-513.stl', boundaryOfSizeStl(513));
@@ -346,6 +352,7 @@ test('HFUX08 / HP23: a patch that would pierce the model is never previewable', 
   await expect(page.getByTestId('hole-fill-candidate')).toHaveCount(0);
   await expect(page.getByTestId('apply-fill')).toHaveCount(0);
   await expect(page.getByTestId('patch-preview-banner')).toHaveCount(0);
+  await revealControl(page, page.getByTestId('hole-fill-refusal'));
   await expect(page.getByTestId('hole-fill-refusal')).toBeVisible();
   await expect(page.getByTestId('hole-fill-refusal-qualifier')).toContainText(
     'Your model was not changed',
@@ -372,6 +379,7 @@ test('HFUX09 / HP24: a thin wall does NOT block the fill', async ({ page }) => {
   await selectOpening(page, 1);
   await requestPreview(page);
 
+  await revealControl(page, page.getByTestId('hole-fill-candidate'));
   await expect(page.getByTestId('hole-fill-candidate')).toBeVisible();
   await applyFill(page);
   expect(await triangles(page)).toBe(before + 2);
@@ -405,6 +413,7 @@ test('HFUX12: discarding a preview leaves the model untouched and the opening se
   // And the same opening can be previewed again.
   await expect(page.getByTestId('preview-fill')).toBeVisible();
   await requestPreview(page);
+  await revealControl(page, page.getByTestId('hole-fill-candidate'));
   await expect(page.getByTestId('hole-fill-candidate')).toBeVisible();
 });
 
@@ -445,14 +454,17 @@ test('HFUX17: a repair applied under a preview makes that preview unusable', asy
   const previewRepair = page.getByTestId('preview-repair');
   if (await previewRepair.isEnabled()) {
     await previewRepair.click();
+    await revealControl(page, page.getByTestId('repair-candidate'));
     await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
     await page.getByTestId('apply-repair').click();
+    await revealControl(page, page.getByTestId('repair-applied'));
     await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
 
     // THE FILL PREVIEW IS GONE. Not disabled, not refused on click — gone.
     await expect(page.getByTestId('apply-fill')).toHaveCount(0);
     await expect(page.getByTestId('hole-fill-candidate')).toHaveCount(0);
     // And the openings are re-listed against the revision the repair produced.
+    await revealControl(page, page.getByTestId('hole-fill-count'));
     await expect(page.getByTestId('hole-fill-count')).toBeVisible({ timeout: 60_000 });
   } else {
     expect(await triangles(page)).toBe(before);
@@ -534,6 +546,7 @@ test('HFUX31: an inventory of thousands stays bounded and reports the true total
   await importAndList(page, 'loose.stl', looseTrianglesStl(faces));
 
   expect(await openingCount(page)).toBe(faces);
+  await revealControl(page, page.getByTestId('hole-fill-truncated'));
   await expect(page.getByTestId('hole-fill-truncated')).toBeVisible();
   const rows = await page.locator('[data-testid^="opening-"]').count();
   expect(rows).toBeLessThanOrEqual(256);
@@ -541,6 +554,7 @@ test('HFUX31: an inventory of thousands stays bounded and reports the true total
 
   // AND THE PAGE IS STILL USABLE. A row can be selected and the panel responds.
   await selectOpening(page, 1);
+  await revealControl(page, page.getByTestId('hole-fill-selection'));
   await expect(page.getByTestId('hole-fill-selection')).toBeVisible({ timeout: 15_000 });
 });
 
@@ -642,6 +656,7 @@ test('§85: the fill worker is constructed only by a Preview or a plan verifying
     .toBe(1);
 
   await selectOpening(page, 1);
+  await revealControl(page, page.getByTestId('hole-fill-selection'));
   await expect(page.getByTestId('hole-fill-selection')).toBeVisible();
   // Selecting one, and drawing its rim: none more.
   expect(fillWorkers((await workers()).created)).toBe(1);

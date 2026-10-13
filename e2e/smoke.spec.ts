@@ -42,7 +42,8 @@ test('the viewport acquires a real WebGL context', async ({ page }) => {
 
   // Because the viewport starts cleanly in a real browser, the status log has
   // nothing to report on load.
-  await expect(page.getByTestId('status-empty')).toBeVisible();
+  await expect(page.getByTestId('status-empty')).toHaveCount(0);
+  await expect(page.getByTestId('status-list')).toHaveCount(0);
 });
 
 test('the viewport canvas is sized to its container and does not overflow the page', async ({

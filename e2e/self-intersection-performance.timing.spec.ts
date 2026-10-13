@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { cleanGridStl } from './stl-fixtures';
 
@@ -125,6 +126,7 @@ test('auto-band latency: the automatic check at the 25,000-face boundary', async
   await openFile(page, 'auto.stl', model.bytes);
 
   // The model is usable — topology has reported — before the diagnostic lands.
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 120_000 });
   const usableAt = Date.now();
 

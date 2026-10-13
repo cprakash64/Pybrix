@@ -456,6 +456,10 @@ describe('the primary action', () => {
     );
     // The preview's metrics are one click away, not on screen.
     expect(screen.getByTestId('repair-metrics')).not.toBeVisible();
+    fireEvent.click(
+      within(screen.getByTestId('repair-details')).getByRole('button', { name: 'Details' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced repair options' }));
     fireEvent.click(screen.getByTestId('repair-preview-details-toggle'));
     expect(screen.getByTestId('repair-metrics')).toBeVisible();
   });
@@ -647,6 +651,9 @@ describe('progressive disclosure', () => {
   it('starts Advanced diagnostics collapsed and reveals the full report when opened', () => {
     renderAnalysed();
 
+    fireEvent.click(
+      within(screen.getByTestId('repair-details')).getByRole('button', { name: 'Details' }),
+    );
     const section = screen.getByTestId('advanced-diagnostics');
     const toggle = within(section).getByRole('button', { name: 'Advanced diagnostics' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -667,6 +674,9 @@ describe('progressive disclosure', () => {
     const rerun = screen.getByTestId('rerun-analysis');
     expect(rerun).not.toBeVisible();
     fireEvent.click(
+      within(screen.getByTestId('repair-details')).getByRole('button', { name: 'Details' }),
+    );
+    fireEvent.click(
       within(screen.getByTestId('advanced-diagnostics')).getByRole('button', {
         name: 'Advanced diagnostics',
       }),
@@ -680,6 +690,9 @@ describe('progressive disclosure', () => {
   it('opens an ⓘ by click, closes it with Escape and returns focus to the button', () => {
     renderAnalysed();
 
+    fireEvent.click(
+      within(screen.getByTestId('repair-details')).getByRole('button', { name: 'Details' }),
+    );
     const button = screen.getByTestId('issue-info-non-manifold-vertices');
     const panel = screen.getByTestId('issue-info-panel-non-manifold-vertices');
     expect(button).toHaveAttribute('aria-expanded', 'false');

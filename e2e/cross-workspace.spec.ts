@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { modelXml, threeMf } from './format-fixtures';
 import { openInspector } from './inspector';
@@ -151,6 +152,7 @@ test('one model through Repair, Convert, Split and Texture leaves one healthy ap
   // SPLIT: configure, preview, discard.
   await page.getByTestId('workflow-split').click();
   await expect(page.getByTestId('issue-inspector-name')).toHaveCount(0);
+  await revealControl(page, page.getByTestId('split-position-value'));
   await page.getByTestId('split-position-value').fill('30');
   await expect(page.getByTestId('split-hud-cut')).toContainText('30');
   await page.getByTestId('split-preview').click();

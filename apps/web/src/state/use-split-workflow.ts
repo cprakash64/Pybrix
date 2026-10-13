@@ -151,6 +151,8 @@ export interface SplitControls {
    * cut). Shown as a neutral status, never an alert, and never as a prompt to try another way.
    */
   readonly errorIsResourceLimit: boolean;
+  /** Presentation only: an unexpected runtime failure or a failed commit, rather than an unsafe cut. */
+  readonly errorIsOperationFailure?: boolean;
   /**
    * The reasons, when the worker refused the split because the part is not a closed solid. A status
    * with Repair as the next step, never an alert and never a retry.
@@ -322,6 +324,7 @@ export function useSplitWorkflow(): SplitControls {
         readonly key: string;
         readonly message: string;
         readonly resource: boolean;
+        readonly failure?: boolean;
         /** Set when the worker refused because the part is not a closed solid: the reasons it gave. */
         readonly notClosed?: readonly string[];
       }
@@ -400,8 +403,10 @@ export function useSplitWorkflow(): SplitControls {
   const connectorProblem = available ? connectorProblemOf(connector, unitValue) : undefined;
 
   const setError = useCallback(
-    (message: string | undefined): void => {
-      setErrorState(message === undefined ? undefined : { key: session, message, resource: false });
+    (message: string | undefined, failure = false): void => {
+      setErrorState(
+        message === undefined ? undefined : { key: session, message, resource: false, failure },
+      );
     },
     [session],
   );
@@ -686,7 +691,7 @@ export function useSplitWorkflow(): SplitControls {
             return;
           }
           const message = messageOf(cause, 'The split could not be completed.');
-          setError(message);
+          setError(message, !isAppError(cause) || cause.code === AppErrorCode.Internal);
           store.pushStatus(StatusSeverity.Error, message);
         } finally {
           if (action.current === token) action.current = undefined;
@@ -787,7 +792,7 @@ export function useSplitWorkflow(): SplitControls {
       } catch (cause: unknown) {
         const message = messageOf(cause, 'The split could not be applied.');
         setPhase(SplitPhase.Preview);
-        setError(message);
+        setError(message, true);
         store.pushStatus(StatusSeverity.Error, message);
       } finally {
         if (action.current === token) action.current = undefined;
@@ -922,6 +927,7 @@ export function useSplitWorkflow(): SplitControls {
     progress,
     error,
     errorIsResourceLimit,
+    errorIsOperationFailure: errorState?.key === session && errorState.failure === true,
     sourceNotClosed,
     sizeNotice,
     preview,

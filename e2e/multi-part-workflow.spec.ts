@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { objDefectAndClean, objMultiPart, threeMfSharedPlacements } from './format-fixtures';
 import { openInspector } from './inspector';
@@ -182,6 +183,7 @@ test('Mesh Health and the repair panel describe the part the user selected', asy
   await expect(page.getByTestId('health-part-scope')).toContainText('Defective');
   await expect(page.getByTestId('repair-part-scope')).toContainText('Defective');
   await expect(page.getByTestId('health-triangles')).toHaveText('5', { timeout: 30_000 });
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
 
   await openInspector(page);
@@ -200,12 +202,14 @@ test('switching parts repeatedly creates and disposes no geometry', async ({ pag
   await openFile(page, 'mixed.obj', objDefectAndClean().bytes);
   await openInspector(page);
   await expect(page.getByTestId('part-selector')).toBeVisible({ timeout: 30_000 });
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
   const before = await readScene(page);
 
   for (const partId of ['part-2', 'part-1', 'part-2', 'part-1']) {
     await page.getByTestId(`part-option-${partId}`).click();
     await expect(page.getByTestId(`part-option-${partId}`)).toHaveAttribute('aria-pressed', 'true');
+    await revealControl(page, page.getByTestId('issue-list'));
     await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   }
 
@@ -221,16 +225,21 @@ test('a repair changes the selected part and leaves the other one alone', async 
   test.setTimeout(180_000);
   await openFile(page, 'mixed.obj', objDefectAndClean().bytes);
 
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
+  await revealControl(page, page.getByTestId('repair-operations'));
   await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('repair-part-scope')).toContainText('Defective');
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
   // A preview is not an application: nothing has been committed yet.
   await expect(page.getByTestId('fact-triangles')).toHaveText('9');
 
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
 
   // THE DUPLICATE IS GONE FROM PART 1 ONLY: 5 - 1 = 4, and the document 9 - 1 = 8.
@@ -249,10 +258,14 @@ test('undo restores the repaired part without disturbing the other', async ({ pa
   test.setTimeout(180_000);
   await openFile(page, 'mixed.obj', objDefectAndClean().bytes);
 
+  await revealControl(page, page.getByTestId('repair-operations'));
   await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 60_000 });
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('fact-triangles')).toHaveText('8', { timeout: 60_000 });
 

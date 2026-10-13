@@ -70,7 +70,7 @@ describe('what Auto Split may say', () => {
     );
     expect(AUTO_SPLIT_COPY.badge).toBe('Beta');
     expect(AUTO_SPLIT_COPY.unsafeCut).toBe(
-      'This suggested cut isn’t safe on this model. Adjust the cut or use Manual Split.',
+      "This cut can't be made safely. Try moving the cut or choose another part.",
     );
     expect(AUTO_SPLIT_COPY.needsRepairHeading).toBe(
       'This model needs repair before it can be split.',
