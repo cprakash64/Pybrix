@@ -193,8 +193,9 @@ for (const size of SIZES) {
     await page.getByTestId('auto-kind-human').check({ force: true });
     await page.getByTestId('auto-disclosure-continue').click();
     await page.getByTestId('auto-analyze').click();
-    await expect(page.getByTestId('auto-source-not-ready')).toBeVisible({ timeout: 120_000 });
-    await shot(page, size.name, '12-source-not-ready');
+    await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByTestId('auto-source-not-ready')).toHaveCount(0);
+    await shot(page, size.name, '12-open-source-ready');
 
     await page.getByTestId('auto-kind-other').check({ force: true });
     await shot(page, size.name, '13-other-kind');

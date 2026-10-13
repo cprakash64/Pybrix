@@ -296,24 +296,18 @@ test('wheels fused into a body are "No safe split found", with nothing to previe
   await expect(page.locator('[data-testid^="auto-preview-"]').first()).toBeDisabled();
 });
 
-test('a model that is not a closed solid shows its suggestions but cannot be previewed', async ({
-  page,
-}) => {
+test('an open model has no global repair gate and can use a plain manual cut', async ({ page }) => {
   await openMesh(page, 'open.stl', openCube().mesh);
   await enterAuto(page);
   await accept(page, 'human');
   await findParts(page);
-  await expect(page.getByTestId('auto-source-not-ready')).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByTestId('auto-source-not-ready')).toContainText(
-    'This model needs repair before it can be split.',
-  );
-  await expect(page.getByTestId('auto-row-status-head')).toHaveText('Repair model first');
-  await expect(page.getByTestId('auto-preview-head')).toBeDisabled();
-  await expect(page.getByTestId('split-preview')).toBeDisabled();
-  await expect(page.getByTestId('auto-run-repair')).toBeVisible();
-  await expect(page.getByTestId('auto-source-not-ready')).toContainText(
-    'Repair may not be able to make every model splittable.',
-  );
+  await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId('auto-source-not-ready')).toHaveCount(0);
+  await expect(page.getByTestId('auto-row-status-head')).not.toHaveText('Repair model first');
+  await page.getByTestId('split-tab-manual').click();
+  await expect(page.getByTestId('split-preview')).toBeEnabled();
+  await page.getByTestId('split-preview').click();
+  await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 60_000 });
 });
 
 test('cancel aborts the request, reaches the service, and leaves the model unchanged', async ({

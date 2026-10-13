@@ -18,7 +18,7 @@ import {
   ModelKind,
   type AutoSplitTarget,
 } from './auto-split-session';
-import { describeNotClosed, type NotClosedCopy } from './split-readiness-presentation';
+import { type NotClosedCopy } from './split-readiness-presentation';
 import { splitSizeNoticeFor, type SplitSizeNotice } from './split-size-presentation';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { SplitPhase, SplitSource, type SplitControls } from './use-split-workflow';
@@ -200,8 +200,8 @@ export function useAutoSplit(
   /* ------------------------------------------------------------ rows -- */
 
   const result = snap.result;
-  const sourceReasons = result?.sourceReasons ?? [];
-  const sourceReady = sourceReasons.length === 0;
+  // Both operations have local capabilities: a plane chooses its split strategy in the worker;
+  // component extraction partitions existing triangles. Global closed-solid status gates neither.
   const stale = snap.stale;
 
   const rows: readonly AutoSplitRow[] = useMemo(
@@ -211,13 +211,12 @@ export function useAutoSplit(
         label: suggestion.label,
         operation: suggestion.operation,
         operationLabel: describeOperation(suggestion.operation),
-        status: describeStatus(suggestion, sourceReady),
+        status: describeStatus(suggestion, true),
         executable:
           splitPhase !== SplitPhase.Preparing &&
           splitPhase !== SplitPhase.Computing &&
           splitPhase !== SplitPhase.Applying &&
           splitPhase !== SplitPhase.Undoing &&
-          sourceReady &&
           !stale &&
           suggestion.status !== SuggestionStatus.Unavailable &&
           suggestion.operation !== SuggestionOperation.None,
@@ -225,7 +224,7 @@ export function useAutoSplit(
         selected: snap.selectedId === suggestion.id,
         suggestion,
       })),
-    [result, snap.selectedId, snap.shownId, sourceReady, stale, splitPhase],
+    [result, snap.selectedId, snap.shownId, stale, splitPhase],
   );
   const selected = rows.find((row) => row.selected);
 
@@ -263,7 +262,7 @@ export function useAutoSplit(
             splitPhase === SplitPhase.Preview)
         )
           return AutoSplitPhase.Previewing;
-        return sourceReady ? AutoSplitPhase.SuggestionsReady : AutoSplitPhase.SourceNotReady;
+        return AutoSplitPhase.SuggestionsReady;
     }
   })();
 
@@ -480,11 +479,9 @@ export function useAutoSplit(
           ? 'Find parts first, or switch to Manual Split.'
           : stale
             ? AUTO_SPLIT_COPY.stale
-            : !sourceReady
-              ? AUTO_SPLIT_COPY.needsRepairHeading
-              : selected === undefined
-                ? 'Choose a suggestion to preview.'
-                : undefined;
+            : selected === undefined
+              ? 'Choose a suggestion to preview.'
+              : undefined;
 
   return {
     tab,
@@ -516,8 +513,8 @@ export function useAutoSplit(
     hasResult: result !== undefined,
     stale,
     appliedSinceAnalysis: stale && split.applied !== undefined,
-    sourceReady,
-    notClosed: sourceReady ? undefined : describeNotClosed(sourceReasons),
+    sourceReady: true,
+    notClosed: undefined,
     openRepair,
     selected,
     components,

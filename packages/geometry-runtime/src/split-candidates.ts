@@ -29,6 +29,7 @@ import {
 } from './geometry-edit';
 import type { RepairHistoryStore } from './repair-history';
 import { UndoableChangeKind } from './repair-history';
+import { analyseTopology } from '@cadfixer/mesh-topology';
 import type { SplitResult } from './split-connectors';
 
 export interface SplitCandidateHandle extends GeometryEditTicket {
@@ -97,12 +98,24 @@ export class SplitCandidateStore {
     const index = source.parts.findIndex((p) => p.id === ticket.partId),
       original = source.parts[index];
     if (index < 0 || !original) throw modelUnavailable('The selected part is no longer present.');
+    const sourceDefects =
+      result.surfaceValidation === undefined
+        ? undefined
+        : analyseTopology(original.mesh, {
+            documentId: 'split-source',
+            documentRevision: ticket.sourceRevision,
+            partId: ticket.partId,
+            cancellation,
+            sampleLimit: 0,
+            componentSummaryLimit: 1,
+          }).report;
     const aValidation = validateGeometryEdit(
         result.pieceA,
         source,
         ticket.partId,
         undefined,
         cancellation,
+        sourceDefects,
       ),
       bValidation = validateGeometryEdit(
         result.pieceB,
@@ -110,7 +123,17 @@ export class SplitCandidateStore {
         ticket.partId,
         undefined,
         cancellation,
+        sourceDefects,
       );
+    if (
+      sourceDefects !== undefined &&
+      (aValidation.topology.zeroAreaFaceCount + bValidation.topology.zeroAreaFaceCount >
+        sourceDefects.zeroAreaFaceCount ||
+        aValidation.topology.repeatedPositionFaceCount +
+          bValidation.topology.repeatedPositionFaceCount >
+          sourceDefects.repeatedPositionFaceCount)
+    )
+      throw invalidState('This cut introduced degenerate faces.');
     const aId = uniquePartId(source, `${ticket.partId}-A`),
       bId = uniquePartId(source, `${ticket.partId}-B`, new Set([aId]));
     const a: GeometryPart = {

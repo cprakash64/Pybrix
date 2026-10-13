@@ -617,40 +617,34 @@ describe('the manual cut plane is drawn only for a cut someone chose', () => {
     expect(screen.getByTestId('split-hud')).toBeInTheDocument();
   });
 
-  it('does not tell a part that cannot be split that it found a clear match', async () => {
+  it('keeps a plane suggestion available when the source has openings', async () => {
     mount({ sourceReasons: ['OPEN_BOUNDARIES'] });
     await findParts('human');
-    expect(screen.getByTestId('auto-row-head')).not.toHaveTextContent(/clear match/i);
-    expect(screen.getByTestId('auto-row-head')).toHaveTextContent(/once the model can be split/i);
+    expect(screen.getByTestId('auto-preview-head')).toBeEnabled();
+    expect(screen.getByTestId('auto-row-head')).not.toHaveTextContent(
+      /once the model can be split/i,
+    );
   });
 });
 
-describe('a part that cannot be split offers no way to try', () => {
-  it('shows the suggestions, disables them, and says Repair model first', async () => {
+describe('operation capabilities on open sources', () => {
+  it('previews planes without a global Repair prerequisite', async () => {
     const spies = mount({ sourceReasons: ['OPEN_BOUNDARIES'] });
     await findParts('human');
-    expect(screen.getByTestId('auto-source-not-ready')).toHaveTextContent(
-      'This model needs repair before it can be split.',
-    );
-    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Repair model first');
-    expect(screen.getByTestId('auto-preview-head')).toBeDisabled();
-    expect(screen.getByTestId('auto-edit-head')).toBeDisabled();
-    // Repair is a safe next step; its copy does not promise that every opening can be closed.
-    expect(screen.getByTestId('auto-run-repair')).toBeVisible();
-    expect(screen.getByTestId('auto-source-not-ready')).toHaveTextContent(
-      'Repair may not be able to make every model splittable.',
-    );
-    expect(screen.getByTestId('split-preview')).toBeDisabled();
-    fireEvent.click(screen.getByTestId('auto-preview-head'));
-    expect(spies.createSplit).not.toHaveBeenCalled();
-  });
-
-  it('offers Repair where Repair can help, and opens it', async () => {
-    const spies = mount({ sourceReasons: ['WINDING_CONFLICT'] });
-    await findParts('human');
-    click('auto-run-repair');
+    expect(screen.queryByTestId('auto-source-not-ready')).toBeNull();
+    expect(screen.getByTestId('auto-row-status-head')).not.toHaveTextContent('Repair model first');
+    expect(screen.getByTestId('auto-preview-head')).toBeEnabled();
+    expect(screen.getByTestId('auto-edit-head')).toBeEnabled();
+    click('auto-preview-head');
     await settle();
-    expect(spies.store.getSnapshot().selectedWorkflow).toBe(WorkflowId.Repair);
+    expect(spies.createSplit).toHaveBeenCalledTimes(1);
+    expect(spies.commitSplit).not.toHaveBeenCalled();
+  });
+  it('offers both a plane cut and a triangle partition on an open source', async () => {
+    mount({ sourceReasons: ['WINDING_CONFLICT'], suggestions: [HEAD, WHEEL] });
+    await findParts('vehicle');
+    expect(screen.getByTestId('auto-preview-head')).toBeEnabled();
+    expect(screen.getByTestId('auto-preview-wheel:wheel_1')).toBeEnabled();
   });
 });
 

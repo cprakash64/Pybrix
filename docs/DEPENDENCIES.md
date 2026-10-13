@@ -257,3 +257,7 @@ No GPL or AGPL dependency is present in the tree, at runtime or in development.
 5. Add a row here.
 6. For a **runtime** dependency, also confirm it does not break cross-origin
    isolation — anything loading a cross-origin resource without CORP will.
+
+## Plane-cut triangulation
+
+Open plane splitting uses the pure geometry Mapbox Earcut v3.0.2 implementation already bundled with the pinned Three.js dependency. Its exact source is vendored at `packages/geometry-runtime/src/third-party/earcut.js` to keep rendering code out of geometry packages. The adjacent ISC license is from https://github.com/mapbox/earcut/blob/v3.0.2/LICENSE. Source is unchanged; bounded contour admission, incidence, winding and area validation surround the triangulator. No network or rendering dependency is introduced.

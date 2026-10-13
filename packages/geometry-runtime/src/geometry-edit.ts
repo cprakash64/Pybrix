@@ -102,6 +102,7 @@ export function validateGeometryEdit(
   part: PartId,
   limits: GeometryEditLimits = DEFAULT_GEOMETRY_EDIT_LIMITS,
   cancellation: CancellationToken = uncancellable,
+  preservedSourceDefects?: Pick<TopologyReport, 'zeroAreaFaceCount' | 'repeatedPositionFaceCount'>,
 ): {
   document: GeometryDocument;
   resources: GeometryEditResourceAccounting;
@@ -135,7 +136,10 @@ export function validateGeometryEdit(
     sampleLimit: 0,
     componentSummaryLimit: 1,
   }).report;
-  if (topology.zeroAreaFaceCount > 0 || topology.repeatedPositionFaceCount > 0)
+  if (
+    topology.zeroAreaFaceCount > (preservedSourceDefects?.zeroAreaFaceCount ?? 0) ||
+    topology.repeatedPositionFaceCount > (preservedSourceDefects?.repeatedPositionFaceCount ?? 0)
+  )
     throw invalidState('Geometry edit candidate contains degenerate faces.', {
       zeroAreaFaces: topology.zeroAreaFaceCount,
       repeatedPositionFaces: topology.repeatedPositionFaceCount,

@@ -408,7 +408,7 @@ test.describe('Manual Split', () => {
     await expect(page.getByTestId('split-result-connector')).toHaveText('Round pins and sockets');
   });
 
-  test('S: an open model is refused truthfully, the model stays, and Repair is not promised', async ({
+  test('S: an opening away from the cut permits Preview, Apply and exact Undo', async ({
     page,
   }) => {
     await page.goto('/');
@@ -417,13 +417,14 @@ test.describe('Manual Split', () => {
     await enterSplit(page);
     await chooseMillimetres(page);
     await page.getByTestId('split-preview').click();
-    const error = page.getByTestId('split-not-closed');
-    await expect(error).toBeVisible({ timeout: 60_000 });
-    await expect(error).toContainText('open edges');
-    await expect(error).toContainText('isn’t a closed solid');
-    await expect(error).toHaveAttribute('role', 'status');
-    await expect(error).toContainText('Repair may not be able to make every model splittable.');
-    await expect(error).toContainText('Your original model was not changed.');
+    await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('split-not-closed')).toHaveCount(0);
+    await expect(page.getByTestId('fact-triangles')).toHaveText('10');
+    await expect(page.getByTestId('split-apply')).toBeEnabled();
+    await page.getByTestId('split-apply').click();
+    await expect(page.getByTestId('split-undo')).toBeEnabled();
+    await page.getByTestId('split-undo').click();
+    await expect(page.getByTestId('split-undo')).toHaveCount(0);
     await expect(page.getByTestId('fact-triangles')).toHaveText('10');
   });
 });

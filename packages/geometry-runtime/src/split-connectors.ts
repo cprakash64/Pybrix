@@ -8,6 +8,7 @@ import {
 } from '@cadfixer/mesh-core';
 import { invalidState, throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
 import { analyseTopology } from '@cadfixer/mesh-topology';
+import { choosePlaneSplitStrategy, splitOpenSurface } from './open-plane-split';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
 
 export type SplitVector = readonly [number, number, number];
@@ -70,6 +71,8 @@ export interface CutSurfaceSummary {
 /** Upper bound on the cap boundary edges carried back for display. */
 export const MAX_SECTION_OUTLINE_EDGES = 65_536;
 export interface SplitMetrics {
+  /** False for surface cuts: an open surface does not define a solid volume. */
+  readonly volumeInterpretable?: boolean;
   readonly sourceVolume: number;
   /**
    * The two pieces straight after the cut, BEFORE any connector — the volumes
@@ -88,6 +91,18 @@ export interface SplitMetrics {
   readonly tolerance: number;
 }
 export interface SplitResult {
+  readonly surfaceValidation?: {
+    readonly sourceFaces: number;
+    readonly untouchedFaces: number;
+    readonly clippedFaces: number;
+    readonly sourceArea: number;
+    readonly outputArea: number;
+    readonly capTriangles: number;
+    readonly cutLoops: number;
+    readonly openChains: number;
+    readonly intermediateBytes: number;
+    readonly phaseMilliseconds: Readonly<Record<string, number>>;
+  };
   readonly pieceA: CanonicalMesh;
   readonly pieceB: CanonicalMesh;
   readonly cutA: CutSurfaceSummary;
@@ -645,7 +660,18 @@ export async function splitWithConnectors(
 ): Promise<SplitResult> {
   throwIfCancelled(cancellation);
   onStage?.(SplitStage.PreparingCut);
-  requireSolid(source, 'source', cancellation);
+  const capability = choosePlaneSplitStrategy(source, request.plane, cancellation);
+  if (capability.strategy === 'unsupported') throw invalidState('This cut cannot be made safely.');
+  if (capability.strategy === 'open-surface') {
+    if (request.connector.kind !== 'none')
+      throw invalidState('Choose None for this split.', {
+        code: 'OPEN_SPLIT_CONNECTOR_UNSUPPORTED',
+      });
+    onStage?.(SplitStage.Intersecting);
+    const result = splitOpenSurface(source, request.plane, cancellation);
+    onStage?.(SplitStage.BuildingCutSurfaces);
+    return result;
+  }
   const tolerance = splitTolerance(source),
     [positive, negative] = buildSplitCutters(source, request.plane);
   onStage?.(SplitStage.Intersecting);

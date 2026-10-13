@@ -66,7 +66,7 @@ function mesh(positions: readonly number[], indices: readonly number[]): Canonic
 }
 const EMPTY: CanonicalMesh = mesh([], []);
 const cube = (h = 10): CanonicalMesh => mesh(CUBE_POSITIONS(h), CUBE_INDICES);
-/** A cube with its +Z face removed: otherwise manifold, one open boundary loop. */
+/** A cube with its +Y face removed: otherwise manifold, one open boundary loop. */
 const openCube = (): CanonicalMesh =>
   mesh(CUBE_POSITIONS(10), CUBE_INDICES.slice(0, 18).concat(CUBE_INDICES.slice(24)));
 /** A flat grid: manifold, wholly open. */
@@ -159,14 +159,14 @@ describe('PYBRIX-08A split source audit (production engine)', () => {
     expect(result).toBeDefined();
   });
 
-  it('C: a closed solid with one opening left (a repaired-but-incomplete model) is refused as OPEN_BOUNDARIES only', async () => {
-    const { reasons } = await trySplit(openCube());
-    expect(reasons).toEqual([SplitSourceReason.OpenBoundaries]);
+  it('C: an opening elsewhere no longer prevents a locally capped split', async () => {
+    const { result } = await trySplit(openCube(), [0, 0, 0], [0, 1, 0]);
+    expect(result?.surfaceValidation?.cutLoops).toBe(1);
   });
 
-  it('D: an open manifold surface is refused as OPEN_BOUNDARIES', async () => {
-    const { reasons } = await trySplit(grid(), [2, 2, 0], [1, 0, 0]);
-    expect(reasons).toEqual([SplitSourceReason.OpenBoundaries]);
+  it('D: an open surface can be clipped with its opening preserved', async () => {
+    const { result } = await trySplit(grid(), [2, 2, 0], [1, 0, 0]);
+    expect(result?.surfaceValidation?.openChains).toBeGreaterThan(0);
   });
 
   it('E: a model of several closed, separate components is accepted', async () => {
@@ -176,9 +176,11 @@ describe('PYBRIX-08A split source audit (production engine)', () => {
     expect(result).toBeDefined();
   });
 
-  it('F: edge- and vertex-sharing solids are refused as NON_MANIFOLD', async () => {
-    expect((await trySplit(edgeSharingCubes())).reasons).toContain(SplitSourceReason.NonManifold);
-    expect((await trySplit(cornerSharingCubes())).reasons).toContain(SplitSourceReason.NonManifold);
+  it('F: a branch at the cut refuses that cut; an unrelated shared vertex does not', async () => {
+    await expect(trySplit(edgeSharingCubes())).rejects.toMatchObject({
+      details: { code: 'CUT_NOT_SAFE' },
+    });
+    expect((await trySplit(cornerSharingCubes())).result?.surfaceValidation).toBeDefined();
   });
 });
 
@@ -250,7 +252,11 @@ describe('PYBRIX-08A split progress stages', () => {
     expect(stages.at(-1)).toBe(SplitStage.AddingConnectors);
   });
 
-  it('a refused source never reaches the intersection stage', async () => {
-    expect(await stagesOf(openCube(), { kind: 'none' })).toEqual([SplitStage.PreparingCut]);
+  it('an open source reaches the clipping and cut-surface stages', async () => {
+    expect(await stagesOf(openCube(), { kind: 'none' })).toEqual([
+      SplitStage.PreparingCut,
+      SplitStage.Intersecting,
+      SplitStage.BuildingCutSurfaces,
+    ]);
   });
 });

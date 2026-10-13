@@ -48,3 +48,7 @@ packages/self-intersection-kernel/artifacts
 
 # Pinned, generated Manifold Emscripten glue. Keep the upstream artifact byte-for-byte.
 apps/web/src/workers/third-party/manifold/manifold-candidate.js
+
+# Pinned upstream Mapbox Earcut; preserve source integrity.
+packages/geometry-runtime/src/third-party/earcut.js
+artifacts/open-mesh-split-01/

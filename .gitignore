@@ -56,3 +56,6 @@ artifacts/release/
 dist-test/
 artifacts/auto-split-visual/
 artifacts/auto-split-large/
+
+# Private real-model qualification output; model geometry never enters git.
+artifacts/open-mesh-split-01/

@@ -111,7 +111,9 @@ export function SplitInspector(): ReactNode {
             testId="split-inspector-size"
           />
         )}
-        {metrics !== undefined && selectedPiece !== undefined ? (
+        {metrics !== undefined &&
+        metrics.volumeInterpretable !== false &&
+        selectedPiece !== undefined ? (
           <PropertyRow
             label="Volume"
             value={formatVolume(

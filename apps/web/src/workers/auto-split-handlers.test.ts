@@ -305,13 +305,34 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     expect(undone.value.handle.revision).toBeGreaterThan(applied.value.handle.revision);
   });
 
-  it('refuses a part that is not a closed solid, naming the reason and creating nothing', async () => {
+  it('refuses selecting an entire open surface as a component, without a global topology gate', async () => {
     const handle = install(openCube().mesh);
     const refusal = await refusalOf(() =>
       autoSplitExtractCreateHandler({ source: handle, partId: PART, ranks: [0] }, context()),
     );
-    expect(refusal.details).toMatchObject({ code: 'SPLIT_SOURCE_NOT_CLOSED_SOLID' });
+    expect(refusal.details).toMatchObject({ code: 'AUTO_SPLIT_SELECTION_INVALID' });
     expect(splitCandidates.stats().candidateCount).toBe(0);
+  });
+
+  it('partitions disconnected open surfaces, then applies and restores the exact source', async () => {
+    const closed = carMultipart().mesh;
+    const open = { ...closed, indices: closed.indices.slice(3) };
+    const handle = install(open);
+    const preview = await autoSplitExtractCreateHandler(
+      { source: handle, partId: PART, ranks: [1] },
+      context(),
+    );
+    expect(meshOf(handle)).toBe(open);
+    expect(preview.value.parts).toHaveLength(2);
+    const applied = await splitCommitHandler(
+      { candidate: preview.value.candidate, expectedSource: handle, expectedPart: PART },
+      context(),
+    );
+    const undone = await repairUndoHandler(
+      { handle: applied.value.handle, recordId: applied.value.recordId },
+      context(),
+    );
+    expect(meshOf(undone.value.handle)).toBe(open);
   });
 
   it('refuses an empty selection and a selection of everything', async () => {

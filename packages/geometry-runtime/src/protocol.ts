@@ -351,8 +351,9 @@ export interface AutoSplitSuggestResult {
   readonly componentCount: number;
   readonly faceCount: number;
   /**
-   * Why the part is not yet a splittable closed solid, as `SplitSourceReason` codes; empty when it is
-   * one. An executable suggestion needs this to be empty; the suggestions are shown regardless.
+   * Why the part is not a closed solid, as `SplitSourceReason` codes; empty when it is one.
+   * Diagnostic facts only: plane cuts choose a local strategy and component extraction partitions
+   * existing triangles. Neither operation uses this list as a global readiness gate.
    */
   readonly sourceReasons: readonly string[];
 }

@@ -327,3 +327,11 @@ export type {
   LocalRepairPlan,
   LocalRepairWorkFigure,
 } from './local-repair';
+
+export {
+  choosePlaneSplitStrategy,
+  splitOpenSurface,
+  OPEN_SPLIT_LIMITS,
+  CUT_NOT_SAFE,
+} from './open-plane-split';
+export type { PlaneSplitCapability } from './open-plane-split';

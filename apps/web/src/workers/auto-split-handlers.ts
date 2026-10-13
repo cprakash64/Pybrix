@@ -19,9 +19,8 @@ import {
 import {
   isPart,
   meshVolume,
+  meshSurfaceArea,
   splitSourceReasons,
-  describeSplitSourceRefusal,
-  SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
   splitTolerance,
   type DocumentHandle,
   type OperationContext,
@@ -277,12 +276,8 @@ export const autoSplitExtractCreateHandler: OperationHandler<'autosplit/extract-
     payload.partId,
     context.cancellation,
   );
-  if (reasons.length > 0)
-    throw invalidState(describeSplitSourceRefusal(reasons), {
-      code: SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
-      reasons: reasons.join(','),
-      label: payload.partId,
-    });
+  // Component extraction is a complete triangle partition, not a Boolean. Source openings
+  // stay exactly where they were; validation permits only already-present degenerate faces.
   const labelling = labellingFor(
     payload.source,
     payload.partId,
@@ -310,6 +305,7 @@ export const autoSplitExtractCreateHandler: OperationHandler<'autosplit/extract-
       cutB: NO_CUT,
       connector: { kind: 'none' },
       metrics: {
+        ...(reasons.length === 0 ? {} : { volumeInterpretable: false }),
         sourceVolume,
         pieceAVolume: a,
         pieceBVolume: b,
@@ -319,6 +315,22 @@ export const autoSplitExtractCreateHandler: OperationHandler<'autosplit/extract-
         tolerance: splitTolerance(sourcePart.mesh),
       },
       placements: [],
+      ...(reasons.length === 0
+        ? {}
+        : {
+            surfaceValidation: {
+              sourceFaces: sourcePart.mesh.indices.length / 3,
+              untouchedFaces: sourcePart.mesh.indices.length / 3,
+              clippedFaces: 0,
+              sourceArea: meshSurfaceArea(sourcePart.mesh),
+              outputArea: meshSurfaceArea(pieces.selected) + meshSurfaceArea(pieces.rest),
+              capTriangles: 0,
+              cutLoops: 0,
+              openChains: 0,
+              intermediateBytes: 0,
+              phaseMilliseconds: {},
+            },
+          }),
     };
     context.reportProgress(0.7, 'Checking parts…');
     const summary = splitCandidates.resolve(ticket, result, context.cancellation);

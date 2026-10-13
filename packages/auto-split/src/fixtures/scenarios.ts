@@ -15,6 +15,7 @@ import {
   truckFused,
   humanFigure,
 } from './models';
+import { OPEN_TRUCK_ANSWER } from './open-truck-answer';
 import { required } from '../required';
 
 /**
@@ -32,6 +33,7 @@ export const SCENARIOS = [
   'vehicle-component',
   'vehicle-ambiguous-wheel',
   'vehicle-truck-plane',
+  'vehicle-open-truck',
   'vehicle-wheels-fused',
 ] as const;
 export type ScenarioName = (typeof SCENARIOS)[number];
@@ -43,6 +45,7 @@ export const SCENARIO_MODE: Readonly<Record<ScenarioName, 'human' | 'vehicle'>> 
   'vehicle-component': 'vehicle',
   'vehicle-ambiguous-wheel': 'vehicle',
   'vehicle-truck-plane': 'vehicle',
+  'vehicle-open-truck': 'vehicle',
   'vehicle-wheels-fused': 'vehicle',
 };
 
@@ -390,6 +393,8 @@ export function scenarioAnswer(name: ScenarioName): Record<string, unknown> {
       return carScenario();
     case 'vehicle-ambiguous-wheel':
       return carScenario(0.12);
+    case 'vehicle-open-truck':
+      return OPEN_TRUCK_ANSWER;
     case 'vehicle-truck-plane':
       return truckScenario();
     case 'vehicle-wheels-fused':
