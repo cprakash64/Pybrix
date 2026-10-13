@@ -80,13 +80,20 @@ async function enterSplit(page: Page): Promise<void> {
   await expect(workspace).toBeVisible();
 }
 
+async function chooseUnits(page: Page, unit: 'millimeter' | 'inch'): Promise<void> {
+  await revealControl(page, page.getByTestId('split-connector-pin'));
+  await page.getByTestId('split-connector-pin').check();
+  await page.getByTestId(`split-unit-interpretation-${unit}`).check();
+  await page.getByTestId('split-connector-none').check();
+}
 async function chooseMillimetres(page: Page): Promise<void> {
-  await page.getByTestId('split-unit-interpretation-millimeter').check();
+  await chooseUnits(page, 'millimeter');
 }
 
 async function previewSplit(page: Page): Promise<void> {
   await page.getByTestId('split-preview').click();
   await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 60_000 });
+  await revealControl(page, page.getByTestId('split-piece-a'));
 }
 
 const watchErrors = (page: Page): string[] => {
@@ -197,10 +204,15 @@ test.describe('Unit interpretation', () => {
     await openBox(page);
     await expect(page.getByTestId('fact-units')).toHaveText('Unspecified by STL');
     await enterSplit(page);
-    await expect(page.getByTestId('split-connector-pin')).toBeDisabled();
+    await expect(page.getByTestId('split-unit-interpretation')).toHaveCount(0);
+    await expect(page.getByTestId('split-preview')).toBeEnabled();
+    await revealControl(page, page.getByTestId('split-connector-pin'));
+    await page.getByTestId('split-connector-pin').check();
     await expect(
       page.getByTestId('split-unit-interpretation').locator('input:checked'),
     ).toHaveCount(0);
+    await expect(page.getByTestId('split-preview')).toBeDisabled();
+    await page.getByTestId('split-connector-none').check();
     // The model itself still works: a plain cut needs no unit.
     await expect(page.getByTestId('split-preview')).toBeEnabled();
   });
@@ -223,7 +235,7 @@ test.describe('Unit interpretation', () => {
     await page.goto('/');
     await openBox(page);
     await enterSplit(page);
-    await page.getByTestId('split-unit-interpretation-inch').check();
+    await chooseUnits(page, 'inch');
     // The numbers are the file's own: 10 to 70. Only their meaning changed.
     await expect(page.getByTestId('split-position-range')).toHaveText('10.0 in – 70.0 in');
     await expect(page.getByTestId('fact-units')).toHaveText('Inches (your choice)');
@@ -235,7 +247,7 @@ test.describe('Unit interpretation', () => {
     await page.goto('/');
     await openBox(page);
     await enterSplit(page);
-    await page.getByTestId('split-unit-interpretation-inch').check();
+    await chooseUnits(page, 'inch');
 
     await page.getByTestId('workflow-texture').click();
     await expect(page.getByTestId('texture-unit-interpretation-inch')).toBeChecked();
@@ -247,6 +259,8 @@ test.describe('Unit interpretation', () => {
     await expect(page.getByTestId('convert-unit-inch')).toBeChecked();
 
     await enterSplit(page);
+    await revealControl(page, page.getByTestId('split-connector-pin'));
+    await page.getByTestId('split-connector-pin').check();
     await expect(page.getByTestId('split-unit-interpretation-inch')).toBeChecked();
     await expect(page.getByTestId('split-position-range')).toHaveText('10.0 in – 70.0 in');
   });
@@ -281,7 +295,7 @@ test.describe('Manual Split', () => {
     await chooseMillimetres(page);
 
     await previewSplit(page);
-    await expect(page.getByTestId('split-preview-label')).toHaveText(/not applied/);
+    await expect(page.getByTestId('split-preview-label')).toHaveText('2 pieces');
     await expect(page.getByTestId('split-piece-a')).toContainText('24,000 mm³');
     await expect(page.getByTestId('split-piece-b')).toContainText('24,000 mm³');
     await expect(page.getByTestId('split-result-validation')).toContainText('closed');
@@ -411,7 +425,7 @@ test.describe('Manual Split', () => {
     await page.goto('/');
     await openBox(page);
     await enterSplit(page);
-    await page.getByTestId('split-unit-interpretation-inch').check();
+    await chooseUnits(page, 'inch');
     // The box is 40 x 20 x 60 UNITS, i.e. inches: the default 4 mm pin fits easily.
     await revealControl(page, page.getByTestId('split-connector-pin'));
     await page.getByTestId('split-connector-pin').check();
@@ -489,8 +503,10 @@ for (const [width, height] of [
     await openBox(page);
     await enterSplit(page);
     await chooseMillimetres(page);
-    for (const id of ['split-position-value', 'split-tilt', 'split-roll', 'split-flip-plane'])
+    for (const id of ['split-position-value', 'split-tilt', 'split-roll', 'split-flip-plane']) {
+      await revealControl(page, page.getByTestId(id));
       await page.getByTestId(id).scrollIntoViewIfNeeded();
+    }
     await expect(page.getByTestId('split-preview')).toBeVisible();
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,

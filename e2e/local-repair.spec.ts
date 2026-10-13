@@ -241,7 +241,8 @@ test('STALE: replacing the model during a repair never shows the old preview', a
   await page.waitForTimeout(6_000);
   await expect(page.getByTestId('repair-candidate')).toHaveCount(0);
   await expect(page.getByTestId('apply-repair')).toHaveCount(0);
-  await expect(page.getByTestId('repair-no-repairs')).toBeVisible();
+  await expect(page.getByTestId('repair-continue')).toBeVisible();
+  await expect(page.getByTestId('repair-no-repairs')).toBeAttached();
   await expect(count(page, 'non-manifold-vertices')).toHaveCount(1);
   await expect(count(page, 'non-manifold-vertices')).toHaveText('0');
 });

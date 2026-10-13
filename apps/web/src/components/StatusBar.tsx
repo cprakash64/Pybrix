@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 import { describeUnit } from '../state/model';
-import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
+import { useWorkspaceState } from '../state/store-context';
 import { useIssueNavigation } from '../state/use-issue-navigation';
-import { WorkflowId } from '../state/workflows';
 import { AnalysisState, ImportState } from '../state/workspace-store';
 import { describePhase } from './ImportDropZone';
 import { Icon, type IconName } from './shell/Icon';
 import { PRODUCT_VERSION } from './shell/brand';
+import { useShellLayout } from './shell/shell-layout';
 
 /**
  * The status bar: what the application is doing, and the loaded model's size.
@@ -27,7 +27,7 @@ import { PRODUCT_VERSION } from './shell/brand';
  */
 export function StatusBar(): ReactNode {
   const { model, importProgress, analysis } = useWorkspaceState();
-  const store = useWorkspaceStore();
+  const layout = useShellLayout();
 
   const importing =
     importProgress.state === ImportState.Screening ||
@@ -114,9 +114,9 @@ export function StatusBar(): ReactNode {
               className={`statusbar__health statusbar__health--${health.tone}`}
               data-tooltip={health.tooltip}
               data-tooltip-side="above"
-              aria-label={`${health.text}. ${health.tooltip} Open the Repair workspace.`}
+              aria-label={`${health.text}. ${health.tooltip} Open the Inspector.`}
               onClick={() => {
-                store.selectWorkflow(WorkflowId.Repair);
+                layout.showInspector();
               }}
               data-testid="status-health"
             >

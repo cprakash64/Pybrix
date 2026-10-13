@@ -63,8 +63,12 @@ export function SplitWorkspace(): ReactNode {
    * and acted on from the footer; when both lived in the footer the applied
    * state was 162 px tall inside a 140 px scroll area.
    */
-  const [editingPreview, setEditingPreview] = useState<SplitControls['preview']>(undefined);
-  const adjustCut = split.preview !== undefined && editingPreview === split.preview;
+  const [editingPreview, setEditingPreview] = useState<string | undefined>(undefined);
+  const previewKey =
+    split.preview === undefined
+      ? undefined
+      : `${split.preview.candidate.documentId}/${String(split.preview.candidate.generation)}/${split.preview.candidate.candidateId}`;
+  const adjustCut = previewKey !== undefined && editingPreview === previewKey;
   const [editingApplied, setEditingApplied] = useState<string | undefined>(undefined);
   const splitAgain = split.applied !== undefined && editingApplied === split.applied.recordId;
   const [connectorIntent, setConnectorIntent] = useState<
@@ -121,7 +125,7 @@ export function SplitWorkspace(): ReactNode {
                 type="button"
                 className="secondary-action"
                 onClick={() => {
-                  setEditingPreview(adjustCut ? undefined : split.preview);
+                  setEditingPreview(adjustCut ? undefined : previewKey);
                 }}
               >
                 Adjust cut
@@ -190,10 +194,12 @@ export function SplitWorkspace(): ReactNode {
             </div>
           )}
         </div>
-        <PanelSection title="Details" defaultOpen={false} testId="split-details">
-          <ResultSection split={split} />
-          <ExportSection split={split} mode={exportMode} onMode={setExportMode} />
-        </PanelSection>
+        {split.preview !== undefined || split.applied !== undefined ? (
+          <PanelSection title="Details" defaultOpen={false} testId="split-details">
+            <ResultSection split={split} />
+            <ExportSection split={split} mode={exportMode} onMode={setExportMode} />
+          </PanelSection>
+        ) : null}
         {auto.tab === 'manual' ||
         (auto.hasResult && auto.selected !== undefined && !split.errorIsResourceLimit) ||
         split.exportState === SplitExportState.Failed ? (
@@ -202,6 +208,10 @@ export function SplitWorkspace(): ReactNode {
       </div>
       <SplitFooter
         split={split}
+        pendingPhysical={pendingConnector !== 'none'}
+        onClearPending={() => {
+          setConnectorIntent(undefined);
+        }}
         splitAgain={splitAgain}
         onEndSplitAgain={() => {
           setEditingApplied(undefined);
@@ -235,6 +245,7 @@ const busy = (split: SplitControls): boolean =>
 
 function CutPlaneSection({ split }: { readonly split: SplitControls }): ReactNode {
   const positionId = useId();
+  const exactPositionId = useId();
   const tiltId = useId();
   const rollId = useId();
   const part = split.part;
@@ -292,17 +303,23 @@ function CutPlaneSection({ split }: { readonly split: SplitControls }): ReactNod
         </div>
       </div>
       <PanelSection title="Advanced" defaultOpen={false} testId="split-advanced">
-        <NumberField
-          label={`${describePositionLabel(axis)} value`}
-          value={split.offset}
-          min={split.range.min}
-          max={split.range.max}
-          step={step}
-          {...suffixProp}
-          disabled={disabled}
-          onCommit={split.setOffset}
-          testId="split-position-value"
-        />
+        <div className="split-field split-field--inline">
+          <label className="format-options__label" htmlFor={exactPositionId}>
+            Position
+          </label>
+          <NumberField
+            id={exactPositionId}
+            label={`${describePositionLabel(axis)} value`}
+            value={split.offset}
+            min={split.range.min}
+            max={split.range.max}
+            step={step}
+            {...suffixProp}
+            disabled={disabled}
+            onCommit={split.setOffset}
+            testId="split-position-value"
+          />
+        </div>
 
         <div className="split-field split-field--inline">
           <label className="format-options__label" htmlFor={tiltId}>
@@ -390,7 +407,9 @@ function ConnectorSection({
   const connector = split.connector;
   return (
     <PanelSection
-      title={split.connector.kind === 'none' ? 'Connector · None' : 'Connector'}
+      title={
+        pending === 'none' && split.connector.kind === 'none' ? 'Connector · None' : 'Connector'
+      }
       defaultOpen={false}
       testId="split-connectors"
     >
@@ -853,6 +872,13 @@ function SplitOutcome({
           </div>
           <PanelSection title="Details" defaultOpen={false}>
             <p>{split.error}</p>
+            {split.sourceNotClosed === undefined ? null : (
+              <ul>
+                {split.sourceNotClosed.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            )}
           </PanelSection>
         </section>
       )}
@@ -879,12 +905,16 @@ function SplitFooter({
   hideIdle,
   splitAgain,
   onEndSplitAgain,
+  pendingPhysical,
+  onClearPending,
 }: {
   readonly split: SplitControls;
   readonly exportMode: ExportMode;
   readonly hideIdle: boolean;
   readonly splitAgain: boolean;
   readonly onEndSplitAgain: () => void;
+  readonly pendingPhysical: boolean;
+  readonly onClearPending: () => void;
   /** While an Auto Split analysis runs, the footer's Cancel cancels THAT, not the whole split. */
   readonly onCancelAnalysis?: () => void;
   /** Why Preview cannot be asked for in the Auto Split tab, or undefined. Never blocks Apply or Undo. */
@@ -902,8 +932,9 @@ function SplitFooter({
     model.parts.some((part) => part.partId === applied.pieceA) &&
     model.parts.some((part) => part.partId === applied.pieceB);
   const connectorBlocked =
-    split.connector.kind !== 'none' &&
-    (!split.connectorsAvailable || split.connectorProblem !== undefined);
+    pendingPhysical ||
+    (split.connector.kind !== 'none' &&
+      (!split.connectorsAvailable || split.connectorProblem !== undefined));
 
   const previewBlocked = previewBlock !== undefined && split.phase === SplitPhase.Idle;
   const hint = !hasPart
@@ -1000,7 +1031,10 @@ function SplitFooter({
                   ? split.discardPreview
                   : splitAgain && split.phase === SplitPhase.Idle
                     ? onEndSplitAgain
-                    : split.cancel)
+                    : (): void => {
+                        onClearPending();
+                        split.cancel();
+                      })
               }
               data-testid={
                 onCancelAnalysis
@@ -1020,7 +1054,7 @@ function SplitFooter({
               <button
                 type="button"
                 className="primary-action convert-footer__primary"
-                disabled={split.phase === SplitPhase.Applying}
+                disabled={split.phase === SplitPhase.Applying || pendingPhysical}
                 aria-busy={split.phase === SplitPhase.Applying}
                 onClick={split.apply}
                 data-testid="split-apply"

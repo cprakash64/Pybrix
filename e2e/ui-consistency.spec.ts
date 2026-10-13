@@ -123,6 +123,10 @@ test('the four workspaces share one control family', async ({ page }) => {
   const shape = ['border-top-left-radius', 'border-top-width', 'font-weight', 'font-size'];
   for (const id of WORKSPACES) {
     await enter(page, id);
+    if (id === 'split') {
+      await revealControl(page, page.getByTestId('split-connector-none'));
+      await revealControl(page, page.getByTestId('split-position-value'));
+    }
     titles.push(...(await styles(page, '#tool-panel .panel-section__title', font)));
     primaries.push(
       ...(await styles(page, '#tool-panel .primary-action, #tool-panel .action--primary', shape)),
@@ -207,6 +211,7 @@ test('a selected card reads the same in every workspace, and not by colour alone
     // selected cards.
     const scope = `[data-testid="${id}-workspace"] .format-card[data-selected="true"]`;
     const card = page.locator(scope).first();
+    await revealControl(page, card);
     await expect(card).toBeVisible();
     // The check mark is the non-colour cue, and the radio is really checked.
     await expect(card.locator('.format-card__check')).toBeVisible();
@@ -276,7 +281,7 @@ test('on a phone every workspace’s drawer fits, and its primary action is reac
   await page.goto('/');
   await openBox(page);
   const primaryFor = {
-    repair: 'preview-repair',
+    repair: 'repair-continue',
     convert: 'convert-export',
     split: 'split-preview',
     texture: 'texture-generate',

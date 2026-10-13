@@ -131,6 +131,7 @@ test('one model through Repair, Convert, Split and Texture leaves one healthy ap
   await page.getByTestId('workflow-repair').click();
   await expect(page.getByTestId('issue-count-components')).toHaveText('2', { timeout: 60_000 });
   const finding = page.getByTestId('issue-row-components');
+  await revealControl(page, finding);
   await finding.click();
   await expect(page.getByTestId('issue-inspector-name')).toHaveText('Separate components');
   await expect(page.getByTestId('issue-hud')).toHaveCount(0);

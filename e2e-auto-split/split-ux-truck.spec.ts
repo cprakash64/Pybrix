@@ -238,3 +238,28 @@ test('current Repair, Apply, plain Split, Undo restores repaired export', async 
   await expect(page.getByTestId('fact-triangles')).toHaveText('1,988,892', { timeout: 180_000 });
   await splitChain(page, browser, 'repaired', '1,988,892');
 });
+
+test('final polish: named exact position and the normal Find parts setup', async ({ page }) => {
+  test.setTimeout(600_000);
+  await importTruck(page);
+  await page.getByTestId('workflow-split').click();
+  await page.getByTestId('split-tab-manual').click();
+  await expect(page.getByTestId('split-preview')).toBeEnabled({ timeout: 180_000 });
+  await disclose(page, 'split-advanced');
+  await capture(page, 'original-J-advanced');
+  await page.getByTestId('split-tab-auto').click();
+  await page.getByTestId('auto-kind-vehicle').check({ force: true });
+  await page.getByTestId('auto-disclosure-continue').click();
+  await expect(page.getByTestId('auto-analyze')).toBeEnabled();
+  await capture(page, 'E-auto-ready');
+  await page.getByTestId('workflow-repair').click();
+  await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 180_000 });
+  await page.getByTestId('preview-repair').click();
+  await expect(page.getByTestId('repair-intent')).toContainText('Repair complete', {
+    timeout: 180_000,
+  });
+  await page.getByTestId('workflow-split').click();
+  await page.getByTestId('split-tab-manual').click();
+  await disclose(page, 'split-advanced');
+  await capture(page, 'repaired-J-advanced');
+});

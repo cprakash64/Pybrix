@@ -168,6 +168,10 @@ export function AutoSplitSections({
           <p data-testid="auto-part">{auto.partLabel}</p>
           <p data-testid="auto-tagline">{AUTO_SPLIT_COPY.tagline}</p>
           <p>{auto.statusText}</p>
+          {auto.planeApproximate ? (
+            <p data-testid="auto-approximate">{AUTO_SPLIT_COPY.approximateCut}</p>
+          ) : null}
+          {auto.appliedSinceAnalysis ? <p>{AUTO_SPLIT_COPY.afterApply}</p> : null}
         </PanelSection>
       ) : null}
       {auto.selected?.operation === SuggestionOperation.Component ? (

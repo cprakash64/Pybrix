@@ -28,6 +28,7 @@ async function openFile(page: Page, name: string, bytes: Buffer): Promise<void> 
   const chooser = page.waitForEvent('filechooser');
   await page.getByTestId('browse-button').click();
   await (await chooser).setFiles({ name, mimeType: 'model/stl', buffer: bytes });
+  await revealControl(page, page.getByTestId('self-intersection-headline'));
 }
 
 /** Workers currently alive in the page, by name. */

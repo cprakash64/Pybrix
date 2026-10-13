@@ -84,6 +84,7 @@ test('BQ25: repair refuses rather than becoming uninterruptible', async ({ page 
    * The primary action keeps its place (REPAIR-UX-01) but is disabled.
    */
   const refusal = page.getByTestId('repair-isolation-unavailable');
+  await revealControl(page, refusal);
   await expect(refusal).toBeVisible();
   await expect(page.getByTestId('preview-repair')).toBeDisabled();
   await expect(page.getByTestId('apply-repair')).toHaveCount(0);

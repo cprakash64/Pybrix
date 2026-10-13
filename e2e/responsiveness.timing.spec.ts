@@ -121,6 +121,7 @@ test('J2: the self-intersection check does not block the UI thread, and Cancel s
   // for like.
   const idleGap = await measureWorstGap(page, 1500);
 
+  await revealControl(page, page.getByTestId('run-self-intersection'));
   await page.getByTestId('run-self-intersection').click();
   await expect(page.getByTestId('cancel-self-intersection')).toBeVisible({ timeout: 60_000 });
 

@@ -4816,6 +4816,7 @@
   line-height: 1.6;
 }
 .activity-disclosure > summary {
+  min-height: 40px;
   padding: 0.75rem 1rem;
   color: var(--cad-text-muted);
   cursor: pointer;
@@ -4831,7 +4832,7 @@
   background: transparent;
   padding: 1rem 0;
 }
-.split-workspace .auto-row__status {
+.split-workspace .auto-row[data-tone] .auto-row__status {
   color: var(--cad-text-muted);
 }
 .split-workspace .auto-row__name {

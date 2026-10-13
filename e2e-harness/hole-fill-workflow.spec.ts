@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { Fixture, digest, loadFixture, openHarness, readScene, readState } from './harness';
 
@@ -44,6 +45,7 @@ async function selectPart(page: Page, partId: string): Promise<void> {
 
 /** Waits until the panel has listed the active part's openings. */
 async function awaitListing(page: Page): Promise<void> {
+  await revealControl(page, page.getByTestId('hole-fill-count'));
   await expect(page.getByTestId('hole-fill-count')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('hole-fill-listing')).toHaveCount(0, { timeout: 60_000 });
 }

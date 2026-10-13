@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { expect, test } from '@playwright/test';
 import { Fixture, digest, loadFixture, openHarness, readState } from './harness';
 import type { Page } from '@playwright/test';
@@ -24,6 +25,7 @@ async function cancelSplit(page: Page): Promise<void> {
   await expect(page.getByTestId('split-workspace')).toBeHidden();
 }
 async function chooseConnector(page: Page, kind: 'pin' | 'dovetail'): Promise<void> {
+  await revealControl(page, page.getByTestId(`split-connector-${kind}`));
   await page.getByTestId(`split-connector-${kind}`).check();
 }
 async function resetQualification(page: Page): Promise<void> {
@@ -91,6 +93,7 @@ test('7B browser flow 2: round pin split applies and exports both pieces', async
   const names: string[] = [];
   page.on('download', (download) => names.push(download.suggestedFilename()));
   await page.getByTestId('split-export').click();
+  await revealControl(page, page.getByTestId('split-export-saved'));
   await expect(page.getByTestId('split-export-saved')).toBeVisible({ timeout: 30_000 });
   const sorted = names.sort();
   expect(sorted).toHaveLength(2);
@@ -189,6 +192,7 @@ test('7B-X03 repeated preview invalidation and cancel retains no Boolean worker'
     await openSplit(page);
     await resetQualification(page);
     await preview(page);
+    await revealControl(page, page.getByTestId('split-plane-xz'));
     await page.getByTestId('split-plane-xz').click();
     await preview(page);
     await chooseConnector(page, 'pin');
@@ -225,7 +229,12 @@ test('7B-X02 real Split supersession allows only Preview B to apply', async ({ p
   await resetQualification(page);
   await page.getByTestId('split-preview').click();
   await waitForSplitPhase(page, { phase: 'MANIFOLD_ENTER' });
+  await expect(page.getByTestId('split-apply')).toBeEnabled({ timeout: 60_000 });
+  await revealControl(page, page.getByTestId('split-position-value'));
   await page.getByTestId('split-position-value').fill('3');
+  await page.getByTestId('split-position-value').blur();
+  await expect(page.getByTestId('split-position-value')).toHaveValue('3');
+  await expect(page.getByTestId('split-preview-label')).toHaveCount(0);
   await page.getByTestId('split-preview').click();
   await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('split-apply').click();
@@ -271,6 +280,7 @@ test('7B-X10 Split preview, connectors, apply and piece exports stay on origin',
   await page.getByTestId('split-apply').click();
   await expect.poll(async () => (await readState(page)).partCount).toBe(2);
   await page.getByTestId('split-export').click();
+  await revealControl(page, page.getByTestId('split-export-saved'));
   await expect(page.getByTestId('split-export-saved')).toBeVisible({ timeout: 30_000 });
   expect(offOrigin).toEqual([]);
 });

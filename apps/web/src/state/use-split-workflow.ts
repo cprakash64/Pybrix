@@ -29,7 +29,7 @@ import {
 import { planeSettingsFor } from './auto-split-plane';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { AppErrorCode, isAppError, type LengthUnit } from '@cadfixer/shared';
-import { NOT_CLOSED_COPY, notClosedReasonsOf } from './split-readiness-presentation';
+import { notClosedReasonsOf } from './split-readiness-presentation';
 import { RESOURCE_REFUSAL_COPY, splitSizeNoticeFor } from './split-size-presentation';
 import type { SplitSizeNotice } from './split-size-presentation';
 import { millimetresToCoordinates, unitWord } from './unit-interpretation';
@@ -680,8 +680,8 @@ export function useSplitWorkflow(): SplitControls {
           const notClosed = notClosedReasonsOf(cause);
           if (notClosed !== undefined) {
             // A fact about the file, not a failure: a status with a way forward, never an error.
-            setNotClosedError(NOT_CLOSED_COPY.heading, notClosed);
-            store.pushStatus(StatusSeverity.Info, NOT_CLOSED_COPY.heading);
+            setNotClosedError("This cut can't be made safely.", notClosed);
+            store.pushStatus(StatusSeverity.Info, "This cut can't be made safely.");
             return;
           }
           if (isResourceRefusal(cause)) {

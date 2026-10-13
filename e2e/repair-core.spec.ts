@@ -195,6 +195,7 @@ test('RCF5: switching filling off leaves the openings alone; Repair still has th
   page,
 }) => {
   await openCube(page);
+  await revealControl(page, page.getByTestId('repair-op-toggle-fill-openings'));
   await page.getByTestId('repair-op-toggle-fill-openings').uncheck();
   // The seven pinched vertices are still work for Repair, so it is not disabled.
   await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 60_000 });

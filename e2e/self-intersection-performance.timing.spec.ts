@@ -33,6 +33,7 @@ interface Measurement {
 
 /** One invocation: click to terminal result, split at the worker's first report. */
 async function measureOnce(page: Page): Promise<Measurement> {
+  await revealControl(page, page.getByTestId('run-self-intersection'));
   const clicked = Date.now();
   await page.getByTestId('run-self-intersection').click();
 

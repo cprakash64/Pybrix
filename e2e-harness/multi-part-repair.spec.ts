@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { expect, test } from '@playwright/test';
 import { Fixture, digest, loadFixture, openHarness, readScene, readState } from './harness';
 
@@ -35,11 +36,13 @@ test('repairing part A leaves part B byte-identical and still on screen', async 
     .toBe('ready');
   await expect(page.getByTestId('repair-part-scope')).toContainText('Defective');
 
-  const preview = page.getByTestId('preview-repair');
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  const preview = page.getByTestId('advanced-preview-repair');
   await expect(preview).toBeEnabled({ timeout: 120_000 });
   await preview.click();
 
   // The candidate belongs to A, and the panel says so.
+  await revealControl(page, page.getByTestId('repair-candidate-headline'));
   await expect(page.getByTestId('repair-candidate-headline')).toBeVisible({ timeout: 120_000 });
   await expect
     .poll(async () => (await readState(page)).repairCandidatePartId, { timeout: 60_000 })
@@ -53,6 +56,7 @@ test('repairing part A leaves part B byte-identical and still on screen', async 
   const apply = page.getByTestId('apply-repair');
   await expect(apply).toBeEnabled();
   await apply.click();
+  await revealControl(page, page.getByTestId('repair-applied-headline'));
   await expect(page.getByTestId('repair-applied-headline')).toBeVisible({ timeout: 120_000 });
 
   const applied = await readState(page);
@@ -96,9 +100,11 @@ test('undo restores part A as a new revision and leaves part B alone', async ({ 
     .poll(async () => (await readState(page)).analysisState, { timeout: 120_000 })
     .toBe('ready');
   await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 120_000 });
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 120_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied-headline'));
   await expect(page.getByTestId('repair-applied-headline')).toBeVisible({ timeout: 120_000 });
 
   const applied = await readState(page);
@@ -137,7 +143,9 @@ test('switching parts mid-preview withdraws Apply rather than retargeting it', a
     .poll(async () => (await readState(page)).analysisState, { timeout: 120_000 })
     .toBe('ready');
   await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 120_000 });
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate-headline'));
   await expect(page.getByTestId('repair-candidate-headline')).toBeVisible({ timeout: 120_000 });
 
   // Now select the OTHER part while a candidate for A exists.

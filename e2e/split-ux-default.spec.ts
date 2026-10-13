@@ -105,3 +105,36 @@ test('200% text sizing keeps the primary action and disclosures usable', async (
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('issue-list')).toBeVisible();
 });
+
+test('a pending physical connector cannot apply an earlier plain preview', async ({ page }) => {
+  await open(page, tetrahedronStl());
+  await page.getByTestId('workflow-split').click();
+  await page.getByTestId('split-preview').click();
+  await expect(page.getByTestId('split-apply')).toBeEnabled();
+  await page.getByRole('button', { name: 'Adjust cut', exact: true }).click();
+  await page
+    .getByTestId('split-connectors')
+    .getByRole('button', { name: 'Connector · None', exact: true })
+    .click();
+  await page.getByTestId('split-connector-pin').check();
+  await expect(page.getByTestId('split-unit-interpretation')).toBeVisible();
+  await expect(page.getByTestId('split-apply')).toBeDisabled();
+  await page.getByTestId('split-connector-none').check();
+  await expect(page.getByTestId('split-preview')).toBeEnabled();
+  await expect(page.getByTestId('split-unit-interpretation')).toHaveCount(0);
+});
+
+for (const width of [1440, 1024]) {
+  test(`Model details opens the Inspector without changing Split at ${String(width)} px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await open(page, tetrahedronStl());
+    await page.getByTestId('workflow-split').click();
+    await expect(page.getByTestId('split-preview')).toBeEnabled();
+    await page.getByTestId('status-health').click();
+    await expect(page.getByTestId('inspector')).toBeVisible();
+    await expect(page.getByTestId('split-workspace')).toBeVisible();
+    await expect(page.getByTestId('repair-workspace')).toBeHidden();
+  });
+}

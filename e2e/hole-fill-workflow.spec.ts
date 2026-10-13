@@ -451,7 +451,8 @@ test('HFUX17: a repair applied under a preview makes that preview unusable', asy
   // preview survives an unrelated re-render, which is the weaker but honest
   // claim to make about that file. Since REPAIR-UX-01 the action is always
   // present, so "available" means enabled rather than visible.
-  const previewRepair = page.getByTestId('preview-repair');
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  const previewRepair = page.getByTestId('advanced-preview-repair');
   if (await previewRepair.isEnabled()) {
     await previewRepair.click();
     await revealControl(page, page.getByTestId('repair-candidate'));

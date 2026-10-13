@@ -3,6 +3,13 @@ import type { Locator, Page } from '@playwright/test';
 /** Open the existing controls as a user would before exercising an advanced capability. */
 export async function revealControl(page: Page, target: Locator): Promise<void> {
   await target.waitFor({ state: 'attached' });
+  if (
+    await target.evaluate(
+      (element) =>
+        element.closest('details:not([open])')?.classList.contains('activity-disclosure') === true,
+    )
+  )
+    await page.locator('.activity-disclosure > summary').click();
   const adjust = page.getByRole('button', { name: 'Adjust cut', exact: true });
   if (!(await target.isVisible()) && (await adjust.isVisible())) await adjust.click();
   const buttons = await target.evaluate((element) => {

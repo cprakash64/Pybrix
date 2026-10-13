@@ -166,10 +166,12 @@ test('BQ53: the Geogram kernel is not fetched until a check needs it', async ({ 
    */
   expect(wasmRequests, 'no WASM may be fetched before a model is even loaded').toEqual([]);
 
-  await openFile(page, 'small.stl', binaryStl(500).bytes);
+  await openFile(page, 'explicit-check.stl', binaryStl(25_001).bytes);
   await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   // Import and topology are kernel-free too: topology is our own exact-coordinate
   // engine, not the WASM narrowphase.
   expect(wasmRequests).toEqual([]);
+  await page.getByTestId('run-self-intersection').click();
+  await expect.poll(() => wasmRequests.length).toBe(1);
 });

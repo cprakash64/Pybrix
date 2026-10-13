@@ -324,7 +324,7 @@ export const SPLIT_COPY = Object.freeze({
   previewLabel: 'Preview — not applied',
   previewButton: 'Preview split',
   applyButton: 'Apply split',
-  discardButton: 'Discard preview',
+  discardButton: 'Cancel',
   cancelButton: 'Cancel',
   undoButton: 'Undo split',
   exportMode: 'Export',
@@ -336,7 +336,7 @@ export const SPLIT_COPY = Object.freeze({
    * WORKSPACE-UX-03: one line each for the action region. The full message is
    * an alert in the scrolling content above it.
    */
-  previewReady: 'Preview ready — nothing has changed until you apply it.',
+  previewReady: 'Ready to apply.',
   applying: 'Applying the split…',
   failedLine: 'No split was made — details above',
   tooDetailedHint: 'This model is too detailed for Manual Split right now.',

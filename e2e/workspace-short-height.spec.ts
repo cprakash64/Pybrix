@@ -68,7 +68,9 @@ async function frame(page: Page, footerId: string): Promise<Frame> {
     const scrollsToEnd = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
     scroller.scrollTop = before;
     const s = scroller.getBoundingClientRect();
-    const f = footer.getBoundingClientRect();
+    const f = footer.hidden
+      ? { top: s.bottom, bottom: s.bottom, height: 0 }
+      : footer.getBoundingClientRect();
     return {
       scroller: { top: s.top, bottom: s.bottom },
       footer: { top: f.top, bottom: f.bottom, height: f.height },
@@ -95,6 +97,7 @@ async function expectClickable(
   footerId: string,
 ): Promise<void> {
   const control = page.getByTestId(id).first();
+  await revealControl(page, control);
   await control.scrollIntoViewIfNeeded();
   const probe = await control.evaluate((element, footer) => {
     // A visually hidden radio is operated through the label that draws it.
@@ -112,7 +115,9 @@ async function expectClickable(
       hit: target?.closest('[data-testid]')?.getAttribute('data-testid') ?? target?.tagName ?? null,
       top: rect.top,
       bottom: rect.bottom,
-      footerTop: region.getBoundingClientRect().top,
+      footerTop: region.hasAttribute('hidden')
+        ? (document.querySelector('.tool-panel__body')?.getBoundingClientRect().bottom ?? 0)
+        : region.getBoundingClientRect().top,
       scrollerTop:
         document.querySelector('.tool-panel__body')?.getBoundingClientRect().top ?? Number.NaN,
       insideFooter: region.contains(element),
@@ -189,9 +194,11 @@ async function expectFocusClear(
         top: rect.top,
         bottom: rect.bottom,
         limitTop: scroller.getBoundingClientRect().top,
-        limitBottom: region.contains(element)
-          ? region.getBoundingClientRect().bottom
-          : region.getBoundingClientRect().top,
+        limitBottom: region.hasAttribute('hidden')
+          ? scroller.getBoundingClientRect().bottom
+          : region.contains(element)
+            ? region.getBoundingClientRect().bottom
+            : region.getBoundingClientRect().top,
       };
     }, footerId);
   expect(rects.top, `${state}: focused ${id} above the scroll area`).toBeGreaterThanOrEqual(
@@ -297,7 +304,7 @@ for (const viewport of VIEWPORTS) {
       'repair-applied-headline',
       'repair-applied-changes',
       'repair-applied-remaining',
-      'preview-repair',
+      'repair-continue',
     ]);
     await expectFocusClear(page, 'repair/applied', 'undo-repair', 'repair-footer');
 

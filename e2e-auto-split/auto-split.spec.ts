@@ -42,11 +42,11 @@ async function mockState(page: Page): Promise<{
   return (await response.json()) as never;
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
   counter += 1;
   // Each test is its own client as far as the rate limiter is concerned.
   await page.setExtraHTTPHeaders({
-    'x-real-ip': `10.${String(counter >> 8)}.${String(counter & 255)}.7`,
+    'x-real-ip': `10.${String((testInfo.workerIndex + 1) % 250)}.${String(counter >> 8)}.${String(counter & 255)}`,
   });
   await page.request.post(`${SERVICE}/api/auto-split/__mock/reset`);
   await page.goto('/');
@@ -212,9 +212,9 @@ test('character: disclosure, six views and three numbers, a head suggestion, pre
   await expect(page.getByTestId('inspector')).toBeHidden();
 
   // The remaining suggestions are stale and Re-analyze is offered.
-  await expect(page.getByTestId('auto-stale')).toBeVisible();
+  await expect(page.getByTestId('auto-stale')).toBeHidden();
   await expect(page.getByTestId('auto-preview-left_arm')).toBeDisabled();
-  await expect(page.getByTestId('auto-reanalyze')).toBeVisible();
+  await expect(page.getByTestId('auto-reanalyze')).toBeHidden();
 
   // One Undo restores the exact model.
   await page.getByTestId('split-undo').click();
@@ -241,6 +241,7 @@ test('vehicle: separate wheels become components that preview, apply and undo', 
   await expect(page.getByTestId(`auto-row-status-${id}`)).toHaveText(/Suggested cut/);
 
   // Highlight before preview: the eye draws the components on the model.
+  await revealControl(page, page.getByTestId(`auto-show-${id}`));
   await page.getByTestId(`auto-show-${id}`).click();
   await expect(page.locator('[data-testid="viewport-canvas"] canvas')).toHaveAttribute(
     'data-face-highlight-objects',
@@ -271,13 +272,14 @@ test('vehicle: a fused cab and bed is offered as one cut to review, and it previ
   // Editing it is editing Manual Split's own plane.
   await revealControl(page, page.getByTestId('auto-edit-cab_bed'));
   await page.getByTestId('auto-edit-cab_bed').click();
+  await revealControl(page, page.getByTestId('split-position-slider'));
   await expect(page.getByTestId('split-position-slider')).toBeVisible();
-  // A binary STL states no unit: analysis was allowed, and connectors stay locked until the person
-  // chooses how to read the numbers.
-  await revealControl(page, page.getByTestId('split-connectors-unit'));
-  await expect(page.getByTestId('split-connectors-unit')).toBeVisible();
-  await expect(page.getByTestId('split-connector-pin')).toBeDisabled();
-  await expect(page.getByTestId('split-connector-dovetail')).toBeDisabled();
+  // Physical units are requested only when the user asks for a connector.
+  await expect(page.getByTestId('split-unit-interpretation')).toHaveCount(0);
+  await revealControl(page, page.getByTestId('split-connector-pin'));
+  await page.getByTestId('split-connector-pin').check();
+  await expect(page.getByTestId('split-unit-interpretation')).toBeVisible();
+  await page.getByTestId('split-connector-none').check();
   await previewAndApply(page, 'cab_bed');
   await page.getByTestId('split-undo').click();
   await expect(page.getByTestId('fact-triangles')).toHaveText(triangles.toLocaleString('en-US'), {
@@ -324,9 +326,12 @@ test('cancel aborts the request, reaches the service, and leaves the model uncha
   await accept(page, 'human');
   await findParts(page);
   await expect(page.getByTestId('auto-progress')).toBeVisible();
-  await expect(page.getByTestId('auto-status')).toContainText(/looking for parts/i, {
+  await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
     timeout: 60_000,
   });
+  await expect
+    .poll(async () => (await mockState(page)).received.length, { timeout: 60_000 })
+    .toBe(1);
   await page.getByTestId('auto-cancel').click();
   await expect(page.getByTestId('auto-cancelled')).toBeVisible();
   await expect.poll(async () => (await mockState(page)).aborted, { timeout: 15_000 }).toBe(1);
@@ -340,9 +345,12 @@ test('a model replaced during analysis never receives the old answer', async ({ 
   await enterAuto(page);
   await accept(page, 'human');
   await findParts(page);
-  await expect(page.getByTestId('auto-status')).toContainText(/looking for parts/i, {
+  await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
     timeout: 60_000,
   });
+  await expect
+    .poll(async () => (await mockState(page)).received.length, { timeout: 60_000 })
+    .toBe(1);
   // Another model is opened while the analysis is in flight.
   await openMesh(page, 'car.stl', carMultipart().mesh);
   await expect
@@ -516,17 +524,16 @@ test('a long analysis never looks broken: honest wording, Cancel in reach, a liv
     requestAnimationFrame(tick);
   });
   await findParts(page);
-  await expect(page.getByTestId('auto-status')).toContainText(/looking for parts/i, {
+  await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
     timeout: 30_000,
   });
   // Several seconds in: still the same honest sentence, a visible Cancel, no fake precision.
   await page.waitForTimeout(6000);
   await expect(page.getByTestId('auto-progress')).toBeVisible();
   await expect(page.getByTestId('auto-cancel')).toBeVisible();
-  await expect(page.getByTestId('split-cancel-analysis')).toBeVisible();
   expect(await page.getByTestId('auto-progress').innerText()).not.toMatch(/\d\s*%/);
   await expect(page.getByTestId('auto-progress')).toContainText(
-    /several seconds to a minute or more/i,
+    /Pybrix is looking for natural places to split your model/i,
   );
   // The analyze button is gone while it runs: nothing can start a duplicate.
   await expect(page.getByTestId('auto-analyze')).toHaveCount(0);
@@ -551,7 +558,7 @@ test('after an Apply, the list says its scope: the current part, not the rest of
   await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId('auto-part')).toContainText('part-1');
   await previewAndApply(page, 'head');
-  await expect(page.getByTestId('auto-stale')).toContainText(
+  await expect(page.getByTestId('auto-details')).toContainText(
     'Re-analyze looks only at the part now shown, not at the rest of the original model.',
   );
   await expect(page.getByTestId('auto-reanalyze')).toHaveText('Find again');
@@ -579,6 +586,7 @@ test('keyboard: Cancel stops an analysis, and a component selection is usable wi
   await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
   const wheel = page.locator('[data-testid^="auto-row-wheel:"]').first();
   const id = ((await wheel.getAttribute('data-testid')) ?? '').replace('auto-row-', '');
+  await revealControl(page, page.getByTestId(`auto-edit-${id}`));
   await page.getByTestId(`auto-edit-${id}`).focus();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('auto-components')).toBeVisible();

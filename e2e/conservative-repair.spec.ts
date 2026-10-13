@@ -208,7 +208,8 @@ test('O2: a reversed duplicate is reported and never offered for removal', async
   await expect(duplicates.verdict).toHaveText('No matching issue found');
   await expect(page.getByTestId('repair-op-mutations-remove-duplicate-faces')).toHaveText('0');
 
-  await expect(page.getByTestId('repair-no-repairs')).toBeVisible();
+  await expect(page.getByTestId('repair-continue')).toBeVisible();
+  await expect(page.getByTestId('repair-no-repairs')).toBeAttached();
   // No hidden repair: the action keeps its place (REPAIR-UX-01) but cannot be
   // pressed, and there is nothing to apply.
   await expect(page.getByTestId('preview-repair')).toBeDisabled();
@@ -282,7 +283,8 @@ test('O4: an unsafe degenerate removal is refused, with a reason, and changes no
   await expect(page.getByTestId('repair-panel')).not.toContainText('failed');
 
   // No candidate is produced for it at all; the action is present and disabled.
-  await expect(page.getByTestId('repair-no-repairs')).toBeVisible();
+  await expect(page.getByTestId('repair-continue')).toBeVisible();
+  await expect(page.getByTestId('repair-no-repairs')).toBeAttached();
   await expect(page.getByTestId('preview-repair')).toBeDisabled();
   await expect(page.getByTestId('apply-repair')).toHaveCount(0);
 
@@ -507,7 +509,8 @@ test('O10: importing another model invalidates the candidate it did not belong t
 
   // M1 has its own plan, from its own analysis. The tetrahedron is clean.
   await expect(page.getByTestId('health-filename')).toHaveText('second.stl');
-  await expect(page.getByTestId('repair-no-repairs')).toBeVisible();
+  await expect(page.getByTestId('repair-continue')).toBeVisible();
+  await expect(page.getByTestId('repair-no-repairs')).toBeAttached();
 });
 
 /* ----------------------------------------------------------------- O11 -- */
@@ -638,7 +641,8 @@ test('O14: repairing again after a repair finds nothing left to do', async ({ pa
   // The plan is recomputed against the repaired revision, automatically.
   await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId('repair-no-repairs')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('repair-continue')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('repair-no-repairs')).toBeAttached();
   // The duplicate was the only issue, so nothing is left to repair.
   await expect(page.getByTestId('repair-no-repairs')).toHaveText('No repairable problems found.');
   await expect(page.getByTestId('preview-repair')).toBeDisabled();
@@ -761,9 +765,10 @@ test('O17: the repair workflow is operable from the keyboard alone', async ({ pa
 
   // Named sections, so the workflow is findable (REPAIR-UX-01).
   await expect(page.getByRole('region', { name: 'Detected issues' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Repair options' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Repair options', exact: true })).toBeVisible();
 
   // The navigation item is a real control that moves attention to the workspace.
+  await page.getByTestId('workflow-convert').click();
   await page.getByTestId('workflow-repair').focus();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('repair-heading')).toBeFocused();
@@ -781,7 +786,8 @@ test('O17: the repair workflow is operable from the keyboard alone', async ({ pa
 
   // Preview, the view switch, the overlays, Apply and Undo are all reachable and
   // operable without a pointer.
-  const previewButton = page.getByTestId('preview-repair');
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  const previewButton = page.getByTestId('advanced-preview-repair');
   await previewButton.focus();
   await page.keyboard.press('Enter');
   await revealControl(page, page.getByTestId('repair-candidate'));
@@ -828,7 +834,8 @@ test('O18: the repair workflow stays usable at a narrow viewport', async ({ page
 
   // Every critical control is reachable — by scrolling its own column, not by
   // widening the window — and none of them is obscured.
-  const previewButton = page.getByTestId('preview-repair');
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  const previewButton = page.getByTestId('advanced-preview-repair');
   await previewButton.scrollIntoViewIfNeeded();
   await expect(previewButton).toBeVisible();
   await previewButton.click();

@@ -103,8 +103,14 @@ test('I-04: phone touch targets meet the tier’s 40 px', async ({ page }) => {
   await page.goto('/');
   await openDefects(page);
   await page.getByTestId('toggle-tool-drawer').click();
+  await expect(page.locator('.activity-disclosure > summary')).toBeVisible();
+  expect(
+    (await page.locator('.activity-disclosure > summary').boundingBox())?.height,
+  ).toBeGreaterThanOrEqual(40);
+  await revealControl(page, page.getByTestId('clear-status'));
   const clear = await page.getByTestId('clear-status').boundingBox();
   expect(clear?.height).toBeGreaterThanOrEqual(40);
+  await revealControl(page, page.getByTestId('repair-op-toggle-unify-winding'));
   const row = await page
     .locator('.repair-option__label')
     .filter({ has: page.getByTestId('repair-op-toggle-unify-winding') })

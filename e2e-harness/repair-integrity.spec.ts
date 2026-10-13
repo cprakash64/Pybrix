@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { Fixture, digest, loadFixture, openHarness, readScene, readState } from './harness';
 
@@ -29,11 +30,15 @@ async function selectPart(page: Page, partId: string): Promise<void> {
 
 /** Waits for the automatic plan, then previews and applies a repair. */
 async function repairActivePart(page: Page): Promise<void> {
+  await revealControl(page, page.getByTestId('repair-operations'));
   await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 60_000 });
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
 }
 

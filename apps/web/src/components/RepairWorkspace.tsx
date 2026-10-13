@@ -83,6 +83,14 @@ export function RepairWorkspace(): ReactNode {
         <PanelSection title="Details" testId="repair-details" defaultOpen={false}>
           {model === undefined ? null : <RepairOverview view={view} />}
           <MeshAnalysisSection />
+          {view.action === RepairActionKind.NothingFound ||
+          view.action === RepairActionKind.NothingSafe ? (
+            <InfoButton
+              disclosure={reasonInfo}
+              label="automatic repair"
+              testId="repair-details-reason"
+            />
+          ) : null}
           <PanelSection title="Advanced repair options" defaultOpen={false}>
             <button
               type="button"
@@ -135,6 +143,9 @@ function RepairIntent({ view }: { readonly view: RepairWorkspaceView }): ReactNo
   const heading = useRef<HTMLHeadingElement>(null);
   const previousAction = useRef(view.action);
   useEffect(() => {
+    if (selectedWorkflow === WorkflowId.Repair) heading.current?.focus();
+  }, [selectedWorkflow]);
+  useEffect(() => {
     const changed = previousAction.current !== view.action;
     previousAction.current = view.action;
     if (
@@ -151,22 +162,25 @@ function RepairIntent({ view }: { readonly view: RepairWorkspaceView }): ReactNo
   const complete = applied !== undefined && view.reportIsCurrent && !checking && !repairing;
   const healthy = view.action === RepairActionKind.NothingFound;
   const noSafeChange = view.action === RepairActionKind.NothingSafe;
+  const unavailable = view.action === RepairActionKind.Unavailable;
   return (
     <section className="workflow-intent" aria-live="polite" data-testid="repair-intent">
-      <h2 tabIndex={-1} ref={heading}>
+      <h2 tabIndex={-1} ref={heading} data-testid="repair-heading">
         {complete
           ? 'Repair complete'
           : checking
             ? 'Checking your model…'
             : repairing
               ? 'Repairing your model…'
-              : noSafeChange
-                ? 'Model checked'
-                : healthy
-                  ? 'Your model looks good.'
-                  : view.action === RepairActionKind.Preview
-                    ? 'Review repair'
-                    : 'This model can be improved.'}
+              : unavailable
+                ? 'Repair is unavailable'
+                : noSafeChange
+                  ? 'Model checked'
+                  : healthy
+                    ? 'Your model looks good.'
+                    : view.action === RepairActionKind.Preview
+                      ? 'Review repair'
+                      : 'This model can be improved.'}
       </h2>
       <p>
         {complete
@@ -175,13 +189,15 @@ function RepairIntent({ view }: { readonly view: RepairWorkspaceView }): ReactNo
             : 'Your model is ready.'
           : checking || repairing
             ? 'Please wait while Pybrix works on your model.'
-            : noSafeChange
-              ? 'Some complex geometry was left unchanged to protect the shape.'
-              : healthy
-                ? 'No repair is needed.'
-                : view.action === RepairActionKind.Preview
-                  ? 'Review the changes before applying them.'
-                  : 'Pybrix chooses safe repairs automatically.'}
+            : unavailable
+              ? 'You can still view and export your model.'
+              : noSafeChange
+                ? 'Some complex geometry was left unchanged to protect the shape.'
+                : healthy
+                  ? 'No repair is needed.'
+                  : view.action === RepairActionKind.Preview
+                    ? 'Review the changes before applying them.'
+                    : 'Pybrix chooses safe repairs automatically.'}
       </p>
       {complete || healthy || noSafeChange ? (
         <button
@@ -219,22 +235,11 @@ function RepairIntent({ view }: { readonly view: RepairWorkspaceView }): ReactNo
  * valid" can never be read as "this mesh has no problems".
  */
 function RepairOverview({ view }: { readonly view: RepairWorkspaceView }): ReactNode {
-  const { model, selectedWorkflow } = useWorkspaceState();
+  const { model } = useWorkspaceState();
   const applied = useCurrentAppliedRepair();
   const summaryInfo = useInfoDisclosure();
   const fileInfo = useInfoDisclosure();
-  const headingRef = useRef<HTMLParagraphElement>(null);
   const { summary } = view.navigation;
-
-  /*
-   * Moves focus here when the workspace is chosen from the navigation, so the
-   * navigation button does something real for a keyboard or screen-reader user
-   * instead of only highlighting itself.
-   */
-  useEffect(() => {
-    if (selectedWorkflow !== WorkflowId.Repair) return;
-    headingRef.current?.focus();
-  }, [selectedWorkflow]);
 
   if (model === undefined) return null;
 
@@ -244,8 +249,7 @@ function RepairOverview({ view }: { readonly view: RepairWorkspaceView }): React
         <p
           className="repair-overview__label"
           tabIndex={-1}
-          ref={headingRef}
-          data-testid="repair-heading"
+          data-testid="repair-diagnostics-heading"
         >
           Health
         </p>

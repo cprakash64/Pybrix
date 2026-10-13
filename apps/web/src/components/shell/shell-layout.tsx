@@ -73,6 +73,8 @@ export interface ShellLayout {
    * switched to is not left behind a closed drawer.
    */
   readonly showToolPanel: () => void;
+  /** Opens model information without changing the active workflow. */
+  readonly showInspector: () => void;
   readonly closeDrawers: () => void;
   /**
    * The drawer that is open AND is a drawer at this width. A docked panel is
@@ -117,6 +119,16 @@ export function ShellLayoutProvider({ children }: { readonly children: ReactNode
     setToolDrawerOpen(false);
     setInspectorDrawerOpen((open) => !open);
   }, [rememberOpener]);
+
+  const showInspector = useCallback((): void => {
+    if (inspectorIsDrawer) {
+      rememberOpener();
+      setToolDrawerOpen(false);
+      setInspectorDrawerOpen(true);
+    } else {
+      setInspectorCollapsed(false);
+    }
+  }, [inspectorIsDrawer, rememberOpener]);
 
   const toggleToolDrawer = useCallback((): void => {
     rememberOpener();
@@ -182,6 +194,7 @@ export function ShellLayoutProvider({ children }: { readonly children: ReactNode
       toggleInspectorDrawer,
       toggleToolDrawer,
       showToolPanel,
+      showInspector,
       closeDrawers,
       modalDrawer,
     }),
@@ -189,6 +202,7 @@ export function ShellLayoutProvider({ children }: { readonly children: ReactNode
       modalDrawer,
       closeDrawers,
       showToolPanel,
+      showInspector,
       inspectorCollapsed,
       inspectorDrawerOpen,
       toggleInspectorDrawer,

@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { expect, test } from '@playwright/test';
 import { Fixture, loadFixture, openHarness, readScene, readState } from './harness';
 
@@ -27,6 +28,7 @@ test('Mesh Health describes the active part, and follows a switch', async ({ pag
     .poll(async () => (await readState(page)).analysisState, { timeout: 60_000 })
     .toBe('ready');
   expect((await readState(page)).analysisPartId).toBe('a');
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible();
 
   await page.getByTestId('part-option-b').click();
