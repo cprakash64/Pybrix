@@ -1,0 +1,372 @@
+import type {
+  PartDescriptor,
+  SplitCommitResult,
+  SplitPlane,
+  SplitConnector,
+} from '@cadfixer/geometry-runtime';
+export type AssemblyVector = readonly [number, number, number];
+export interface AssemblyInterface {
+  readonly id: string;
+  readonly a: string;
+  readonly b: string;
+  readonly normal: AssemblyVector;
+  readonly origin: AssemblyVector;
+  readonly footprint: readonly AssemblyVector[];
+  readonly connectorPairIds: readonly string[];
+}
+export interface AssemblyConnectorPair {
+  readonly id: string;
+  readonly interfaceId: string;
+  readonly a: string;
+  readonly b: string;
+  readonly center: AssemblyVector;
+  readonly connector: Exclude<SplitConnector, { kind: 'none' }>;
+  readonly guardRadiusWorld: number;
+}
+export interface AssemblyPresentation {
+  readonly documentId: string;
+  readonly revision: number;
+  readonly exploded: boolean;
+  readonly connectorMode: 'automatic' | 'unavailable' | 'plain' | 'manual';
+  readonly offsets: readonly { readonly partId: string; readonly offset: AssemblyVector }[];
+  readonly interfaces: readonly AssemblyInterface[];
+  readonly connectorPairs: readonly AssemblyConnectorPair[];
+  readonly selectedPairId?: string | undefined;
+  readonly labels: Readonly<Record<string, string>>;
+}
+export interface SplitAssemblyContext {
+  readonly sourcePartId: string;
+  readonly sourceTransform: readonly number[];
+  readonly plane?: SplitPlane;
+  readonly label?: string;
+}
+const vector = (v: readonly number[]): AssemblyVector => [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0];
+export const assemblyPoint = (p: AssemblyVector, t: readonly number[]): AssemblyVector => [
+  p[0] * (t[0] ?? 1) + p[1] * (t[3] ?? 0) + p[2] * (t[6] ?? 0) + (t[9] ?? 0),
+  p[0] * (t[1] ?? 0) + p[1] * (t[4] ?? 1) + p[2] * (t[7] ?? 0) + (t[10] ?? 0),
+  p[0] * (t[2] ?? 0) + p[1] * (t[5] ?? 0) + p[2] * (t[8] ?? 1) + (t[11] ?? 0),
+];
+/** Inverse-transpose, including mirrored and nonuniform source transforms. */
+export function assemblyNormal(n: AssemblyVector, t: readonly number[]): AssemblyVector {
+  const [a, b, c, d, e, f, g, h, i] = [
+      defined(t[0]),
+      defined(t[3]),
+      defined(t[6]),
+      defined(t[1]),
+      defined(t[4]),
+      defined(t[7]),
+      defined(t[2]),
+      defined(t[5]),
+      defined(t[8]),
+    ],
+    det =
+      defined(a) * (defined(e) * defined(i) - defined(f) * defined(h)) -
+      defined(b) * (defined(d) * defined(i) - defined(f) * defined(g)) +
+      defined(c) * (defined(d) * defined(h) - defined(e) * defined(g));
+  const raw = [
+    (defined(e) * defined(i) - defined(f) * defined(h)) * n[0] +
+      (defined(f) * defined(g) - defined(d) * defined(i)) * n[1] +
+      (defined(d) * defined(h) - defined(e) * defined(g)) * n[2],
+    (defined(c) * defined(h) - defined(b) * defined(i)) * n[0] +
+      (defined(a) * defined(i) - defined(c) * defined(g)) * n[1] +
+      (defined(b) * defined(g) - defined(a) * defined(h)) * n[2],
+    (defined(b) * defined(f) - defined(c) * defined(e)) * n[0] +
+      (defined(c) * defined(d) - defined(a) * defined(f)) * n[1] +
+      (defined(a) * defined(e) - defined(b) * defined(d)) * n[2],
+  ].map((x) => x / defined(det));
+  const length = Math.hypot(...raw);
+  return vector(raw.map((x) => (x === 0 ? 0 : x / Math.max(length, 1e-12))));
+}
+/** Translation only: canonical transforms, geometry and export buffers remain untouched. */
+export function explosionOffsets(
+  parts: readonly PartDescriptor[],
+  interfaces: readonly AssemblyInterface[],
+  diagonal: number,
+): AssemblyPresentation['offsets'] {
+  const centers = parts.map((p) => assemblyPoint(p.bounds?.center ?? [0, 0, 0], p.transform)),
+    center = vector(
+      [0, 1, 2].map(
+        (a) => centers.reduce((s, p) => s + defined(p[a]), 0) / Math.max(1, parts.length),
+      ),
+    ),
+    distance = Math.max(diagonal, 1e-9) * 0.14;
+  const offsets = parts.map((p, i) => {
+    const edge = interfaces.findLast((e) => e.a === p.partId || e.b === p.partId);
+    let direction = vector(defined(centers[i]).map((x, a) => x - defined(center[a])));
+    if (parts.length === 2 && edge)
+      direction = vector(edge.normal.map((v) => v * (edge.a === p.partId ? 1 : -1)));
+    let length = Math.hypot(...direction);
+    if (length < diagonal * 1e-6) {
+      const angle = i * Math.PI * (3 - Math.sqrt(5));
+      direction = [Math.cos(angle), Math.sin(angle), 0.35 * Math.sin(angle * 0.5)];
+      length = Math.hypot(...direction);
+    }
+    return { partId: p.partId, offset: vector(direction.map((v) => (v / length) * distance)) };
+  });
+  // Each genuine cut contributes an equal/opposite separation along its own normal. This retains
+  // source-relative order for parallel multi-step cuts instead of translating same-side pieces together.
+  if (parts.length > 2)
+    for (let pass = 0; pass < 8; pass++)
+      for (const edge of interfaces) {
+        const ai = parts.findIndex((p) => p.partId === edge.a),
+          bi = parts.findIndex((p) => p.partId === edge.b);
+        if (ai < 0 || bi < 0) continue;
+        const separation = edge.normal.reduce(
+            (s, n, k) =>
+              s +
+              n *
+                (defined(defined(offsets[ai]).offset[k]) - defined(defined(offsets[bi]).offset[k])),
+            0,
+          ),
+          needed = Math.min(distance * 0.7, (diagonal * 0.28) / Math.max(1, parts.length - 1));
+        if (separation < needed)
+          for (const [index, sign] of [
+            [ai, 1],
+            [bi, -1],
+          ] as const)
+            offsets[index] = {
+              partId: defined(parts[index]).partId,
+              offset: vector(
+                defined(offsets[index]).offset.map(
+                  (v, k) => v + (sign * defined(edge.normal[k]) * (needed - separation)) / 2,
+                ),
+              ),
+            };
+      }
+  const maximum = Math.max(0, ...offsets.map((p) => Math.hypot(...p.offset))),
+    scale = maximum > diagonal * 0.35 ? (diagonal * 0.35) / maximum : 1;
+  return offsets.map((p) => ({ partId: p.partId, offset: vector(p.offset.map((v) => v * scale)) }));
+}
+export function assemblyAfterSplit(
+  result: SplitCommitResult,
+  context: SplitAssemblyContext | undefined,
+  previous: AssemblyPresentation | undefined,
+): AssemblyPresentation {
+  if (
+    previous?.documentId !== result.handle.documentId ||
+    previous.revision !== result.parentRevision
+  )
+    previous = undefined;
+  const live = new Set(result.parts.map((p) => p.partId)),
+    interfaces: AssemblyInterface[] = [],
+    pairs: AssemblyConnectorPair[] = [],
+    worldPlane = context?.plane
+      ? {
+          origin: assemblyPoint(context.plane.origin, context.sourceTransform),
+          normal: assemblyNormal(context.plane.normal, context.sourceTransform),
+        }
+      : undefined;
+  for (const old of previous?.interfaces ?? []) {
+    let a = old.a,
+      b = old.b;
+    if (context && (a === context.sourcePartId || b === context.sourcePartId)) {
+      if (!worldPlane) continue; // Component extraction creates no new interface; ambiguous ownership is never guessed.
+      const signs = old.footprint.map((p) =>
+        worldPlane.normal.reduce(
+          (s, n, k) => s + n * (defined(p[k]) - defined(worldPlane.origin[k])),
+          0,
+        ),
+      );
+      const positive = signs.every((s) => s > 1e-8),
+        negative = signs.every((s) => s < -1e-8);
+      if (!positive && !negative) continue; // A later cut crossing an existing interface invalidates its pair mapping.
+      const child = positive ? result.pieceAId : result.pieceBId;
+      if (a === context.sourcePartId) a = child;
+      else b = child;
+    }
+    if (!live.has(a) || !live.has(b)) continue;
+    interfaces.push({ ...old, a, b });
+    for (const pair of previous?.connectorPairs ?? [])
+      if (pair.interfaceId === old.id) pairs.push({ ...pair, a, b });
+  }
+  if (worldPlane && context) {
+    const local = result.interface,
+      origin = assemblyPoint(
+        local?.center ?? defined(context.plane).origin,
+        context.sourceTransform,
+      ),
+      footprint: AssemblyVector[] = local?.bounds
+        ? Array.from({ length: 8 }, (_, bits) =>
+            assemblyPoint(
+              vector(
+                [0, 1, 2].map((k) =>
+                  (bits >> k) & 1
+                    ? defined(defined(local.bounds).max[k])
+                    : defined(defined(local.bounds).min[k]),
+                ),
+              ),
+              context.sourceTransform,
+            ),
+          )
+        : [origin],
+      connectorPairIds: string[] = [];
+    if (result.connector.kind !== 'none')
+      for (const [index, center] of (local?.placements ?? []).entries()) {
+        const id = `${result.recordId}/connector/${String(index)}`;
+        connectorPairIds.push(id);
+        pairs.push({
+          id,
+          interfaceId: result.recordId,
+          a: result.pieceAId,
+          b: result.pieceBId,
+          center: assemblyPoint(center, context.sourceTransform),
+          connector: result.connector,
+          guardRadiusWorld:
+            transformNormUpper(context.sourceTransform) *
+            Math.hypot(
+              result.connector.depth +
+                Math.max(result.metrics.tolerance * 8, result.connector.depth * 0.0001),
+              result.connector.kind === 'pin'
+                ? result.connector.diameter / 2 + result.connector.clearance
+                : Math.hypot(result.connector.width, result.connector.length) +
+                    result.connector.clearance * 2,
+            ),
+        });
+      }
+    interfaces.push({
+      id: result.recordId,
+      a: result.pieceAId,
+      b: result.pieceBId,
+      origin,
+      normal: worldPlane.normal,
+      footprint,
+      connectorPairIds,
+    });
+  }
+  const labels: Record<string, string> = {};
+  for (const part of result.parts)
+    labels[part.partId] = (previous?.labels[part.partId] ?? part.name ?? 'Piece').slice(0, 128);
+  if (context?.label) {
+    labels[result.pieceAId] = context.label.slice(0, 128);
+    labels[result.pieceBId] = 'Remaining assembly';
+  }
+  const diagonal = result.bounds
+    ? Math.hypot(...result.bounds.max.map((v, a) => v - defined(defined(result.bounds).min[a])))
+    : 1;
+  return {
+    documentId: result.handle.documentId,
+    revision: result.handle.revision,
+    exploded: true,
+    connectorMode:
+      result.automaticConnector === 'applied'
+        ? 'automatic'
+        : result.automaticConnector === 'unavailable'
+          ? 'unavailable'
+          : result.connector.kind === 'none'
+            ? 'plain'
+            : 'manual',
+    interfaces: interfaces.slice(-128),
+    connectorPairs: pairs
+      .filter((p) => interfaces.slice(-128).some((e) => e.id === p.interfaceId))
+      .slice(-512),
+    labels,
+    offsets: explosionOffsets(result.parts, interfaces, diagonal),
+  };
+}
+
+function defined<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
+  return value;
+}
+
+/** Existing paired geometry may only be split where its interface and connector guards survive intact. */
+export function preservesAssemblyInterfaces(
+  assembly: AssemblyPresentation | undefined,
+  sourcePartId: string,
+  plane: SplitPlane,
+  transform: readonly number[],
+): boolean {
+  if (!assembly) return true;
+  const origin = assemblyPoint(plane.origin, transform),
+    normal = assemblyNormal(plane.normal, transform);
+  for (const edge of assembly.interfaces) {
+    if (edge.a !== sourcePartId && edge.b !== sourcePartId) continue;
+    const signed = edge.footprint.map((p) =>
+      normal.reduce((s, n, k) => s + n * (defined(p[k]) - defined(origin[k])), 0),
+    );
+    if (!signed.length || !(signed.every((s) => s > 1e-8) || signed.every((s) => s < -1e-8)))
+      return false;
+    for (const pair of assembly.connectorPairs)
+      if (pair.interfaceId === edge.id) {
+        const distance = Math.abs(
+          normal.reduce((s, n, k) => s + n * (defined(pair.center[k]) - defined(origin[k])), 0),
+        );
+        if (distance <= pair.guardRadiusWorld) return false;
+      }
+  }
+  return true;
+}
+
+function transformNormUpper(t: readonly number[]): number {
+  const row = Math.max(
+      ...[0, 1, 2].map(
+        (k) => Math.abs(t[k] ?? 0) + Math.abs(t[k + 3] ?? 0) + Math.abs(t[k + 6] ?? 0),
+      ),
+    ),
+    col = Math.max(
+      ...[0, 3, 6].map(
+        (k) => Math.abs(t[k] ?? 0) + Math.abs(t[k + 1] ?? 0) + Math.abs(t[k + 2] ?? 0),
+      ),
+    );
+  return Math.sqrt(row * col);
+}
+
+/** Select a persisted pin footprint on its own piece; its mate is the stored pair identity. */
+export function connectorAtAssemblyPoint(
+  assembly: AssemblyPresentation,
+  part: PartDescriptor,
+  worldPoint: AssemblyVector,
+): string | undefined {
+  const t = part.transform,
+    a = t[0],
+    b = t[3],
+    c = t[6],
+    d = t[1],
+    e = t[4],
+    f = t[7],
+    g = t[2],
+    h = t[5],
+    i = t[8],
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (Math.abs(det) < 1e-14) return undefined;
+  const local = (p: AssemblyVector): AssemblyVector => {
+    const px = p[0] - t[9],
+      py = p[1] - t[10],
+      pz = p[2] - t[11];
+    return [
+      ((e * i - f * h) * px + (c * h - b * i) * py + (b * f - c * e) * pz) / det,
+      ((f * g - d * i) * px + (a * i - c * g) * py + (c * d - a * f) * pz) / det,
+      ((d * h - e * g) * px + (b * g - a * h) * py + (a * e - b * d) * pz) / det,
+    ];
+  };
+  // Keep the transform calculation identical for the picked surface and stored interface center.
+  const picked = local(worldPoint),
+    matches: string[] = [];
+  for (const pair of assembly.connectorPairs) {
+    if ((pair.a !== part.partId && pair.b !== part.partId) || pair.connector.kind !== 'pin')
+      continue;
+    const edge = assembly.interfaces.find((e) => e.id === pair.interfaceId);
+    if (!edge) continue;
+    const n = edge.normal,
+      raw: AssemblyVector = [
+        a * n[0] + d * n[1] + g * n[2],
+        b * n[0] + e * n[1] + h * n[2],
+        c * n[0] + f * n[1] + i * n[2],
+      ],
+      length = Math.hypot(...raw),
+      normal = vector(raw.map((v) => v / length)),
+      center = local(pair.center),
+      diff = vector(picked.map((v, k) => v - defined(center[k]))),
+      axial = diff.reduce((sum, v, k) => sum + v * defined(normal[k]), 0),
+      along = axial * (pair.connector.maleSide === 'A' ? -1 : 1),
+      padding = pair.connector.diameter * 0.03,
+      radius = pair.connector.diameter / 2 + pair.connector.clearance + padding;
+    if (
+      along >= -padding &&
+      along <= pair.connector.depth + padding &&
+      diff.reduce((sum, v) => sum + v * v, 0) - axial * axial <= radius * radius
+    )
+      matches.push(pair.id);
+  }
+  return matches.length === 1 ? matches[0] : undefined;
+}

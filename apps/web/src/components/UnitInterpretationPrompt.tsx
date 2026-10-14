@@ -16,10 +16,12 @@ import { useUnitInterpretation } from '../state/use-unit-interpretation';
 export function UnitInterpretationPrompt({
   reason,
   testId = 'unit-interpretation',
+  commonOnly = false,
 }: {
   /** Why this workspace asks: what it cannot do until the answer is known. */
   readonly reason: string;
   readonly testId?: string;
+  readonly commonOnly?: boolean;
 }): ReactNode {
   const { unit, canChoose, choose } = useUnitInterpretation();
   const headingId = useId();
@@ -35,7 +37,9 @@ export function UnitInterpretationPrompt({
         {unit === undefined ? `${reason} ${UNIT_INTERPRETATION_COPY.question}` : reason}
       </p>
       <div className="unit-chooser__options" role="radiogroup" aria-labelledby={headingId}>
-        {UNIT_CHOICES.map((choice) => (
+        {UNIT_CHOICES.filter(
+          (choice) => !commonOnly || ['millimeter', 'centimeter', 'inch'].includes(choice.value),
+        ).map((choice) => (
           <label
             key={choice.value}
             className="unit-chooser__option"

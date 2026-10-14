@@ -56,7 +56,8 @@ import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/pr
  * reads lives in the app-level provider either way.
  */
 export function SplitWorkspace(): ReactNode {
-  const { model } = useWorkspaceState();
+  const { model, assembly, activePartId } = useWorkspaceState();
+  const store = useWorkspaceStore();
   const split = useSplitControls();
   const auto = useAutoSplitControls();
   /*
@@ -94,6 +95,22 @@ export function SplitWorkspace(): ReactNode {
   return (
     <div className="convert-workspace split-workspace" data-testid="split-workspace">
       <div className="convert-workspace__sections">
+        {split.automaticUnitPrompt ? (
+          <section aria-label="Connector units">
+            <UnitInterpretationPrompt
+              reason="Automatic connectors need physical dimensions."
+              commonOnly
+              testId="automatic-connector-units"
+            />
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={split.applyWithoutConnectors}
+            >
+              Separate without connectors
+            </button>
+          </section>
+        ) : null}
         {(split.preview === undefined && (split.applied === undefined || splitAgain)) ||
         adjustCut ? (
           <SplitModeTabs tab={auto.tab} onTab={auto.setTab} />
@@ -112,7 +129,9 @@ export function SplitWorkspace(): ReactNode {
                 split.preview === undefined ? 'split-applied-label' : 'split-preview-label'
               }
             >
-              {split.preview !== undefined ? '2 pieces' : '2 pieces created.'}
+              {split.preview !== undefined
+                ? '2 pieces'
+                : `${String(model?.parts.length ?? 2)} pieces created.`}
             </p>
             {split.preview === undefined ? (
               <button
@@ -121,6 +140,7 @@ export function SplitWorkspace(): ReactNode {
                 data-testid="split-again"
                 onClick={() => {
                   setEditingApplied(split.applied?.recordId);
+                  split.beginNextSplit?.();
                   auto.setTab('manual');
                 }}
               >
@@ -138,6 +158,54 @@ export function SplitWorkspace(): ReactNode {
                 Adjust cut
               </button>
             ) : null}
+          </section>
+        ) : null}
+        {split.applied &&
+        !splitAgain &&
+        assembly &&
+        assembly.revision === model?.handle.revision ? (
+          <section
+            className="assembly-result"
+            aria-label="Assembly pieces"
+            data-testid="assembly-pieces"
+          >
+            <h3>Pieces</h3>
+            {model.parts.map((piece, index) => (
+              <button
+                key={piece.partId}
+                type="button"
+                className="secondary-action"
+                aria-pressed={activePartId === piece.partId}
+                onClick={() => store.selectPart(piece.partId)}
+              >
+                {assembly.labels[piece.partId] ?? `Piece ${String(index + 1)}`}
+              </button>
+            ))}
+            <h3>Connectors</h3>
+            <p>
+              {assembly.connectorPairs.length
+                ? assembly.connectorMode === 'manual'
+                  ? 'Paired'
+                  : 'Automatic'
+                : !assembly.interfaces.length
+                  ? 'No new cut interface'
+                  : assembly.connectorMode === 'unavailable'
+                    ? 'Unavailable for this split'
+                    : 'Not added'}
+            </p>
+            {assembly.connectorPairs.map((pair, index) => (
+              <button
+                key={pair.id}
+                type="button"
+                className="secondary-action"
+                aria-pressed={assembly.selectedPairId === pair.id}
+                onClick={() => {
+                  store.selectConnectorPair(
+                    assembly.selectedPairId === pair.id ? undefined : pair.id,
+                  );
+                }}
+              >{`Connection ${String(index + 1)}: ${assembly.labels[pair.a] ?? 'Piece'} and ${assembly.labels[pair.b] ?? 'Piece'}`}</button>
+            ))}
           </section>
         ) : null}
         <div
@@ -230,13 +298,15 @@ export function SplitWorkspace(): ReactNode {
         hideIdle={auto.tab === 'auto'}
         exportMode={exportMode}
         previewBlock={
-          pendingConnector !== 'none'
-            ? 'Choose model units to add the connector.'
-            : auto.tab === 'auto'
-              ? auto.footerBlock
-              : split.sizeNotice === undefined
-                ? undefined
-                : SPLIT_COPY.tooDetailedHint
+          split.applied && !splitAgain
+            ? undefined
+            : pendingConnector !== 'none'
+              ? 'Choose model units to add the connector.'
+              : auto.tab === 'auto'
+                ? auto.footerBlock
+                : split.sizeNotice === undefined
+                  ? undefined
+                  : SPLIT_COPY.tooDetailedHint
         }
         {...(auto.tab === 'auto' && auto.busy && auto.cancellable
           ? { onCancelAnalysis: auto.cancel }

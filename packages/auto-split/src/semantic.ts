@@ -1,3 +1,8 @@
+import {
+  synthesizeSemanticPlane,
+  confirmSemanticPlane,
+  type LocalPlaneProposal,
+} from './semantic-local-plane';
 import { refineSemanticPlanes, type SemanticPlaneRefinement } from './semantic-plane';
 import { required } from './required';
 import type { SemanticCandidate } from './semantic-candidate';
@@ -67,6 +72,8 @@ export interface PreparedSemanticGeometry {
     readonly projection: readonly number[];
   }[];
   readonly visibleTotals: readonly Uint32Array[];
+  /** Analytic front-facing projected area, in raster pixels, before inter-component occlusion. */
+  readonly projectedTotals: readonly Float64Array[];
   readonly timings: Readonly<Record<string, number>>;
 }
 const elapsed = (start: number): number => Date.now() - start;
@@ -202,6 +209,32 @@ export async function prepareSemanticGeometry(
   };
   if (!validateSemanticMetadata(metadata))
     throw invalidState('This model has invalid component bounds for analysis.');
+  // Only the admitted component vocabulary can become an extraction candidate (at most 24).
+  const projectedTotals = VIEW_NAMES.map(() => new Float64Array(admitted));
+  const pixelScale = ((VIEW_IMAGE_SIZE * SUPERSAMPLE * FRAME_FILL) / (2 * geometry.radius)) ** 2;
+  const directions = VIEW_NAMES.map((view) => cameraFor(view).forward);
+  for (let f = 0; f < geometry.faceCount; f++) {
+    if (f % CHECKPOINT_STRIDE === 0) checkpoint();
+    const rank = labelling.faceRank[f] ?? -1;
+    if (rank < 0 || rank >= admitted) continue;
+    const a = (geometry.indices[f * 3] ?? 0) * 3,
+      b = (geometry.indices[f * 3 + 1] ?? 0) * 3,
+      c = (geometry.indices[f * 3 + 2] ?? 0) * 3,
+      ux = (geometry.positions[b] ?? 0) - (geometry.positions[a] ?? 0),
+      uy = (geometry.positions[b + 1] ?? 0) - (geometry.positions[a + 1] ?? 0),
+      uz = (geometry.positions[b + 2] ?? 0) - (geometry.positions[a + 2] ?? 0),
+      vx = (geometry.positions[c] ?? 0) - (geometry.positions[a] ?? 0),
+      vy = (geometry.positions[c + 1] ?? 0) - (geometry.positions[a + 1] ?? 0),
+      vz = (geometry.positions[c + 2] ?? 0) - (geometry.positions[a + 2] ?? 0),
+      nx = (uy * vz - uz * vy) / 2,
+      ny = (uz * vx - ux * vz) / 2,
+      nz = (ux * vy - uy * vx) / 2;
+    for (const [vi, direction] of directions.entries()) {
+      const area = Math.max(0, -(nx * direction[0] + ny * direction[1] + nz * direction[2]));
+      const totals = defined(projectedTotals[vi]);
+      totals[rank] = (totals[rank] ?? 0) + area * pixelScale;
+    }
+  }
   const preprocessing = elapsed(start),
     renderStart = Date.now();
   const rasters: Raster[] = [],
@@ -257,6 +290,7 @@ export async function prepareSemanticGeometry(
     pngs,
     componentPngs,
     visibleTotals,
+    projectedTotals,
     metadata,
     cameras: VIEW_NAMES.map((view) => ({
       view,
@@ -311,6 +345,11 @@ export interface SemanticEvidence {
     readonly viewCoverage: readonly number[];
     readonly strongViews: number;
   }[];
+  readonly regionInstances?: readonly {
+    readonly view: ViewName;
+    readonly polygon: number;
+    readonly ranks: readonly number[];
+  }[];
   readonly multiViewFaces: number;
   readonly visibleFaces: number;
   readonly refinement?: SemanticPlaneRefinement;
@@ -321,6 +360,12 @@ export interface SemanticEvidence {
     mirroredAxes: readonly number[];
   }[];
   readonly planePurity: number | null;
+  readonly localPlane?: LocalPlaneProposal;
+  readonly visibility?: readonly {
+    readonly rank: number;
+    readonly observableViews: readonly number[];
+    readonly occludedViews: readonly number[];
+  }[];
   readonly reason: string;
 }
 export interface SemanticDecomposition extends SuggestionResult {
@@ -434,26 +479,57 @@ export function decomposeSemantic(
   const partById = new Map(answer.parts.map((p) => [p.id, p]));
   let work = 0,
     faceWork = 0;
+  const localPlanes = new Map<string, LocalPlaneProposal>();
+  for (const part of answer.parts) {
+    checkpoint();
+    const proposal = synthesizeSemanticPlane(prepared, answer, part, checkpoint);
+    if (proposal) localPlanes.set(part.id, proposal);
+  }
+  const localParts = answer.parts.map((part) => {
+    const proposal = localPlanes.get(part.id);
+    return proposal
+      ? {
+          ...part,
+          cut: proposal.cut,
+          expectedGeometry: { ...part.expectedGeometry, likelySeparable: true },
+        }
+      : part;
+  });
   const refinement = refineSemanticPlanes(
     geometry,
-    answer.parts.filter(
+    localParts.filter(
       (p) =>
         Math.min(answer.object.confidence, p.confidence) >= SEMANTIC_WORK_LIMITS.semanticConfidence,
     ),
     checkpoint,
   );
-  for (const observedPart of answer.parts) {
-    const refined = refinement.refinements.get(observedPart.id);
+  for (const observedPart of localParts) {
+    let refined = refinement.refinements.get(observedPart.id);
+    const originalProposal = localPlanes.get(observedPart.id);
+    if (refined && originalProposal) {
+      const confirmed = confirmSemanticPlane(
+        prepared,
+        answer,
+        observedPart,
+        refined.cut,
+        originalProposal,
+        checkpoint,
+      );
+      if (confirmed) localPlanes.set(observedPart.id, confirmed);
+      else refined = undefined;
+    }
     const part = refined ? { ...observedPart, cut: refined.cut } : observedPart;
     checkpoint();
     const mask = new Uint8Array(geometry.faceCount);
     const hits: Uint32Array[] = VIEW_NAMES.map(() => new Uint32Array(labelling.count));
     const mentioned = new Set(part.views.map((v) => v.view));
+    const regionInstances: { view: ViewName; polygon: number; ranks: number[] }[] = [];
     for (const region of part.views) {
       const vi = VIEW_NAMES.indexOf(region.view),
         raster = required(rasters[vi], 'rasters[vi]');
       const size = raster.size;
-      for (const polygon of region.polygons) {
+      for (const [polygonIndex, polygon] of region.polygons.entries()) {
+        const polygonHits = new Uint32Array(labelling.count);
         const xs = polygon.map((p) => p[0]),
           ys = polygon.map((p) => p[1]);
         const x0 = Math.max(0, Math.floor(Math.min(...xs) * size)),
@@ -470,9 +546,22 @@ export function decomposeSemantic(
               continue;
             const rank = labelling.faceRank[f] ?? -1;
             required(hits[vi], 'hits[vi]')[rank] = (required(hits[vi], 'hits[vi]')[rank] ?? 0) + 1;
+            polygonHits[rank] = (polygonHits[rank] ?? 0) + 1;
             mask[f] = (mask[f] ?? 0) | (1 << vi);
           }
         }
+        regionInstances.push({
+          view: region.view,
+          polygon: polygonIndex,
+          ranks: prepared.metadata.components
+            .map((c) => Number(c.id.slice(1)))
+            .filter(
+              (rank) =>
+                (visibleTotals[vi]?.[rank] ?? 0) >= 8 &&
+                (polygonHits[rank] ?? 0) / (visibleTotals[vi]?.[rank] ?? 1) >=
+                  SEMANTIC_WORK_LIMITS.coverage,
+            ),
+        });
       }
     }
     // Count each visible pixel once even if the provider polygons overlap, by rescanning their union.
@@ -513,19 +602,42 @@ export function decomposeSemantic(
         strongViews: coverage.filter((c) => c >= SEMANTIC_WORK_LIMITS.coverage).length,
       };
     });
+    const visibility = scores.map((score) => {
+      const observableViews: number[] = [],
+        occludedViews: number[] = [];
+      for (const [vi, view] of VIEW_NAMES.entries()) {
+        if (!mentioned.has(view)) continue;
+        const visible = visibleTotals[vi]?.[score.rank] ?? 0;
+        const projected = prepared.projectedTotals[vi]?.[score.rank] ?? 0;
+        // The analytic projected area is an upper bound: concavity makes this test conservative.
+        // A non-trivial visible pixel count can never be dismissed as occlusion.
+        if (visible < 8 || (visible < 64 && projected >= 8 && visible / projected < 0.1))
+          occludedViews.push(vi);
+        else observableViews.push(vi);
+      }
+      return { rank: score.rank, observableViews, occludedViews };
+    });
     let ranks = scores
-      .filter(
-        (s) =>
-          s.strongViews >= SEMANTIC_WORK_LIMITS.strongViews &&
-          s.viewCoverage.filter((v) => v >= 0).every((v) => v >= 0.65),
-      )
-      .map((s) => s.rank);
-    const admitted = new Set(prepared.metadata.components.map((c) => c.id));
-    const missingIds = part.componentIds.some((c) => !admitted.has(c));
-    if (part.componentIds.length > 0)
-      ranks = ranks.filter((r) => part.componentIds.includes(semanticComponentId(r)));
-    if (missingIds || (part.componentIds.length > 0 && ranks.length !== part.componentIds.length))
-      ranks = [];
+      .filter((score) => {
+        const v = defined(visibility.find((v) => v.rank === score.rank));
+        const usual =
+          score.strongViews >= SEMANTIC_WORK_LIMITS.strongViews &&
+          score.viewCoverage.filter((v) => v >= 0).every((v) => v >= 0.65);
+        const occlusionProven =
+          score.strongViews >= 1 &&
+          part.views.length >= 2 &&
+          v.occludedViews.length > 0 &&
+          v.observableViews.length > 0 &&
+          v.observableViews.every(
+            (vi) => (score.viewCoverage[vi] ?? -1) >= SEMANTIC_WORK_LIMITS.coverage,
+          );
+        return usual || occlusionProven;
+      })
+      .map((score) => score.rank);
+    if (part.instances > 1)
+      ranks = ranks.filter((rank) => regionInstances.some((region) => region.ranks.includes(rank)));
+    // References are optional priors. Only local source evidence can admit a rank;
+    // unavailable or contradictory provider IDs never enter the resulting group.
     const regionPurity = VIEW_NAMES.map((_v, i) => {
       const total = required(hits[i], 'hits[i]').reduce((a, b) => a + b, 0);
       return total >= 8
@@ -533,8 +645,12 @@ export function decomposeSemantic(
         : -1;
     });
     const coherentRegion =
-      regionPurity.filter((v) => v >= 0.72).length >= 2 &&
-      regionPurity.filter((v) => v >= 0).every((v) => v >= 0.55);
+      regionPurity.filter((v) => v >= 0.72).length >=
+        (ranks.every(
+          (rank) => (visibility.find((v) => v.rank === rank)?.occludedViews.length ?? 0) > 0,
+        )
+          ? 1
+          : 2) && regionPurity.filter((v) => v >= 0).every((v) => v >= 0.55);
     if (!coherentRegion) ranks = [];
     let multiViewFaces = 0,
       visibleFaces = 0;
@@ -604,56 +720,38 @@ export function decomposeSemantic(
       planeCoverage.length > 0
         ? planeCoverage.reduce((a, b) => a + b, 0) / planeCoverage.length
         : null;
-    const componentConfidence =
-      ranks.length > 0 && !missingIds
-        ? Math.min(
-            ...ranks.map(
-              (r) =>
-                required(
-                  scores.find((s) => s.rank === r),
-                  'scores\n              .find((s) => s.rank === r)',
-                )
-                  .viewCoverage.filter((v) => v >= 0)
-                  .reduce((a, b) => a + b, 0) /
-                required(
-                  scores.find((s) => s.rank === r),
-                  'scores.find((s) => s.rank === r)',
-                ).viewCoverage.filter((v) => v >= 0).length,
-            ),
-          )
-        : 0;
+    const componentConfidence = ranks.length
+      ? Math.min(
+          ...ranks.map((rank) => {
+            const score = required(
+                scores.find((s) => s.rank === rank),
+                'component score',
+              ),
+              visible = visibility.find((v) => v.rank === rank)?.observableViews ?? [],
+              values = visible.map((i) => score.viewCoverage[i] ?? -1).filter((v) => v >= 0);
+            return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+          }),
+        )
+      : 0;
     // Geometric evidence is measured independently even when the semantic label is uncertain.
-    const supportedPlane =
-      !missingIds &&
-      part.cut !== null &&
-      part.importance === 'major' &&
-      part.expectedGeometry.kind !== 'surface_part' &&
-      part.expectedGeometry.likelySeparable &&
-      part.views.length >= 2 &&
-      planeCoverage.filter((v) => v >= SEMANTIC_WORK_LIMITS.planePurity).length >= 2 &&
-      planeCoverage.every((v) => v >= 0.55) &&
-      purity !== null &&
-      purity >= SEMANTIC_WORK_LIMITS.planePurity;
-    let geometryConfidence = componentConfidence || (supportedPlane ? purity : 0);
+    const localPlane = localPlanes.get(part.id);
+    const supportedPlane = Boolean(localPlane);
+    let geometryConfidence =
+      componentConfidence > 0 ? componentConfidence : (localPlane?.confidence ?? 0);
     if (semanticConfidence < SEMANTIC_WORK_LIMITS.semanticConfidence) {
       quality = 'LOW_CONFIDENCE';
       reason = 'Semantic evidence is uncertain';
-    } else if (ranks.length > 0 && !missingIds) {
+    } else if (ranks.length > 0) {
       quality = 'READY';
       operation = SuggestionOperation.Component;
       geometryConfidence = componentConfidence;
       reason = 'Independent source components supported in multiple visible views';
     } else if (
-      !missingIds &&
+      supportedPlane &&
       part.cut &&
       part.importance === 'major' &&
-      part.expectedGeometry.kind !== 'surface_part' &&
-      part.expectedGeometry.likelySeparable &&
-      part.views.length >= 2 &&
-      planeCoverage.filter((v) => v >= SEMANTIC_WORK_LIMITS.planePurity).length >= 2 &&
-      planeCoverage.every((v) => v >= 0.55) &&
-      purity !== null &&
-      purity >= SEMANTIC_WORK_LIMITS.planePurity
+      part.instances === 1 &&
+      part.expectedGeometry.kind !== 'surface_part'
     ) {
       quality = 'READY';
       operation = SuggestionOperation.Plane;
@@ -662,7 +760,7 @@ export function decomposeSemantic(
         normal: part.cut.normal.map((n) => n / magnitude) as unknown as Vec3,
         origin: toSourcePoint(geometry, part.cut.origin),
       };
-      geometryConfidence = purity;
+      geometryConfidence = localPlane?.confidence ?? purity ?? 0;
       reason = 'Approximate semantic boundary supported locally; Preview must validate the cut';
     }
     const groups =
@@ -704,6 +802,9 @@ export function decomposeSemantic(
     suggestions.push(s);
     evidence.push({
       id: part.id,
+      visibility,
+      regionInstances,
+      ...(localPlane ? { localPlane } : {}),
       ...(refined ? { refinement: refined } : {}),
       components: scores,
       multiViewFaces,
@@ -784,6 +885,19 @@ export function decomposeSemantic(
     return false;
   };
   const refused = new Set<string>();
+  for (let i = 0; i < answer.parts.length; i++)
+    for (let j = i + 1; j < answer.parts.length; j++) {
+      const a = defined(answer.parts[i]),
+        b = defined(answer.parts[j]);
+      if (
+        a.parentId === b.parentId &&
+        JSON.stringify(a.views) === JSON.stringify(b.views) &&
+        a.views.length > 0
+      ) {
+        refused.add(a.id);
+        refused.add(b.id);
+      }
+    }
   for (let i = 0; i < suggestions.length; i++)
     for (let j = i + 1; j < suggestions.length; j++) {
       const a = required(suggestions[i], 'suggestions[i]'),
@@ -846,8 +960,17 @@ export function decomposeSemantic(
           const a = required(claimed[i], 'claimed[i]'),
             b = required(claimed[j], 'claimed[j]');
           if (!ancestor(a, b) && !ancestor(b, a)) {
-            refused.add(a.id);
-            refused.add(b.id);
+            // Exact source groups take precedence. Conflicting synthesized cuts are alternatives,
+            // not simultaneously owned source faces: retain only the stronger supported proposal.
+            if (a.operation === SuggestionOperation.Component) refused.add(b.id);
+            else if (b.operation === SuggestionOperation.Component) refused.add(a.id);
+            else {
+              const order =
+                (a.semanticConfidence ?? 0) - (b.semanticConfidence ?? 0) ||
+                (a.geometryConfidence ?? 0) - (b.geometryConfidence ?? 0) ||
+                b.id.localeCompare(a.id);
+              refused.add(order >= 0 ? b.id : a.id);
+            }
           }
         }
     }
@@ -914,4 +1037,9 @@ export function decomposeSemantic(
       siblingMembershipFaces: planes.length > 0 ? geometry.faceCount : 0,
     },
   };
+}
+
+function defined<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
+  return value;
 }

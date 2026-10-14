@@ -1,3 +1,4 @@
+import { preservesAssemblyInterfaces } from './assembly-presentation';
 import { flushSync } from 'react-dom';
 import { afterPaint } from './after-paint';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -130,9 +131,12 @@ export interface SplitControls {
    * there is no part. `exact` says whether the controls reproduce the suggestion; when they cannot,
    * the nearest plane is loaded and the caller says so.
    */
-  readonly loadSuggestedPlane: (plane: SplitPlane) => { readonly exact: boolean } | undefined;
+  readonly loadSuggestedPlane: (
+    plane: SplitPlane,
+    label?: string,
+  ) => { readonly exact: boolean } | undefined;
   /** Makes the next preview a component split, or (with undefined) returns to the plane. */
-  readonly setComponentSource: (ranks: readonly number[] | undefined) => void;
+  readonly setComponentSource: (ranks: readonly number[] | undefined, label?: string) => void;
   readonly unit: string | undefined;
   readonly plane: SplitPlaneSettings;
   readonly range: SplitRange;
@@ -182,6 +186,10 @@ export interface SplitControls {
   readonly completePreparedPreview: () => void;
   readonly updatePreview: () => void;
   readonly discardPreview: () => void;
+  readonly assemblyEditing?: boolean;
+  readonly beginNextSplit?: () => void;
+  readonly automaticUnitPrompt?: boolean;
+  readonly applyWithoutConnectors?: () => void;
   readonly apply: () => void;
   readonly cancel: () => void;
   readonly undo: () => void;
@@ -274,7 +282,7 @@ export function connectorProblemOf(
 }
 
 export function useSplitWorkflow(): SplitControls {
-  const { selectedWorkflow, model, activePartId } = useWorkspaceState();
+  const { selectedWorkflow, model, activePartId, assembly } = useWorkspaceState();
   const store = useWorkspaceStore();
   const client = useGeometryClient();
   const part = model?.parts.find((candidate) => candidate.partId === activePartId);
@@ -341,6 +349,10 @@ export function useSplitWorkflow(): SplitControls {
   const running = useRef<OperationHandle<SplitCreateResult> | undefined>(undefined);
   const previewRef = useRef<SplitCreateResult | undefined>(undefined);
   const action = useRef<{ phase: SplitPhase } | undefined>(undefined);
+  const semanticIntent = useRef<{ key: string; label: string } | undefined>(undefined);
+  const plainRequested = useRef(false);
+  const [assemblyEditing, setAssemblyEditing] = useState(false);
+  const [automaticUnitPrompt, setAutomaticUnitPrompt] = useState(false);
   const dragStart = useRef<number | undefined>(undefined);
 
   const error = errorState?.key === session ? errorState.message : undefined;
@@ -557,19 +569,22 @@ export function useSplitWorkflow(): SplitControls {
   }, [edit]);
 
   const loadSuggestedPlane = useCallback(
-    (suggested: SplitPlane): { readonly exact: boolean } | undefined => {
+    (suggested: SplitPlane, label?: string): { readonly exact: boolean } | undefined => {
       if (part === undefined) return undefined;
       const mapped = planeSettingsFor(suggested, part.bounds);
       edit(() => mapped.settings);
+      semanticIntent.current = label ? { key: partKey, label } : undefined;
+      plainRequested.current = false;
       return { exact: mapped.exact };
     },
-    [edit, part],
+    [edit, part, partKey],
   );
   const setComponentSource = useCallback(
-    (ranks: readonly number[] | undefined): void => {
+    (ranks: readonly number[] | undefined, label?: string): void => {
       if (action.current !== undefined && action.current.phase !== SplitPhase.Preparing) return;
       invalidate();
       setError(undefined);
+      semanticIntent.current = label ? { key: partKey, label } : undefined;
       setComponentState(
         ranks === undefined || ranks.length === 0 ? undefined : { key: partKey, ranks },
       );
@@ -627,6 +642,41 @@ export function useSplitWorkflow(): SplitControls {
         return;
       }
       const byComponents = componentRanks.length > 0;
+      if (
+        !byComponents &&
+        assembly?.documentId === model.handle.documentId &&
+        assembly.revision === model.handle.revision &&
+        assembly.interfaces.length >= 128
+      ) {
+        abandonPreparation();
+        setError(
+          'This assembly has reached the supported connection limit. Export the pieces to continue in a new document.',
+        );
+        return;
+      }
+
+      if (
+        byComponents &&
+        assembly?.documentId === model.handle.documentId &&
+        assembly.revision === model.handle.revision &&
+        assembly.interfaces.some((edge) => edge.a === part.partId || edge.b === part.partId)
+      ) {
+        abandonPreparation();
+        setError('This piece has assembly connections. Use a cut between connections.');
+        return;
+      }
+
+      if (
+        !byComponents &&
+        assembly?.documentId === model.handle.documentId &&
+        assembly.revision === model.handle.revision &&
+        !preservesAssemblyInterfaces(assembly, part.partId, splitPlane, part.transform)
+      ) {
+        abandonPreparation();
+        setError('This cut crosses an existing connection. Move the cut between connections.');
+        return;
+      }
+
       // Components are separate shells: there is no cut face to put a connector on, so the connector
       // settings are neither read nor validated for them.
       if (
@@ -659,7 +709,16 @@ export function useSplitWorkflow(): SplitControls {
             : client.createSplit(
                 model.handle,
                 part.partId,
-                { plane: splitPlane, connector: connectorRequest(connector, unitValue) },
+                {
+                  plane: splitPlane,
+                  connector:
+                    semanticIntent.current?.key === partKey &&
+                    connector.kind === 'none' &&
+                    unitValue &&
+                    !plainRequested.current
+                      ? { kind: 'automatic', unit: unitValue }
+                      : connectorRequest(connector, unitValue),
+                },
                 onProgress,
               );
           running.current = operation;
@@ -699,6 +758,7 @@ export function useSplitWorkflow(): SplitControls {
       })();
     },
     [
+      assembly,
       available,
       client,
       componentRanks,
@@ -708,6 +768,7 @@ export function useSplitWorkflow(): SplitControls {
       release,
       model,
       part,
+      partKey,
       session,
       setError,
       setPhase,
@@ -723,6 +784,12 @@ export function useSplitWorkflow(): SplitControls {
   const updatePreview = useCallback((): void => {
     runPreview();
   }, [runPreview]);
+  useEffect(() => {
+    if (automaticUnitPrompt && unitValue && active && semanticIntent.current?.key === partKey) {
+      // Unit changes retire the old candidate through the existing session cleanup before this runs.
+      updatePreview();
+    }
+  }, [automaticUnitPrompt, unitValue, active, partKey, updatePreview]);
   const completePreparedPreview = useCallback((): void => {
     runPreview(true);
   }, [runPreview]);
@@ -755,6 +822,18 @@ export function useSplitWorkflow(): SplitControls {
     if (client === undefined || model === undefined || part === undefined) return;
     const current = previewRef.current;
     if (current === undefined) return;
+    if (
+      semanticIntent.current?.key === partKey &&
+      componentRanks.length === 0 &&
+      current.interface?.connectorEligible &&
+      connector.kind === 'none' &&
+      !unitValue &&
+      !plainRequested.current
+    ) {
+      setAutomaticUnitPrompt(true);
+      return;
+    }
+    setAutomaticUnitPrompt(false);
     if (action.current !== undefined) return;
     const token = { phase: SplitPhase.Applying };
     action.current = token;
@@ -768,7 +847,16 @@ export function useSplitWorkflow(): SplitControls {
         const result = await client.commitSplit(current.candidate, model.handle, part.partId)
           .promise;
         {
-          if (!store.applySplitResult(result)) {
+          if (
+            !store.applySplitResult(result, {
+              sourcePartId: part.partId,
+              sourceTransform: part.transform,
+              ...(componentRanks.length === 0 ? { plane: splitPlane } : {}),
+              ...(semanticIntent.current?.key === partKey
+                ? { label: semanticIntent.current.label }
+                : {}),
+            })
+          ) {
             setPhase(SplitPhase.Preview);
             setError('The model changed before the split could be applied.');
             return;
@@ -776,6 +864,7 @@ export function useSplitWorkflow(): SplitControls {
           previewRef.current = undefined;
           setPreviewState(undefined);
 
+          setAssemblyEditing(false);
           setApplied({
             pieceA: result.pieceAId,
             pieceB: result.pieceBId,
@@ -798,7 +887,19 @@ export function useSplitWorkflow(): SplitControls {
         if (action.current === token) action.current = undefined;
       }
     })();
-  }, [client, model, part, setError, setPhase, store]);
+  }, [
+    client,
+    model,
+    part,
+    partKey,
+    componentRanks.length,
+    splitPlane,
+    connector.kind,
+    unitValue,
+    setError,
+    setPhase,
+    store,
+  ]);
 
   /**
    * CANCEL ABANDONS THE SPLIT: the preview is released and the plane and
@@ -871,10 +972,13 @@ export function useSplitWorkflow(): SplitControls {
     const sourceName = model.source.fileName;
     const recordId = applied.recordId;
     setExportRecord({ recordId, state: SplitExportState.Exporting });
-    const pieces: readonly ['A' | 'B', string][] = [
-      ['A', applied.pieceA],
-      ['B', applied.pieceB],
-    ];
+    const pieces: readonly [string, string][] =
+      model.parts.length === 2
+        ? [
+            ['A', applied.pieceA],
+            ['B', applied.pieceB],
+          ]
+        : model.parts.map((p, index) => [String(index + 1), p.partId]);
     const saved: string[] = [];
     const next = (index: number): void => {
       const piece = pieces[index];
@@ -888,7 +992,13 @@ export function useSplitWorkflow(): SplitControls {
         return;
       }
       const [letter, id] = piece;
-      const name = deriveSplitPartExportName(sourceName, letter);
+      const name =
+        letter === 'A' || letter === 'B'
+          ? deriveSplitPartExportName(sourceName, letter)
+          : deriveSplitPartExportName(sourceName, 'A').replace(
+              '_part_A.stl',
+              `_part_${letter}.stl`,
+            );
       client
         .exportModel(handle, id, 'binary', () => undefined)
         .promise.then(
@@ -949,6 +1059,16 @@ export function useSplitWorkflow(): SplitControls {
     completePreparedPreview,
     updatePreview,
     discardPreview: invalidate,
+    assemblyEditing,
+    beginNextSplit: (): void => {
+      setAssemblyEditing(true);
+    },
+    automaticUnitPrompt: automaticUnitPrompt && !unitValue,
+    applyWithoutConnectors: (): void => {
+      plainRequested.current = true;
+      setAutomaticUnitPrompt(false);
+      apply();
+    },
     apply,
     cancel,
     undo,

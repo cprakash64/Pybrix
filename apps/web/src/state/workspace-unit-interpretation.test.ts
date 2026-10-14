@@ -126,6 +126,7 @@ describe('the reading survives workspace changes and geometry edits', () => {
     const model = store.getSnapshot().model;
     if (model === undefined) throw new Error('expected a model');
     const applied = store.applySplitResult({
+      connector: { kind: 'none' },
       handle: { documentId: model.handle.documentId, revision: model.handle.revision + 1 },
       parentRevision: model.handle.revision,
       parts: model.parts,

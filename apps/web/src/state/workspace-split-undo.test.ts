@@ -92,6 +92,7 @@ function splitResult(source: string): SplitCommitResult {
     handle: handle(2),
     parentRevision: 1,
     recordId: 'record-1',
+    connector: { kind: 'none' },
     pieceAId: `${source}-A`,
     pieceBId: `${source}-B`,
     render: renderFor(parts),

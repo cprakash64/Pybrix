@@ -42,6 +42,8 @@ export interface SplitCandidateSummary {
   readonly resources: GeometryEditResourceAccounting;
   readonly metrics: SplitResult['metrics'];
   readonly connector: SplitResult['connector'];
+  readonly interface?: SplitResult['interface'];
+  readonly automaticConnector?: SplitResult['automaticConnector'];
   /**
    * The cut's cross-section, from Piece A's cap before any connector: area,
    * boundary-loop count and a bounded part-local outline. Reported for display;
@@ -179,6 +181,8 @@ export class SplitCandidateStore {
       resources,
       metrics: result.metrics,
       connector: result.connector,
+      ...(result.interface ? { interface: result.interface } : {}),
+      ...(result.automaticConnector ? { automaticConnector: result.automaticConnector } : {}),
       section: {
         area: result.cutA.area,
         loopCount: result.cutA.loopCount,

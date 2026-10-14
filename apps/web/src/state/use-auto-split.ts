@@ -304,13 +304,16 @@ export function useAutoSplit(
           row.suggestion.operation === SuggestionOperation.Plane &&
           row.suggestion.plane !== null
         ) {
-          const loaded = loadSuggestedPlane({
-            origin: row.suggestion.plane.origin,
-            normal: row.suggestion.plane.normal,
-          });
+          const loaded = loadSuggestedPlane(
+            {
+              origin: row.suggestion.plane.origin,
+              normal: row.suggestion.plane.normal,
+            },
+            row.label,
+          );
           setApproximate(loaded?.exact === false);
         } else {
-          setComponentSource(row.suggestion.components);
+          setComponentSource(row.suggestion.components, row.label);
         }
         if (thenPreview) setPreviewTick((tick) => tick + 1);
       };

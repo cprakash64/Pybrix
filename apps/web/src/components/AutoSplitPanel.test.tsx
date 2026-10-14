@@ -571,7 +571,7 @@ describe('a suggestion is a setting of Manual Split, and a preview is asked for,
     expect(call[1]).toBe(PART_ID);
     expect(call[2].plane.origin[2]).toBeCloseTo(80, 6);
     expect(call[2].plane.normal).toEqual([0, 0, 1]);
-    expect(call[2].connector.kind).toBe('none');
+    expect(call[2].connector).toEqual({ kind: 'automatic', unit: 'millimeter' });
     expect(screen.getByTestId('auto-preview-head')).toBeDisabled();
     expect(screen.getByTestId('auto-preview-left_arm')).toBeDisabled();
     expect(screen.getByTestId('split-preview')).toBeDisabled();

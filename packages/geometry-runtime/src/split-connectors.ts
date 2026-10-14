@@ -1,3 +1,5 @@
+import { automaticPinPlan } from './automatic-connectors';
+import { isLengthUnit } from '@cadfixer/shared';
 import {
   assertMeshStructure,
   computeBounds,
@@ -37,12 +39,13 @@ export type SplitConnector =
     };
 export interface SplitRequest {
   readonly plane: SplitPlane;
-  readonly connector: SplitConnector;
+  readonly connector: SplitConnector | { readonly kind: 'automatic'; readonly unit: string };
 }
 export interface CutSurfaceSummary {
   readonly triangleIds: readonly number[];
   readonly center: SplitVector;
   readonly spanU: number;
+  readonly bounds?: { readonly min: SplitVector; readonly max: SplitVector };
   readonly spanV: number;
   /** Distance from the automatic placement point to the actual cap boundary. */
   readonly centerEdgeDistance: number;
@@ -91,6 +94,14 @@ export interface SplitMetrics {
   readonly tolerance: number;
 }
 export interface SplitResult {
+  readonly interface?: {
+    readonly plane: SplitPlane;
+    readonly connectorEligible: boolean;
+    readonly center?: SplitVector;
+    readonly bounds?: { readonly min: SplitVector; readonly max: SplitVector };
+    readonly placements: readonly SplitVector[];
+  };
+  readonly automaticConnector?: 'applied' | 'unavailable';
   readonly surfaceValidation?: {
     readonly sourceFaces: number;
     readonly untouchedFaces: number;
@@ -349,7 +360,9 @@ export function identifyCutSurface(
   tolerance: number,
 ): CutSurfaceSummary {
   const { n, u, v } = frame(plane),
-    ids: number[] = [];
+    ids: number[] = [],
+    capMin = [Infinity, Infinity, Infinity],
+    capMax = [-Infinity, -Infinity, -Infinity];
   const edgeUse = new Map<
     string,
     {
@@ -398,6 +411,10 @@ export function identifyCutSurface(
         });
     }
     for (const p of ps) {
+      for (let axis = 0; axis < 3; axis++) {
+        capMin[axis] = Math.min(defined(capMin[axis]), defined(p[axis]));
+        capMax[axis] = Math.max(defined(capMax[axis]), defined(p[axis]));
+      }
       const pu = dot(p, u),
         pv = dot(p, v);
       count++;
@@ -465,6 +482,7 @@ export function identifyCutSurface(
     triangleIds: ids,
     center,
     spanU: maxU - minU,
+    bounds: { min: capMin as unknown as SplitVector, max: capMax as unknown as SplitVector },
     spanV: maxV - minV,
     centerEdgeDistance: edgeDistance(pole),
     interiorCandidates: ranked.map((candidate) => ({
@@ -599,7 +617,7 @@ function dimension(value: number, label: string, zero = false): void {
   if (!Number.isFinite(value) || value < (zero ? 0 : 0.01) || value > 1000)
     throw invalidState(`${label} is outside the supported range.`, { value });
 }
-function centers(
+export function connectorCenters(
   cut: CutSurfaceSummary,
   count: number,
   radius: number,
@@ -657,20 +675,29 @@ export async function splitWithConnectors(
   request: SplitRequest,
   cancellation: CancellationToken,
   onStage?: (stage: SplitStage) => void,
+  physicalScale = 1,
 ): Promise<SplitResult> {
   throwIfCancelled(cancellation);
   onStage?.(SplitStage.PreparingCut);
   const capability = choosePlaneSplitStrategy(source, request.plane, cancellation);
   if (capability.strategy === 'unsupported') throw invalidState('This cut cannot be made safely.');
+  if (request.connector.kind === 'automatic' && !isLengthUnit(request.connector.unit))
+    throw invalidState('A known unit is required for automatic connectors.');
   if (capability.strategy === 'open-surface') {
-    if (request.connector.kind !== 'none')
+    if (request.connector.kind !== 'none' && request.connector.kind !== 'automatic')
       throw invalidState('Choose None for this split.', {
         code: 'OPEN_SPLIT_CONNECTOR_UNSUPPORTED',
       });
     onStage?.(SplitStage.Intersecting);
     const result = splitOpenSurface(source, request.plane, cancellation);
     onStage?.(SplitStage.BuildingCutSurfaces);
-    return result;
+    return {
+      ...result,
+      interface: { plane: request.plane, connectorEligible: false, placements: [] },
+      ...(request.connector.kind === 'automatic'
+        ? { automaticConnector: 'unavailable' as const }
+        : {}),
+    };
   }
   const tolerance = splitTolerance(source),
     [positive, negative] = buildSplitCutters(source, request.plane);
@@ -694,33 +721,117 @@ export async function splitWithConnectors(
       relativeError: volumeRelativeError,
       limit: 1e-4,
     });
-  const c = request.connector,
-    placements: SplitVector[] = [];
-  if (c.kind !== 'none') onStage?.(SplitStage.AddingConnectors);
-  if (c.kind === 'pin') {
-    dimension(c.diameter, 'Pin diameter');
-    dimension(c.depth, 'Pin depth');
-    dimension(c.clearance, 'Pin clearance', true);
-    const r = c.diameter / 2;
-    for (const center of centers(
-      cutA,
-      c.count,
-      r + c.clearance,
-      Math.max(tolerance * 8, r * 0.35),
-    )) {
-      placements.push(center);
-      throwIfCancelled(cancellation);
+  const automatic = request.connector.kind === 'automatic';
+  if (automatic && !isLengthUnit(request.connector.unit))
+    throw invalidState('A known unit is required for automatic connectors.');
+  const plan =
+    request.connector.kind === 'automatic'
+      ? automaticPinPlan(
+          pieceA,
+          pieceB,
+          cutA,
+          request.plane.normal,
+          request.connector.unit,
+          physicalScale,
+          tolerance,
+          cancellation,
+        )
+      : undefined;
+  let c: SplitConnector =
+    request.connector.kind === 'automatic'
+      ? (plan?.connector ?? { kind: 'none' })
+      : request.connector;
+  const placements: SplitVector[] = [],
+    plainA = pieceA,
+    plainB = pieceB;
+  try {
+    if (c.kind !== 'none') onStage?.(SplitStage.AddingConnectors);
+    if (c.kind === 'pin') {
+      dimension(c.diameter, 'Pin diameter');
+      dimension(c.depth, 'Pin depth');
+      dimension(c.clearance, 'Pin clearance', true);
+      const r = c.diameter / 2;
+      for (const center of connectorCenters(
+        cutA,
+        c.count,
+        r + c.clearance,
+        Math.max(tolerance * 8, r * 0.35),
+      )) {
+        throwIfCancelled(cancellation);
+        if (plan) {
+          const n = unit(request.plane.normal),
+            extent = c.depth + plan.wall;
+          for (const [piece, sign, depth] of [
+            [pieceA, 1, plan.wall],
+            [pieceB, -1, extent],
+          ] as const) {
+            const axis = scale(n, sign),
+              guard = cylinder(
+                add(center, scale(axis, depth / 2 + tolerance * 8)),
+                axis,
+                r + c.clearance + plan.wall,
+                depth,
+              );
+            const inside = (
+              await runValidatedBoolean(backend, 'intersection', piece, guard, cancellation)
+            ).mesh;
+            if (meshVolume(inside) < meshVolume(guard) * (1 - 1e-4))
+              throw invalidState('Safe connector wall clearance could not be proven.');
+          }
+        }
+        placements.push(center);
+        const axis =
+            c.maleSide === 'A' ? scale(unit(request.plane.normal), -1) : unit(request.plane.normal),
+          overlap = Math.max(tolerance * 8, c.depth * 1e-4),
+          primitiveDepth = c.depth + overlap,
+          primitiveCenter = add(center, scale(axis, (c.depth - overlap) / 2)),
+          male = cylinder(primitiveCenter, axis, r, primitiveDepth),
+          socket = cylinder(
+            primitiveCenter,
+            axis,
+            roundSocketRadius(c.diameter, c.clearance),
+            primitiveDepth,
+          );
+        if (c.maleSide === 'A') {
+          pieceA = (await runValidatedBoolean(backend, 'union', pieceA, male, cancellation)).mesh;
+          pieceB = (await runValidatedBoolean(backend, 'difference', pieceB, socket, cancellation))
+            .mesh;
+        } else {
+          pieceB = (await runValidatedBoolean(backend, 'union', pieceB, male, cancellation)).mesh;
+          pieceA = (await runValidatedBoolean(backend, 'difference', pieceA, socket, cancellation))
+            .mesh;
+        }
+      }
+    } else if (c.kind === 'dovetail') {
+      dimension(c.width, 'Dovetail width');
+      dimension(c.depth, 'Dovetail depth');
+      dimension(c.length, 'Dovetail length');
+      dimension(c.clearance, 'Dovetail clearance', true);
+      const need = Math.max(c.width, c.length) / 2 + c.clearance;
+      const [placement] = connectorCenters(cutA, 1, need, Math.max(tolerance * 8, need * 0.25));
+      if (!placement) throw invalidState('No safe dovetail placement was found.');
+      placements.push(placement);
       const axis =
           c.maleSide === 'A' ? scale(unit(request.plane.normal), -1) : unit(request.plane.normal),
         overlap = Math.max(tolerance * 8, c.depth * 1e-4),
         primitiveDepth = c.depth + overlap,
-        primitiveCenter = add(center, scale(axis, (c.depth - overlap) / 2)),
-        male = cylinder(primitiveCenter, axis, r, primitiveDepth),
-        socket = cylinder(
-          primitiveCenter,
-          axis,
-          roundSocketRadius(c.diameter, c.clearance),
+        mc = add(cutA.center, scale(axis, (c.depth - overlap) / 2)),
+        male = dovetail(
+          mc,
+          { origin: mc, normal: axis },
+          c.width,
+          c.length,
           primitiveDepth,
+          c.orientationDegrees,
+        ),
+        female = dovetailFemaleDimensions(c.width, c.length, c.clearance),
+        socket = dovetail(
+          mc,
+          { origin: mc, normal: axis },
+          female.width,
+          female.length,
+          primitiveDepth,
+          c.orientationDegrees,
         );
       if (c.maleSide === 'A') {
         pieceA = (await runValidatedBoolean(backend, 'union', pieceA, male, cancellation)).mesh;
@@ -732,46 +843,15 @@ export async function splitWithConnectors(
           .mesh;
       }
     }
-  } else if (c.kind === 'dovetail') {
-    dimension(c.width, 'Dovetail width');
-    dimension(c.depth, 'Dovetail depth');
-    dimension(c.length, 'Dovetail length');
-    dimension(c.clearance, 'Dovetail clearance', true);
-    const need = Math.max(c.width, c.length) / 2 + c.clearance;
-    const [placement] = centers(cutA, 1, need, Math.max(tolerance * 8, need * 0.25));
-    if (!placement) throw invalidState('No safe dovetail placement was found.');
-    placements.push(placement);
-    const axis =
-        c.maleSide === 'A' ? scale(unit(request.plane.normal), -1) : unit(request.plane.normal),
-      overlap = Math.max(tolerance * 8, c.depth * 1e-4),
-      primitiveDepth = c.depth + overlap,
-      mc = add(cutA.center, scale(axis, (c.depth - overlap) / 2)),
-      male = dovetail(
-        mc,
-        { origin: mc, normal: axis },
-        c.width,
-        c.length,
-        primitiveDepth,
-        c.orientationDegrees,
-      ),
-      female = dovetailFemaleDimensions(c.width, c.length, c.clearance),
-      socket = dovetail(
-        mc,
-        { origin: mc, normal: axis },
-        female.width,
-        female.length,
-        primitiveDepth,
-        c.orientationDegrees,
-      );
-    if (c.maleSide === 'A') {
-      pieceA = (await runValidatedBoolean(backend, 'union', pieceA, male, cancellation)).mesh;
-      pieceB = (await runValidatedBoolean(backend, 'difference', pieceB, socket, cancellation))
-        .mesh;
-    } else {
-      pieceB = (await runValidatedBoolean(backend, 'union', pieceB, male, cancellation)).mesh;
-      pieceA = (await runValidatedBoolean(backend, 'difference', pieceA, socket, cancellation))
-        .mesh;
-    }
+    requireSolid(pieceA, 'final piece A', cancellation);
+    requireSolid(pieceB, 'final piece B', cancellation);
+  } catch (error) {
+    throwIfCancelled(cancellation);
+    if (!automatic) throw error;
+    pieceA = plainA;
+    pieceB = plainB;
+    c = { kind: 'none' };
+    placements.length = 0;
   }
   requireSolid(pieceA, 'final piece A', cancellation);
   requireSolid(pieceB, 'final piece B', cancellation);
@@ -783,6 +863,16 @@ export async function splitWithConnectors(
     cutA,
     cutB,
     connector: c,
+    interface: {
+      plane: request.plane,
+      connectorEligible: true,
+      placements,
+      center: cutA.center,
+      bounds: defined(cutA.bounds),
+    },
+    ...(automatic
+      ? { automaticConnector: c.kind === 'none' ? ('unavailable' as const) : ('applied' as const) }
+      : {}),
     placements,
     metrics: {
       sourceVolume,
@@ -794,4 +884,9 @@ export async function splitWithConnectors(
       tolerance,
     },
   };
+}
+
+function defined<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
+  return value;
 }

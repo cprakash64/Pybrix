@@ -1,3 +1,4 @@
+import { connectorAtAssemblyPoint } from '../state/assembly-presentation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   createViewport,
@@ -49,6 +50,7 @@ export function ViewportPanel(): ReactNode {
   const store = useWorkspaceStore();
   const {
     viewportFailure,
+    assembly,
     model,
     activePartId,
     analysis,
@@ -124,6 +126,26 @@ export function ViewportPanel(): ReactNode {
       const viewport = createViewport(container, {
         onPick: (hit) => {
           store.selectPart(hit.partId);
+          const state = store.getSnapshot(),
+            presentation = state.assembly,
+            selected = state.model?.parts.find((p) => p.partId === hit.partId);
+          if (
+            presentation &&
+            selected &&
+            presentation.revision === state.model?.handle.revision &&
+            !state.splitPreview
+          ) {
+            const offset = presentation.exploded
+                ? presentation.offsets.find((p) => p.partId === hit.partId)?.offset
+                : undefined,
+              center = state.model.bounds?.center ?? [0, 0, 0],
+              point = hit.point.map((v, k) => v + (center[k] ?? 0) - (offset?.[k] ?? 0)) as [
+                number,
+                number,
+                number,
+              ];
+            store.selectConnectorPair(connectorAtAssemblyPoint(presentation, selected, point));
+          }
           // Surface Texture's one selection tool: the worker grows the flat
           // region from this face. Nothing else listens for the click.
           if (store.getSnapshot().selectedWorkflow === WorkflowId.Texture)
@@ -226,6 +248,36 @@ export function ViewportPanel(): ReactNode {
     );
   }, [model, splitPreview]);
 
+  const assemblyCurrent =
+    assembly?.documentId === model?.handle.documentId &&
+    assembly?.revision === model?.handle.revision &&
+    splitPreview === undefined;
+  useEffect(() => {
+    if (assemblyCurrent && assembly)
+      viewportRef.current?.setAssemblyOffsets(
+        assembly.exploded ? new Map(assembly.offsets.map((p) => [p.partId, p.offset])) : undefined,
+      );
+  }, [assembly, assemblyCurrent, model, splitPreview]);
+
+  useEffect(() => {
+    const pair = assemblyCurrent
+      ? assembly?.connectorPairs.find((p) => p.id === assembly.selectedPairId)
+      : undefined;
+    const points = pair
+      ? [pair.a, pair.b].map(
+          (id) =>
+            pair.center.map(
+              (v, k) =>
+                v +
+                (assembly?.exploded
+                  ? (assembly.offsets.find((p) => p.partId === id)?.offset[k] ?? 0)
+                  : 0),
+            ) as [number, number, number],
+        )
+      : undefined;
+    viewportRef.current?.setConnectorGuide(points);
+  }, [assembly, assemblyCurrent]);
+
   /**
    * Points the overlay, preview and change-overlay frame at the active part.
    *
@@ -245,9 +297,20 @@ export function ViewportPanel(): ReactNode {
   }, [activePartId, model, splitPreview]);
 
   useEffect(() => {
-    viewportRef.current?.setEditPlane(autoSplit.planeVisible ? splitPlane : undefined);
+    viewportRef.current?.setEditPlane(
+      autoSplit.planeVisible && (split.applied === undefined || split.assemblyEditing)
+        ? splitPlane
+        : undefined,
+    );
     // Re-pushed after a preview is installed or removed: `setModel` hides it.
-  }, [autoSplit.planeVisible, splitPlane, model, splitPreview]);
+  }, [
+    autoSplit.planeVisible,
+    split.applied,
+    split.assemblyEditing,
+    splitPlane,
+    model,
+    splitPreview,
+  ]);
 
   /*
    * Auto Split's highlight of the components a suggestion would take out. Presentation only, drawn in
@@ -275,16 +338,21 @@ export function ViewportPanel(): ReactNode {
     );
   }, [model, splitOutline, splitPreview]);
 
-  const tintA = splitWorkspace ? (split.preview?.pieceAId ?? split.applied?.pieceA) : undefined;
-  const tintB = splitWorkspace ? (split.preview?.pieceBId ?? split.applied?.pieceB) : undefined;
+  const tintA = assemblyCurrent
+    ? activePartId
+    : splitWorkspace
+      ? (split.preview?.pieceAId ?? split.applied?.pieceA)
+      : undefined;
+  const tintB = assemblyCurrent
+    ? undefined
+    : splitWorkspace
+      ? (split.preview?.pieceBId ?? split.applied?.pieceB)
+      : undefined;
   useEffect(() => {
     viewportRef.current?.setPartTints(
-      tintA === undefined || tintB === undefined
+      tintA === undefined
         ? undefined
-        : new Map([
-            [tintA, 'a'],
-            [tintB, 'b'],
-          ]),
+        : new Map([[tintA, 'a'], ...(tintB ? [[tintB, 'b'] as const] : [])]),
     );
   }, [model, splitPreview, tintA, tintB]);
 
@@ -651,10 +719,42 @@ export function ViewportPanel(): ReactNode {
           operation, is where "not applied" is said. The workspace HUDs above it
           describe what is selected or measured and do not repeat it. */}
       <div className="viewport__hud">
+        {assemblyCurrent && assembly ? (
+          <div
+            role="group"
+            aria-label="Assembly view"
+            className="assembly-view"
+            data-testid="assembly-view"
+          >
+            <span role="status">{assembly.labels[activePartId ?? ''] ?? 'Assembly'}</span>
+            <button
+              type="button"
+              aria-pressed={assembly.exploded}
+              onClick={() => {
+                store.setAssemblyExploded(true);
+              }}
+              data-testid="assembly-exploded"
+            >
+              Exploded
+            </button>
+            <button
+              type="button"
+              aria-pressed={!assembly.exploded}
+              onClick={() => {
+                store.setAssemblyExploded(false);
+              }}
+              data-testid="assembly-assembled"
+            >
+              Assembled
+            </button>
+          </div>
+        ) : null}
         {repairWorkspace && issueSelection !== undefined && modelShown ? (
           <IssueHud navigation={navigation} />
         ) : null}
-        {splitWorkspace && modelShown ? <SplitHud /> : null}
+        {splitWorkspace && modelShown && (split.applied === undefined || split.assemblyEditing) ? (
+          <SplitHud />
+        ) : null}
         {textureWorkspace && modelShown ? <TextureHud /> : null}
         {showingPreview ? (
           <p className="viewport__preview-banner" role="status" data-testid="preview-banner">

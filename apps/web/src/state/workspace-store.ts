@@ -1,3 +1,8 @@
+import {
+  assemblyAfterSplit,
+  type AssemblyPresentation,
+  type SplitAssemblyContext,
+} from './assembly-presentation';
 import { isLengthUnit, type LengthUnit } from '@cadfixer/shared';
 import type { UnitInterpretation } from './unit-interpretation';
 import type {
@@ -956,6 +961,7 @@ const EMPTY_REPAIR: RepairSnapshot = {
 };
 
 export interface WorkspaceState {
+  readonly assembly: AssemblyPresentation | undefined;
   /** `undefined` means no workflow is open. No workflow can be opened yet. */
   readonly selectedWorkflow: WorkflowId | undefined;
   /**
@@ -1129,6 +1135,7 @@ export function analysisKey(
 const MAX_STATUS_ENTRIES = 50;
 
 const INITIAL_STATE: WorkspaceState = {
+  assembly: undefined,
   selectedWorkflow: undefined,
   model: undefined,
   importedHandle: undefined,
@@ -1241,6 +1248,24 @@ function sharedBuffersFor(
 }
 
 export class WorkspaceStore {
+  private readonly assemblyHistory = new Map<string, AssemblyPresentation | undefined>();
+  private assemblyKey(documentId: string, parts: readonly PartDescriptor[]): string {
+    return (
+      documentId +
+      '/' +
+      parts
+        .map((p) => p.partId)
+        .sort()
+        .join(',')
+    );
+  }
+  public selectConnectorPair(id: string | undefined): void {
+    const assembly = this.state.assembly;
+    if (!assembly || (id !== undefined && !assembly.connectorPairs.some((p) => p.id === id)))
+      return;
+    this.update({ assembly: { ...assembly, selectedPairId: id } });
+  }
+
   private state: WorkspaceState = INITIAL_STATE;
   private readonly listeners = new Set<() => void>();
   private nextStatusId = 1;
@@ -1332,7 +1357,7 @@ export class WorkspaceStore {
     this.update({ splitPlane: plane });
   }
 
-  public applySplitResult(result: SplitCommitResult): boolean {
+  public applySplitResult(result: SplitCommitResult, context?: SplitAssemblyContext): boolean {
     const model = this.state.model;
     if (
       model?.handle.documentId !== result.handle.documentId ||
@@ -1345,7 +1370,16 @@ export class WorkspaceStore {
     this.currentRepairToken = undefined;
     this.currentSelfIntersectionToken = undefined;
     this.currentHoleFillToken = undefined;
+    this.assemblyHistory.set(
+      this.assemblyKey(model.handle.documentId, model.parts),
+      this.state.assembly?.revision === model.handle.revision ? this.state.assembly : undefined,
+    );
+    if (this.assemblyHistory.size > 32) {
+      const oldest = this.assemblyHistory.keys().next().value;
+      if (oldest !== undefined) this.assemblyHistory.delete(oldest);
+    }
     this.update({
+      assembly: assemblyAfterSplit(result, context, this.state.assembly),
       model: {
         ...model,
         handle: result.handle,
@@ -1379,6 +1413,16 @@ export class WorkspaceStore {
       overlays: OVERLAYS_HIDDEN,
     });
     return true;
+  }
+
+  public setAssemblyExploded(exploded: boolean): void {
+    const assembly = this.state.assembly;
+    if (
+      assembly &&
+      assembly.revision === this.state.model?.handle.revision &&
+      assembly.exploded !== exploded
+    )
+      this.update({ assembly: { ...assembly, exploded } });
   }
 
   public pushStatus(severity: StatusSeverity, message: string): void {
@@ -2464,7 +2508,13 @@ export class WorkspaceStore {
         : result.parts[0]?.partId;
     const activeDescriptor = result.parts.find((part) => part.partId === activePartId);
 
+    const restoredAssembly = this.assemblyHistory.get(
+      this.assemblyKey(result.handle.documentId, result.parts),
+    );
     this.update({
+      assembly: restoredAssembly
+        ? { ...restoredAssembly, revision: result.handle.revision }
+        : undefined,
       model: {
         ...model,
         handle: result.handle,

@@ -47,6 +47,26 @@ const STAGE_PROGRESS: Readonly<Record<SplitStage, readonly [number, string]>> = 
   [SplitStage.AddingConnectors]: [0.7, 'Adding connectors…'],
 });
 
+/** Physical sizing only supports an orthogonal uniform source transform. */
+function uniformPhysicalScale(t: readonly number[]): number {
+  const axes = [
+      [defined(t[0]), defined(t[1]), defined(t[2])],
+      [defined(t[3]), defined(t[4]), defined(t[5])],
+      [defined(t[6]), defined(t[7]), defined(t[8])],
+    ],
+    lengths = axes.map((a) => Math.hypot(...a)),
+    scale = defined(lengths[0]);
+  if (!(scale > 0) || lengths.some((x) => Math.abs(x - scale) > scale * 1e-6)) return NaN;
+  for (let i = 0; i < 3; i++)
+    for (let j = i + 1; j < 3; j++)
+      if (
+        Math.abs(defined(axes[i]).reduce((v, x, k) => v + x * defined(defined(axes[j])[k]), 0)) >
+        scale * scale * 1e-6
+      )
+        return NaN;
+  return scale;
+}
+
 export const splitCreateHandler: OperationHandler<'split/create'> = async (payload, context) => {
   context.throwIfCancelled();
   const sourcePart = residentDocuments.resolvePart(payload.source, partId(payload.partId));
@@ -79,6 +99,7 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
       (stage) => {
         context.reportProgress(STAGE_PROGRESS[stage][0], STAGE_PROGRESS[stage][1]);
       },
+      uniformPhysicalScale(sourcePart.transform),
     );
     context.reportProgress(0.85, 'Checking parts…');
     const summary = splitCandidates.resolve(ticket, result, context.cancellation);
@@ -134,3 +155,8 @@ export const splitCommitHandler: OperationHandler<'split/commit'> = (payload, co
 
 export const splitDiscardHandler: OperationHandler<'split/discard'> = (payload) =>
   Promise.resolve({ value: { released: splitCandidates.discard(payload.candidate) } });
+
+function defined<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
+  return value;
+}

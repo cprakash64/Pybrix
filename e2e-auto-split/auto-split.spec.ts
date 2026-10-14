@@ -86,6 +86,17 @@ async function previewAndApply(page: Page, previewId: string): Promise<void> {
   await expect(page.getByTestId('split-preview-label')).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId('split-apply')).toBeEnabled();
   await page.getByTestId('split-apply').click();
+  const withoutConnectors = page.getByRole('button', { name: 'Separate without connectors' });
+  await expect(withoutConnectors.or(page.getByTestId('split-undo')).first()).toBeVisible({
+    timeout: 60_000,
+  });
+  if (await withoutConnectors.isVisible()) {
+    await expect(page.getByTestId('automatic-connector-units')).toBeVisible();
+    await expect(
+      page.getByTestId('automatic-connector-units').locator('input:checked'),
+    ).toHaveCount(0);
+    await withoutConnectors.click();
+  }
   await expect(page.getByTestId('split-undo')).toBeVisible({ timeout: 60_000 });
 }
 

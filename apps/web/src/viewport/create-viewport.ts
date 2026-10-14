@@ -213,6 +213,9 @@ export interface ViewportHandle {
    * unusable.
    */
   setActivePart(partId: string | undefined): void;
+  setAssemblyOffsets(
+    offsets: ReadonlyMap<string, readonly [number, number, number]> | undefined,
+  ): void;
   /** Raycast disposable render geometry and return stable part identity. */
   pick(clientX: number, clientY: number): PartPick | undefined;
   /** Internal split/texture plane control; part-local and never canonical. */
@@ -234,6 +237,7 @@ export interface ViewportHandle {
     data: { readonly segments: Float32Array; readonly revision: number } | undefined,
   ): void;
   /** Colours the pieces of a split as Piece A and Piece B. `undefined` restores one colour. */
+  setConnectorGuide(points: readonly (readonly [number, number, number])[] | undefined): void;
   setPartTints(tints: ReadonlyMap<string, ViewportPartTint> | undefined): void;
   /**
    * Hides the named parts (the other piece of a split preview). Presentation
@@ -464,7 +468,38 @@ export function createViewport(
   controls.enableDamping = false;
 
   /** Holds the model and carries the display-only centring offset. */
+  const guideGeometry = new BufferGeometry(),
+    guidePositions = new Float32Array(6),
+    guideAttribute = new BufferAttribute(guidePositions, 3);
+  guideGeometry.setAttribute('position', guideAttribute);
+  const guideMaterial = new LineBasicMaterial({
+    color: 0x8ba2ba,
+    transparent: true,
+    opacity: 0.7,
+    depthTest: false,
+  });
+  const connectorGuide = new LineSegments(guideGeometry, guideMaterial);
+  connectorGuide.visible = false;
   const modelGroup = new Group();
+  modelGroup.add(connectorGuide);
+  const setConnectorGuide = (
+    points: readonly (readonly [number, number, number])[] | undefined,
+  ): void => {
+    connectorGuide.visible = points?.length === 2;
+    if (points?.length === 2) {
+      guidePositions.set(points.flat());
+      guideAttribute.needsUpdate = true;
+      guideGeometry.computeBoundingSphere();
+    }
+    for (const [index, marker] of pairMarkers.entries()) {
+      const p = points?.[index];
+      marker.visible = p !== undefined;
+      if (p) marker.position.set(...p);
+      marker.scale.setScalar((currentModel?.radius ?? 1) * 0.035);
+    }
+    canvas.dataset.connectorGuide = points?.length === 2 ? 'paired' : 'none';
+    render();
+  };
   scene.add(modelGroup);
 
   // Overlays are added to the SAME group as the model, so the display-only
@@ -498,6 +533,19 @@ export function createViewport(
     depthWrite: false,
     transparent: true,
   });
+  const pairMarkerMaterial = new SpriteMaterial({
+    map: markerMaterial.map,
+    color: 0x8ba2ba,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  });
+  const pairMarkers = [new Sprite(pairMarkerMaterial), new Sprite(pairMarkerMaterial)];
+  for (const m of pairMarkers) {
+    m.visible = false;
+    m.renderOrder = 9;
+    modelGroup.add(m);
+  }
   const marker = new Sprite(markerMaterial);
   marker.renderOrder = 10;
   marker.visible = false;
@@ -929,6 +977,37 @@ export function createViewport(
     currentPreview = undefined;
   };
 
+  let assemblyOffsets: ReadonlyMap<string, readonly [number, number, number]> | undefined;
+  let assemblyRadius = 0;
+  const setAssemblyOffsets = (
+    offsets: ReadonlyMap<string, readonly [number, number, number]> | undefined,
+  ): void => {
+    const unchanged =
+      offsets?.size === assemblyOffsets?.size &&
+      [...(offsets?.entries() ?? [])].every(([id, offset]) =>
+        offset.every((v, k) => v === assemblyOffsets?.get(id)?.[k]),
+      );
+    const axesWereVisible = axes.visible;
+    axes.visible = false;
+    if (unchanged && !axesWereVisible) return;
+    assemblyOffsets = offsets;
+    let far = 0;
+    for (const part of currentModel?.parts ?? []) {
+      const mesh = partMeshes.get(part.partId);
+      if (!mesh) continue;
+      mesh.matrix.copy(partMatrix(part.transform));
+      const offset = offsets?.get(part.partId);
+      if (offset) {
+        mesh.matrix.elements[12] += offset[0];
+        mesh.matrix.elements[13] += offset[1];
+        mesh.matrix.elements[14] += offset[2];
+        far = Math.max(far, Math.hypot(...offset));
+      }
+    }
+    assemblyRadius = far;
+    placeActivePartGroup();
+    fitView();
+  };
   const frameFrom = (direction: Vector3): void => {
     if (currentModel === undefined) {
       camera.position.set(180, 140, 180);
@@ -941,7 +1020,7 @@ export function createViewport(
     // The model group is offset by -centre, so the model occupies a sphere of
     // `radius` about the world origin regardless of where it sat in the file.
     // Fitting therefore never assumes the source coordinates were near zero.
-    const radius = currentModel.radius > 0 ? currentModel.radius : 1;
+    const radius = (currentModel.radius > 0 ? currentModel.radius : 1) + assemblyRadius;
     const halfFov = (camera.fov * Math.PI) / 180 / 2;
     const distance = (radius / Math.sin(halfFov)) * FIT_PADDING;
 
@@ -1048,6 +1127,9 @@ export function createViewport(
     marker.visible = false;
     hideEditPlane();
     currentModel = model;
+    axes.visible = true;
+    assemblyOffsets = undefined;
+    assemblyRadius = 0;
 
     if (model === undefined) {
       grid.visible = true;
@@ -1106,6 +1188,12 @@ export function createViewport(
     activePartGroup.matrix.copy(
       active === undefined ? new Matrix4() : partMatrix(active.transform),
     );
+    const offset = active === undefined ? undefined : assemblyOffsets?.get(active.partId);
+    if (offset) {
+      activePartGroup.matrix.elements[12] += offset[0];
+      activePartGroup.matrix.elements[13] += offset[1];
+      activePartGroup.matrix.elements[14] += offset[2];
+    }
   };
 
   const setActivePart = (partId: string | undefined): void => {
@@ -1396,11 +1484,13 @@ export function createViewport(
   return {
     setModel,
     setActivePart,
+    setAssemblyOffsets,
     pick,
     setEditPlane,
     setTextureSelection,
     setSectionOutline,
     setPartTints,
+    setConnectorGuide,
     setHiddenParts,
     setTextureFootprint,
     setOverlays,
@@ -1467,6 +1557,9 @@ export function createViewport(
       textureSelectionMaterial.dispose();
       markerMaterial.map?.dispose();
       markerMaterial.dispose();
+      guideGeometry.dispose();
+      guideMaterial.dispose();
+      pairMarkerMaterial.dispose();
       grid.geometry.dispose();
       disposeMaterial(grid);
       axes.geometry.dispose();

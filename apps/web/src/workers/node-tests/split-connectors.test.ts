@@ -4,14 +4,22 @@ import {
   createIndexArray,
   createPositionArray,
   triangleCount,
+  singlePartDocument,
+  partId,
   type CanonicalMesh,
 } from '@cadfixer/mesh-core';
-import { CancellationSource } from '@cadfixer/shared';
+import { CancellationSource, uncancellable, isAppError } from '@cadfixer/shared';
+import { writeBinaryStl } from '@cadfixer/file-formats';
+import { testReadContext } from '../../../../../packages/file-formats/src/test-context';
 import {
   dovetailFemaleDimensions,
   meshVolume,
   roundSocketRadius,
   splitWithConnectors,
+  ResidentDocumentStore,
+  RepairHistoryStore,
+  GeometryEditStore,
+  SplitCandidateStore,
   type SplitConnector,
   type SplitResult,
 } from '@cadfixer/geometry-runtime';
@@ -471,4 +479,167 @@ describe('Stage 7B split and connectors', () => {
     const socketVolume = pinned.metrics.pieceBVolume - pinned.metrics.pieceBFinalVolume;
     expect(socketVolume).toBeGreaterThan(pinVolume);
   });
+});
+
+describe('bounded automatic connector realization', () => {
+  it('sizes real male/socket geometry from a known millimetre cap and retains paired positions', async () => {
+    const backend = await createManifoldBooleanBackend(binary),
+      source = cube(30);
+    const result = await splitWithConnectors(
+      backend,
+      source,
+      {
+        plane: { origin: [0, 0, 0], normal: [0, 0, 1] },
+        connector: { kind: 'automatic', unit: 'millimeter' },
+      },
+      new CancellationSource().token,
+    );
+    expect(result.automaticConnector).toBe('applied');
+    expect(result.connector.kind).toBe('pin');
+    if (result.connector.kind !== 'pin') throw new Error('Automatic pin missing');
+    expect(result.connector.count).toBe(2);
+    expect(result.connector.diameter).toBeGreaterThanOrEqual(1);
+    expect(result.connector.diameter).toBeLessThanOrEqual(6);
+    expect(result.placements).toHaveLength(2);
+    expect(result.interface?.placements).toEqual(result.placements);
+    expect(result.metrics.pieceAFinalVolume).toBeGreaterThan(result.metrics.pieceAVolume);
+    expect(result.metrics.pieceBFinalVolume).toBeLessThan(result.metrics.pieceBVolume);
+  });
+  it('restores both plain pieces when a connector boolean fails after preparation', async () => {
+    const backend = await createManifoldBooleanBackend(binary);
+    const result = await splitWithConnectors(
+      {
+        operate: (kind, a, b, token) => {
+          if (kind === 'difference') throw new Error('Controlled socket failure');
+          return backend.operate(kind, a, b, token);
+        },
+      },
+      cube(30),
+      {
+        plane: { origin: [0, 0, 0], normal: [0, 0, 1] },
+        connector: { kind: 'automatic', unit: 'millimeter' },
+      },
+      new CancellationSource().token,
+    );
+    expect(result.automaticConnector).toBe('unavailable');
+    expect(result.connector).toEqual({ kind: 'none' });
+    expect(result.placements).toEqual([]);
+    expect(meshVolume(result.pieceA)).toBeCloseTo(13500, 3);
+    expect(meshVolume(result.pieceB)).toBeCloseTo(13500, 3);
+  });
+  it('declines unsafe thin caps and nonuniform physical scaling without losing the plain split', async () => {
+    const backend = await createManifoldBooleanBackend(binary);
+    for (const [source, scale] of [
+      [cube(4), 1],
+      [cube(30), NaN],
+    ] as const) {
+      const result = await splitWithConnectors(
+        backend,
+        source,
+        {
+          plane: { origin: [0, 0, 0], normal: [0, 0, 1] },
+          connector: { kind: 'automatic', unit: 'millimeter' },
+        },
+        new CancellationSource().token,
+        undefined,
+        scale,
+      );
+      expect(result.automaticConnector).toBe('unavailable');
+      expect(result.connector.kind).toBe('none');
+      expect(result.metrics.volumeRelativeError).toBeLessThan(1e-4);
+    }
+  });
+  it('builds four oriented pieces with three independently matched physical pin interfaces', async () => {
+    const backend = await createManifoldBooleanBackend(binary),
+      source = cube(30);
+    for (let i = 0; i < source.positions.length; i += 3)
+      source.positions[i] = ((source.positions[i] ?? 0) * 80) / 30;
+    const pieces: CanonicalMesh[] = [];
+    let remainder = source;
+    for (const x of [20, 0, -20]) {
+      const result = await splitWithConnectors(
+        backend,
+        remainder,
+        {
+          plane: { origin: [x, 0, 0], normal: [1, 0, 0] },
+          connector: { kind: 'automatic', unit: 'millimeter' },
+        },
+        new CancellationSource().token,
+      );
+      expect(result.automaticConnector).toBe('applied');
+      expect(result.placements.length).toBeGreaterThan(0);
+      expect(result.placements.every((p) => Math.abs(p[0] - x) < 1e-5)).toBe(true);
+      pieces.push(result.pieceA);
+      remainder = result.pieceB;
+    }
+    pieces.push(remainder);
+    expect(pieces).toHaveLength(4);
+    expect(pieces.every((p) => triangleCount(p) > 12)).toBe(true);
+  });
+});
+
+it('automatic multi-part transactions export physical pairs and Undo restores the exact pre-action document', async () => {
+  const backend = await createManifoldBooleanBackend(binary),
+    mesh = cube(30);
+  for (let i = 0; i < mesh.positions.length; i += 3)
+    mesh.positions[i] = ((mesh.positions[i] ?? 0) * 80) / 30;
+  const doc = singlePartDocument(mesh),
+    resident = new ResidentDocumentStore(),
+    history = new RepairHistoryStore(),
+    edits = new GeometryEditStore(resident, history),
+    splits = new SplitCandidateStore(resident, history, edits);
+  let source = resident.commit(doc),
+    currentPart = partId('part-1');
+  let beforeLast = doc,
+    lastRecord = '';
+  const snapshots: Uint8Array[][] = [];
+  for (const x of [20, 0, -20]) {
+    const current = resident.resolve(source);
+    if (isAppError(current)) throw current;
+    const target = current.parts.find((p) => p.id === currentPart);
+    if (!target) throw Error('Source part missing');
+    beforeLast = current;
+    snapshots.push(
+      await Promise.all(
+        current.parts.map(async (p) => (await writeBinaryStl(p.mesh, testReadContext())).bytes),
+      ),
+    );
+    const ticket = splits.begin(source, currentPart),
+      result = await splitWithConnectors(
+        backend,
+        target.mesh,
+        {
+          plane: { origin: [x, 0, 0], normal: [1, 0, 0] },
+          connector: { kind: 'automatic', unit: 'millimeter' },
+        },
+        uncancellable,
+      ),
+      summary = splits.resolve(ticket, result, uncancellable);
+    expect(result.automaticConnector).toBe('applied');
+    const applied = splits.commit(summary.candidate, source, currentPart, (d) => d);
+    source = applied.handle;
+    currentPart = summary.pieceBId;
+    lastRecord = applied.recordId;
+    expect(applied.value.parts).toHaveLength(snapshots.length + 1);
+  }
+  const current = resident.resolve(source);
+  if (isAppError(current)) throw current;
+  expect(current.parts).toHaveLength(4);
+  for (const p of current.parts) {
+    const written = await writeBinaryStl(p.mesh, testReadContext());
+    expect(new DataView(written.bytes.buffer).getUint32(80, true)).toBe(triangleCount(p.mesh));
+    expect(triangleCount(p.mesh)).toBeGreaterThan(12);
+  }
+  const undo = history.prepareUndo(lastRecord, source, source.revision);
+  if (isAppError(undo)) throw undo;
+  expect(undo.inverse.previousDocument).toBe(beforeLast);
+  const restored = resident.replace(source, beforeLast);
+  if (isAppError(restored)) throw restored;
+  history.markUndone(lastRecord);
+  expect(resident.resolve(restored)).toBe(beforeLast);
+  const after = await Promise.all(
+    beforeLast.parts.map(async (p) => (await writeBinaryStl(p.mesh, testReadContext())).bytes),
+  );
+  expect(after).toEqual(snapshots[2]);
+  expect(splits.stats().candidateCount).toBe(0);
 });

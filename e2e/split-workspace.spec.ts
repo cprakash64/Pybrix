@@ -88,6 +88,10 @@ async function arrowOf(page: Page): Promise<{
   base: { x: number; y: number };
   tip: { x: number; y: number };
 }> {
+  await expect(canvas(page)).toHaveAttribute(
+    'data-edit-arrow',
+    /^[-\d.]+,[-\d.]+,[-\d.]+,[-\d.]+$/,
+  );
   const raw = (await canvas(page).getAttribute('data-edit-arrow')) ?? 'none';
   const box = await canvas(page).boundingBox();
   const values = raw.split(',').map(Number);
@@ -223,7 +227,10 @@ test('D/E: a real split previews in two colours, applies as two parts, and parts
   await expect(page.getByTestId('split-inspector-part')).toHaveText('Box A');
   await expect(canvas(page)).toHaveAttribute('data-probe', 'original');
 
-  // After Apply the plane belongs to Piece A (z 40–70) and sits at its centre,
+  await page.getByTestId('assembly-assembled').click();
+  await page.getByTestId('split-again').click();
+
+  // After beginning the next split the plane belongs to Piece A (z 40–70) and sits at its centre,
   // with Piece B (z 10–40) behind it: a point two arrow-lengths back along the
   // axis lies on Piece B. Picking it selects Piece B, and the inspector follows.
   const { base, tip } = await arrowOf(page);
