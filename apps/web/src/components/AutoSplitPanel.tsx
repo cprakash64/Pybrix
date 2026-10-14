@@ -5,6 +5,7 @@ import {
   describeModelKind,
   describeReason,
   describeScope,
+  describeSemanticUnavailable,
 } from '../state/auto-split-presentation';
 import { SuggestionOperation } from '@cadfixer/auto-split';
 import { AutoSplitPhase, ModelKind } from '../state/auto-split-session';
@@ -582,7 +583,7 @@ function Row({
             : row.executable
               ? 'Suggested cut'
               : row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE'
-                ? 'Part of the body'
+                ? describeSemanticUnavailable(row.suggestion.diagnostic)
                 : row.suggestion.quality === 'LOW_CONFIDENCE'
                   ? 'Needs a closer look'
                   : row.suggestion.quality === 'UNSAFE'

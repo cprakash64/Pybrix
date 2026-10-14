@@ -12,6 +12,7 @@ import {
   describeError,
   describeOperation,
   describeStatus,
+  describeSemanticUnavailable,
 } from './auto-split-presentation';
 import { LocalErrorCode } from './auto-split-session';
 
@@ -169,4 +170,15 @@ describe('errors', () => {
         .detail,
     ).toBe('Try again in about 60 seconds.');
   });
+});
+
+it('distinguishes unsupported mapping and missing proposal from confirmed fusion', () => {
+  expect(describeSemanticUnavailable('MAPPING_UNCERTAIN')).toBe(
+    "Couldn't isolate this part reliably",
+  );
+  expect(describeSemanticUnavailable('NO_REALIZATION_PROPOSAL')).toBe(
+    'Recognized, but no safe split was found',
+  );
+  expect(describeSemanticUnavailable(undefined)).toBe('Recognized, but no safe split was found');
+  expect(describeSemanticUnavailable('CONFIRMED_FUSED')).toBe('Part of the body');
 });

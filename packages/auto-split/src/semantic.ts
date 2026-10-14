@@ -690,6 +690,15 @@ export function decomposeSemantic(
       semanticConfidence,
       geometryConfidence,
       quality,
+      // Missing/unsupported grounding is not proof of fusion. This field only selects copy.
+      ...(operation === SuggestionOperation.None
+        ? {
+            diagnostic:
+              part.cut !== null || part.componentIds.length > 0
+                ? ('MAPPING_UNCERTAIN' as const)
+                : ('NO_REALIZATION_PROPOSAL' as const),
+          }
+        : {}),
       instanceCount: part.instances,
     };
     suggestions.push(s);

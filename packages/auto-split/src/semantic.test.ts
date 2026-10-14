@@ -129,6 +129,23 @@ describe('semantic decomposition with independent geometry truth', () => {
       quality: 'RECOGNIZED_NOT_SEPARABLE',
       operation: 'NONE',
       geometryConfidence: 0,
+      diagnostic: 'MAPPING_UNCERTAIN',
+    });
+    const noProposal = decomposeSemantic(fused, {
+      object: { label: 'container', confidence: 0.99 },
+      parts: [
+        {
+          ...door,
+          componentIds: [],
+          cut: null,
+          expectedGeometry: { kind: 'surface_part', likelySeparable: false },
+        },
+      ],
+    });
+    expect(noProposal.suggestions[0]).toMatchObject({
+      operation: 'NONE',
+      geometryConfidence: 0,
+      diagnostic: 'NO_REALIZATION_PROPOSAL',
     });
   });
   it('rejects malformed regions, cycle/depth overflow, and low-confidence execution', async () => {

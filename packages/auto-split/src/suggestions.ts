@@ -76,6 +76,8 @@ export interface Suggestion {
   readonly semanticConfidence?: number;
   readonly geometryConfidence?: number;
   readonly quality?: 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
+  /** Presentation diagnosis only; never grants an operation or changes validation. */
+  readonly diagnostic?: 'CONFIRMED_FUSED' | 'MAPPING_UNCERTAIN' | 'NO_REALIZATION_PROPOSAL';
   readonly instanceCount?: number;
 }
 

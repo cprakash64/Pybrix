@@ -291,3 +291,16 @@ export function allAutoSplitCopy(): readonly string[] {
   for (const phase of Object.values(AutoSplitPhase)) phrases.push(describePhase(phase, ''));
   return phrases;
 }
+
+/** A refused semantic proposal does not establish that a part is fused. */
+export function describeSemanticUnavailable(diagnostic: Suggestion['diagnostic']): string {
+  switch (diagnostic) {
+    case 'CONFIRMED_FUSED':
+      return 'Part of the body';
+    case 'MAPPING_UNCERTAIN':
+      return "Couldn't isolate this part reliably";
+    case 'NO_REALIZATION_PROPOSAL':
+    case undefined:
+      return 'Recognized, but no safe split was found';
+  }
+}

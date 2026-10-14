@@ -115,7 +115,9 @@ for (const [index, id] of ['bed', 'cabin'].entries())
     const analysisMs = Date.now() - t,
       rssAnalyzed = await rss(browser);
     await expect(page.getByTestId('auto-results')).toContainText('Dump truck');
-    await expect(page.getByTestId('auto-row-wheels')).toContainText('Part of the body');
+    await expect(page.getByTestId('auto-row-wheels')).toContainText(
+      'Recognized, but no safe split was found',
+    );
     for (const [width, height] of [
       [1280, 720],
       [1440, 900],
