@@ -101,7 +101,7 @@ for (const size of SIZES) {
 
     await control(page, { behaviour: 'slow' });
     await page.getByTestId('auto-analyze').click();
-    await expect(page.getByTestId('auto-status')).toContainText(/finding parts/i, {
+    await expect(page.getByTestId('auto-status')).toContainText('Looking for parts…', {
       timeout: 60_000,
     });
     await shot(page, size.name, '04-analyzing');
