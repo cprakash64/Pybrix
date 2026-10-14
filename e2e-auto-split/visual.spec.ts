@@ -159,6 +159,7 @@ for (const size of SIZES) {
     await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
     const wheel = page.locator('[data-testid^="auto-row-wheel:"]').first();
     const id = ((await wheel.getAttribute('data-testid')) ?? '').replace('auto-row-', '');
+    await revealControl(page, page.getByTestId(`auto-show-${id}`));
     await page.getByTestId(`auto-show-${id}`).click();
     await page.waitForTimeout(600);
     await shot(page, size.name, '10-vehicle-component-highlight');
@@ -174,6 +175,7 @@ for (const size of SIZES) {
     await page.getByTestId('auto-analyze').click();
     await expect(page.getByTestId('auto-results')).toBeVisible({ timeout: 120_000 });
     const loose = page.locator('[data-testid^="auto-edit-wheel:"]').first();
+    await revealControl(page, loose);
     await loose.click();
     await expect(page.getByTestId('auto-components')).toBeVisible();
     await shot(page, size.name, '10b-review-selection');
