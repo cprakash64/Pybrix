@@ -1,3 +1,4 @@
+import { resourceLimitExceeded } from '@cadfixer/shared';
 import {
   cameraFor,
   dot,
@@ -7,7 +8,7 @@ import {
   type Vec3,
   type ViewName,
 } from '@cadfixer/auto-split-contract';
-import { CHECKPOINT_STRIDE, NO_CHECKPOINT, type Checkpoint } from './checkpoint';
+import { CHECKPOINT_STRIDE, CHECKPOINT_MASK, NO_CHECKPOINT, type Checkpoint } from './checkpoint';
 import type { NormalizedGeometry } from './geometry';
 
 /**
@@ -31,12 +32,23 @@ export interface Raster {
   readonly size: number;
   /** Per grid pixel: the front-most face, or -1. */
   readonly face: Int32Array;
+  /** Retained only for semantic correspondence; never transmitted. */
+  readonly depth?: Float32Array;
+}
+
+export interface RasterWorkBudget {
+  rows?: number;
+  readonly rowLimit?: number;
+  pixels: number;
+  readonly limit: number;
 }
 
 export function rasteriseView(
   geometry: NormalizedGeometry,
   view: ViewName,
   checkpoint: Checkpoint = NO_CHECKPOINT,
+  keepDepth = false,
+  budget?: RasterWorkBudget,
 ): Raster {
   const camera = cameraFor(view);
   const size = GRID_SIZE;
@@ -82,7 +94,54 @@ export function rasteriseView(
       const inv = 1 / area;
       for (let y = minY; y <= maxY; y += 1) {
         const py = y + 0.5;
-        for (let x = minX; x <= maxX; x += 1) {
+        let rowMin = minX,
+          rowMax = maxX;
+        if (budget !== undefined) {
+          if (budget.rowLimit !== undefined) {
+            budget.rows = (budget.rows ?? 0) + 1;
+            if ((budget.rows & CHECKPOINT_MASK) === 0) checkpoint();
+            if (budget.rows > budget.rowLimit)
+              throw resourceLimitExceeded('The analysis render exceeds the supported row limit.', {
+                code: 'AUTO_SPLIT_SEMANTIC_RENDER_LIMIT',
+                metric: 'rasterRows',
+                value: budget.rows,
+                limit: budget.rowLimit,
+              });
+          }
+          // Conservative row clipping skips pixels outside the triangle's horizontal span.
+          // The existing barycentric/depth test is unchanged and still decides every admitted pixel.
+          let left = Infinity,
+            right = -Infinity;
+          for (let edge = 0; edge < 3; edge++) {
+            const xa = edge === 0 ? x0 : edge === 1 ? x1 : x2,
+              ya = edge === 0 ? y0 : edge === 1 ? y1 : y2,
+              xb = edge === 0 ? x1 : edge === 1 ? x2 : x0,
+              yb = edge === 0 ? y1 : edge === 1 ? y2 : y0;
+            if (py < Math.min(ya, yb) - 1e-7 || py > Math.max(ya, yb) + 1e-7) continue;
+            if (ya === yb) {
+              left = Math.min(left, xa, xb);
+              right = Math.max(right, xa, xb);
+              continue;
+            }
+            const hit = xa + ((py - ya) * (xb - xa)) / (yb - ya);
+            left = Math.min(left, hit);
+            right = Math.max(right, hit);
+          }
+          if (left === Infinity) continue;
+          rowMin = Math.max(minX, Math.ceil(left - 0.5 - 1e-7));
+          rowMax = Math.min(maxX, Math.floor(right - 0.5 + 1e-7));
+        }
+        for (let x = rowMin; x <= rowMax; x += 1) {
+          if (budget !== undefined) {
+            if ((budget.pixels & CHECKPOINT_MASK) === 0) checkpoint();
+            if (++budget.pixels > budget.limit)
+              throw resourceLimitExceeded('The analysis render exceeds the supported work limit.', {
+                code: 'AUTO_SPLIT_SEMANTIC_RENDER_LIMIT',
+                metric: 'rasterPixels',
+                value: budget.pixels,
+                limit: budget.limit,
+              });
+          }
           const px = x + 0.5;
           const w0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) * inv;
           const w1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) * inv;
@@ -98,7 +157,7 @@ export function rasteriseView(
       }
     }
   }
-  return { view, size, face };
+  return { view, size, face, ...(keepDepth ? { depth } : {}) };
 }
 
 const BACKGROUND: readonly [number, number, number] = [236, 236, 236];

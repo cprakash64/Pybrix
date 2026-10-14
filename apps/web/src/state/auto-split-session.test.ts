@@ -116,6 +116,7 @@ interface Rig {
   transport: ReturnType<typeof deferred<ParsedResponse>>;
   suggest: ReturnType<typeof deferred<AutoSplitSuggestResult>>;
   raws: unknown[];
+  releases: number[];
 }
 
 function rig(): Rig {
@@ -129,10 +130,14 @@ function rig(): Rig {
     transport: deferred(),
     suggest: deferred(),
     raws: [],
+    releases: [],
     progress: undefined,
     session: undefined as unknown as AutoSplitSession,
   };
   const client: AutoSplitClient = {
+    releaseAutoSplitPreparation: (_source, _part, id) => {
+      r.releases.push(id);
+    },
     renderAutoSplitViews: (_source, _part, onProgress) => {
       r.progress = onProgress;
       r.calls.render += 1;
@@ -682,5 +687,28 @@ describe('cancelling the local suggestion pass', () => {
     await flush();
     expect(r.session.getSnapshot().run).toBe('ready');
     expect(r.session.getSnapshot().cancellable).toBe(true);
+  });
+});
+
+describe('semantic preparation cleanup', () => {
+  it('releases a preparation returned after cancellation and sends no analysis', async () => {
+    const r = rig();
+    ready(r, ModelKind.Automatic);
+    r.session.analyze(target(1));
+    r.session.cancel();
+    r.render.resolve({ ...VIEWS, preparationId: 71 });
+    await flush();
+    expect(r.releases).toEqual([71]);
+    expect(r.calls.transport).toBe(0);
+  });
+  it('releases the local visibility context when a provider request is cancelled', async () => {
+    const r = rig();
+    ready(r, ModelKind.Automatic);
+    r.session.analyze(target(1));
+    r.render.resolve({ ...VIEWS, preparationId: 72 });
+    await flush();
+    r.session.cancel();
+    expect(r.releases).toEqual([72]);
+    expect(r.signals[0]?.aborted).toBe(true);
   });
 });

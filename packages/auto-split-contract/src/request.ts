@@ -1,7 +1,13 @@
+import {
+  SEMANTIC_LIMITS,
+  validateSemanticMetadata,
+  type SemanticRequestMetadata,
+} from './semantic';
 import { decodeBase64 } from './base64';
 import { AnalyzeErrorCode } from './errors';
 import {
   isSemanticMode,
+  MAX_REQUEST_BODY_BYTES,
   MAX_EXTENT,
   MAX_RADIUS,
   MAX_SHELLS,
@@ -45,6 +51,8 @@ export interface AnalyzeRequest {
   readonly protocolVersion: string;
   readonly views: readonly AnalyzeRequestView[];
   readonly summary: AnalyzeSummary;
+  readonly semantic?: SemanticRequestMetadata;
+  readonly componentViews?: readonly AnalyzeRequestView[];
 }
 
 /** Key names that mean "a model" or "a file". Their presence anywhere is refused as raw geometry. */
@@ -122,7 +130,26 @@ function invalid(code: AnalyzeErrorCode = AnalyzeErrorCode.InvalidRequest): Vali
 
 export function validateAnalyzeRequest(raw: unknown): ValidatedRequest {
   if (!isRecord(raw)) return invalid();
-  const keyProblem = unexpectedKey(raw, REQUEST_KEYS);
+  // Bounded iterative inspection catches geometry hidden inside newly added metadata.
+  const pending: unknown[] = [raw];
+  let visited = 0;
+  while (pending.length > 0) {
+    if (++visited > 4096) return invalid(AnalyzeErrorCode.PayloadTooLarge);
+    const item = pending.pop();
+    if (Array.isArray(item)) {
+      if (item.length + pending.length > 4096) return invalid(AnalyzeErrorCode.PayloadTooLarge);
+      pending.push(...(item as unknown[]));
+      continue;
+    }
+    if (!isRecord(item)) continue;
+    for (const [key, value] of Object.entries(item)) {
+      if (RAW_GEOMETRY_KEYS.has(key)) return invalid(AnalyzeErrorCode.RawGeometryRejected);
+      if (typeof value === 'object' && value !== null) pending.push(value);
+    }
+  }
+  const allowed =
+    raw.mode === 'semantic' ? [...REQUEST_KEYS, 'semantic', 'componentViews'] : REQUEST_KEYS;
+  const keyProblem = unexpectedKey(raw, allowed);
   if (keyProblem !== null) return invalid(keyProblem);
   for (const key of REQUEST_KEYS) if (!(key in raw)) return invalid();
 
@@ -173,6 +200,51 @@ export function validateAnalyzeRequest(raw: unknown): ValidatedRequest {
     return invalid();
   if (!finite(radius) || radius <= 0 || radius > MAX_RADIUS) return invalid();
 
+  let semantic: SemanticRequestMetadata | undefined;
+  const componentViews: AnalyzeRequestView[] = [];
+  if (mode === 'semantic') {
+    if (
+      !validateSemanticMetadata(raw.semantic) ||
+      !Array.isArray(raw.componentViews) ||
+      raw.componentViews.length !== VIEW_NAMES.length
+    )
+      return invalid();
+    semantic = raw.semantic;
+    for (let i = 0; i < VIEW_NAMES.length; i++) {
+      const e: unknown = raw.componentViews[i];
+      if (!isRecord(e)) return invalid();
+      const problem = unexpectedKey(e, VIEW_KEYS);
+      if (problem !== null) return invalid(problem);
+      if (
+        Object.keys(e).length !== 2 ||
+        e.view !== VIEW_NAMES[i] ||
+        typeof e.png !== 'string' ||
+        e.png.length > Math.ceil((SEMANTIC_LIMITS.overlayPngBytes * 4) / 3) + 8
+      )
+        return invalid();
+      const bytes = decodeBase64(e.png);
+      if (bytes === null || bytes.length > SEMANTIC_LIMITS.overlayPngBytes) return invalid();
+      const info = inspectPng(bytes);
+      if (
+        !info.ok ||
+        info.info.width !== VIEW_IMAGE_SIZE ||
+        info.info.height !== VIEW_IMAGE_SIZE ||
+        info.info.bitDepth !== 8 ||
+        info.info.colorType !== 2
+      )
+        return invalid();
+      componentViews.push({ view: VIEW_NAMES[i] ?? 'front', png: e.png });
+      pngs.push(bytes);
+    }
+    if (
+      viewList.some(
+        (v) => v.png.length > Math.ceil((SEMANTIC_LIMITS.normalPngBytes * 4) / 3) + 8,
+      ) ||
+      pngs.slice(0, VIEW_NAMES.length).some((png) => png.length > SEMANTIC_LIMITS.normalPngBytes) ||
+      JSON.stringify(raw).length > MAX_REQUEST_BODY_BYTES
+    )
+      return invalid(AnalyzeErrorCode.PayloadTooLarge);
+  }
   return {
     ok: true,
     pngs,
@@ -181,6 +253,7 @@ export function validateAnalyzeRequest(raw: unknown): ValidatedRequest {
       mode,
       protocolVersion,
       views: viewList,
+      ...(semantic === undefined ? {} : { semantic, componentViews }),
       summary: {
         extents: [ex, ey, ez],
         shells,

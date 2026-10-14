@@ -43,6 +43,7 @@ import { splitSizeNoticeFor, type SplitSizeNotice } from './split-size-presentat
  */
 
 export const ModelKind = {
+  Automatic: 'semantic',
   Character: 'human',
   Vehicle: 'vehicle',
   Other: 'other',
@@ -89,6 +90,7 @@ export interface AutoSplitErrorView {
 }
 
 export interface AutoSplitTarget {
+  readonly scope?: 'entire-model' | 'selected-piece';
   readonly handle: DocumentHandle;
   readonly partId: string;
   /**
@@ -104,6 +106,7 @@ export const targetKey = (target: AutoSplitTarget): string =>
   `${target.handle.documentId}@${String(target.handle.revision)}/${target.partId}`;
 
 export interface AutoSplitResult {
+  readonly objectLabel?: string;
   readonly key: string;
   readonly documentId: string;
   /** The revision and part this result describes. A different revision stales it; another part clears it. */
@@ -150,16 +153,20 @@ interface OperationLike<T> {
 
 /** The two geometry reads the session needs. A `GeometryClient` satisfies it. */
 export interface AutoSplitClient {
+  releaseAutoSplitPreparation?(source: DocumentHandle, partId: string, preparationId: number): void;
   renderAutoSplitViews(
     source: DocumentHandle,
     partId: string,
     onProgress?: (update: ProgressUpdate) => void,
+    mode?: SemanticMode,
+    scope?: 'entire-model' | 'selected-piece',
   ): OperationLike<AutoSplitRenderResult>;
   suggestAutoSplit(
     source: DocumentHandle,
     partId: string,
     mode: SemanticMode,
     analysis: unknown,
+    preparationId?: number,
   ): OperationLike<AutoSplitSuggestResult>;
 }
 
@@ -173,7 +180,7 @@ export interface AutoSplitDeps {
 const INITIAL: AutoSplitSnapshot = Object.freeze({
   run: 'idle',
   disclosureAccepted: false,
-  kind: undefined,
+  kind: ModelKind.Automatic,
   note: '',
   cancellable: true,
   error: undefined,
@@ -199,6 +206,17 @@ export class AutoSplitSession {
   private suggest: OperationLike<AutoSplitSuggestResult> | undefined;
   private running: { readonly key: string; readonly documentId: string } | undefined;
 
+  private prepared: { source: DocumentHandle; partId: string; preparationId: number } | undefined;
+  private releasePrepared(): void {
+    const prepared = this.prepared;
+    this.prepared = undefined;
+    if (prepared)
+      this.client?.releaseAutoSplitPreparation?.(
+        prepared.source,
+        prepared.partId,
+        prepared.preparationId,
+      );
+  }
   private client: AutoSplitClient | undefined;
 
   public constructor(deps: AutoSplitDeps) {
@@ -269,7 +287,7 @@ export class AutoSplitSession {
     if (this.snapshot.run === 'preparing' || this.snapshot.run === 'analyzing') return false;
     const mode: SemanticMode = kind;
     const key = targetKey(target);
-    const cacheKey = `${key}/${mode}`;
+    const cacheKey = `${key}/${mode}/${target.scope ?? 'selected-piece'}`;
     const cached = force ? undefined : this.cache.get(cacheKey);
     if (cached !== undefined) {
       this.set({
@@ -315,16 +333,32 @@ export class AutoSplitSession {
       const client = this.client;
       if (client === undefined) throw operationCancelled('The geometry worker is not ready.');
       // 1. Six local renders. Nothing leaves the device in this step.
-      const render = client.renderAutoSplitViews(target.handle, target.partId, (update) => {
-        // A progress message can be delivered after the render has finished: it must not write over the
-        // note of the phase that followed.
-        if (current() && this.snapshot.run === 'preparing')
-          this.set({ note: update.note ?? 'Preparing model…' });
-      });
+      const render = client.renderAutoSplitViews(
+        target.handle,
+        target.partId,
+        (update) => {
+          // A progress message can be delivered after the render has finished: it must not write over the
+          // note of the phase that followed.
+          if (current() && this.snapshot.run === 'preparing')
+            this.set({ note: update.note ?? 'Preparing model…' });
+        },
+        mode,
+        target.scope,
+      );
       this.render = render;
       const views = await render.promise;
-      if (!current()) return;
+      if (!current()) {
+        if (views.preparationId !== undefined)
+          client.releaseAutoSplitPreparation?.(target.handle, target.partId, views.preparationId);
+        return;
+      }
       this.render = undefined;
+      if (views.preparationId !== undefined)
+        this.prepared = {
+          source: target.handle,
+          partId: target.partId,
+          preparationId: views.preparationId,
+        };
 
       // 2. One request: six PNGs and three bounded numbers.
       this.set({ run: 'analyzing', note: 'Looking for parts…', cancellable: true });
@@ -336,6 +370,15 @@ export class AutoSplitSession {
           view,
           png: encodeBase64(views.pngs[index] ?? new Uint8Array(0)),
         })),
+        ...(mode === 'semantic' && views.semantic !== undefined && views.componentPngs !== undefined
+          ? {
+              semantic: views.semantic,
+              componentViews: VIEW_NAMES.map((view, index) => ({
+                view,
+                png: encodeBase64(views.componentPngs?.[index] ?? new Uint8Array(0)),
+              })),
+            }
+          : {}),
         summary: {
           extents: [views.summary.extents[0], views.summary.extents[1], views.summary.extents[2]],
           shells: views.summary.shells,
@@ -356,6 +399,7 @@ export class AutoSplitSession {
         target.partId,
         mode,
         response.analysis.raw,
+        views.preparationId,
       );
       this.suggest = suggestion;
       this.set({
@@ -366,12 +410,14 @@ export class AutoSplitSession {
       const suggested = await suggestion.promise;
       if (!current()) return;
       this.suggest = undefined;
+      this.prepared = undefined;
       const result: AutoSplitResult = {
         key,
         documentId: target.handle.documentId,
         revision: target.handle.revision,
         partId: target.partId,
         mode,
+        ...(suggested.objectLabel === undefined ? {} : { objectLabel: suggested.objectLabel }),
         suggestions: suggested.suggestions,
         components: suggested.components,
         componentCount: suggested.componentCount,
@@ -418,6 +464,7 @@ export class AutoSplitSession {
   }
 
   private fail(error: AutoSplitErrorView): void {
+    this.releasePrepared();
     this.running = undefined;
     this.abort = undefined;
     if (error.code === AnalyzeErrorCode.Cancelled) {
@@ -429,6 +476,7 @@ export class AutoSplitSession {
 
   /** Stops whatever is running: aborts the request, cancels the render, and makes any late answer inert. */
   private stop(): void {
+    this.releasePrepared();
     this.generation += 1;
     this.abort?.abort();
     this.abort = undefined;
@@ -477,7 +525,8 @@ export class AutoSplitSession {
     const documentId = current?.handle.documentId;
     // The cache never outlives its document.
     for (const [cacheKey, entry] of this.cache)
-      if (entry.documentId !== documentId) this.cache.delete(cacheKey);
+      if (entry.documentId !== documentId || entry.revision !== current?.handle.revision)
+        this.cache.delete(cacheKey);
 
     const running = this.running;
     if (running !== undefined && running.key !== key) {

@@ -1,3 +1,4 @@
+import { validateSemanticHierarchy, type SemanticHierarchy } from './semantic';
 import { analyzeError, AnalyzeErrorCode, type AnalyzeError } from './errors';
 import { validateHuman, type HumanAnswer } from './human';
 import { isSemanticMode, PROTOCOL_VERSIONS, type SemanticMode } from './limits';
@@ -28,6 +29,13 @@ export interface AnalyzeFailureWire {
 export type AnalyzeResponseWire = AnalyzeSuccessWire | AnalyzeFailureWire;
 
 export type ParsedAnalysis =
+  | {
+      readonly mode: 'semantic';
+      readonly requestId: string;
+      readonly protocolVersion: string;
+      readonly semantic: SemanticHierarchy;
+      readonly raw: unknown;
+    }
   | {
       readonly mode: 'human';
       readonly requestId: string;
@@ -86,6 +94,15 @@ export function parseAnalyzeResponse(
   if (requestId !== expected.requestId || mode !== expected.mode || !isSemanticMode(mode))
     return bad;
   if (protocolVersion !== PROTOCOL_VERSIONS[mode]) return bad;
+  if (mode === 'semantic') {
+    const checked = validateSemanticHierarchy(analysis);
+    return checked.ok
+      ? {
+          ok: true,
+          analysis: { mode, requestId, protocolVersion, semantic: checked.value, raw: analysis },
+        }
+      : bad;
+  }
   if (mode === 'human') {
     const checked = validateHuman(analysis);
     return checked.ok

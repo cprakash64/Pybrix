@@ -71,6 +71,7 @@ async function enterAuto(page: Page): Promise<void> {
 }
 
 async function accept(page: Page, kind: 'human' | 'vehicle'): Promise<void> {
+  await revealControl(page, page.getByTestId(`auto-kind-${kind}`));
   await page.getByTestId(`auto-kind-${kind}`).check({ force: true });
   await expect(page.getByTestId('auto-disclosure')).toBeVisible();
   await page.getByTestId('auto-disclosure-continue').click();
@@ -132,9 +133,10 @@ test('character: disclosure, six views and three numbers, a head suggestion, pre
   await enterAuto(page);
 
   // Nothing has been sent: not on opening the tab, not on choosing a type.
+  await revealControl(page, page.getByTestId('auto-kind-human'));
   await page.getByTestId('auto-kind-human').check({ force: true });
   await expect(page.getByTestId('auto-disclosure-text')).toHaveText(
-    /six rendered views and limited model metadata/,
+    /rendered views, optional component maps, and limited model metadata/,
   );
   expect(requests).toHaveLength(0);
   await page.getByTestId('auto-disclosure-continue').click();
@@ -433,16 +435,8 @@ test('keyboard only: type, disclosure, analysis and preview are all reachable, a
   await page.getByTestId('workflow-split').click();
   await expect(page.getByTestId('split-workspace')).toBeVisible();
 
-  // The tabs are a roving tablist: Enter and arrows work, and the selected tab is the one in the order.
-  await page.getByTestId('split-tab-manual').focus();
-  await page.keyboard.press('ArrowLeft');
-  await expect(page.getByTestId('split-tab-auto')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByTestId('split-tab-auto')).toBeFocused();
-
-  // A radio group: Space chooses, and choosing moves focus to the disclosure's heading, so a
-  // keyboard or screen-reader user meets what would send data before anything else.
-  await page.getByTestId('auto-kind-human').focus();
-  await page.keyboard.press('Space');
+  await page.getByTestId('split-tab-auto').click();
+  // Automatic opens the disclosure before analysis; its heading takes focus.
   await expect(page.getByTestId('auto-disclosure')).toBeVisible();
   // The heading takes focus, not the group: the active element is inside the disclosure.
   await expect
@@ -456,6 +450,16 @@ test('keyboard only: type, disclosure, analysis and preview are all reachable, a
   await page.keyboard.press('Tab'); // Continue
   await expect(page.getByTestId('auto-disclosure-continue')).toBeFocused();
   await page.keyboard.press('Enter');
+
+  // The tabs are a roving tablist: Enter and arrows work, and the selected tab is the one in the order.
+  await page.getByTestId('split-tab-manual').click();
+  await page.getByTestId('split-tab-manual').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByTestId('split-tab-auto')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('split-tab-auto')).toBeFocused();
+
+  await page.getByTestId('auto-kind-human').focus();
+  await page.keyboard.press('Space');
 
   await page.getByTestId('auto-analyze').focus();
   await page.keyboard.press('Enter');
@@ -494,6 +498,7 @@ test('Split opens on Manual Split, and the Auto Split tab and a cancelled disclo
   await expect(page.getByTestId('auto-beta-badge')).toBeVisible();
 
   await page.getByTestId('split-tab-auto').click();
+  await revealControl(page, page.getByTestId('auto-kind-vehicle'));
   await page.getByTestId('auto-kind-vehicle').check({ force: true });
   await page.getByTestId('auto-disclosure-cancel').click();
   await expect(page.getByTestId('split-tab-manual')).toBeFocused();

@@ -63,7 +63,7 @@ describe('what Auto Split may say', () => {
       'AI finds likely parts and prepares editable splits for you to review.',
     );
     expect(AUTO_SPLIT_COPY.disclosure).toBe(
-      'Auto Split uses AI to identify parts. Your original 3D file stays on your device. Auto Split sends six rendered views and limited model metadata for AI analysis. Repair and Manual Split remain local.',
+      'Auto Split uses AI to identify parts. Your original 3D file stays on your device. Auto Split sends rendered views, optional component maps, and limited model metadata for AI analysis. Repair and Manual Split remain local.',
     );
     expect(AUTO_SPLIT_COPY.claim).toBe(
       'AI-assisted part detection with editable split suggestions.',

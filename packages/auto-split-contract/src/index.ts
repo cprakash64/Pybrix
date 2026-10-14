@@ -7,3 +7,5 @@ export * from './request';
 export * from './response';
 export * from './vehicle';
 export * from './views';
+
+export * from './semantic';

@@ -50,7 +50,8 @@ export const SuggestionReason = {
 } as const;
 export type SuggestionReason = (typeof SuggestionReason)[keyof typeof SuggestionReason];
 
-export type SuggestionFamily = 'head' | 'arm' | 'wheel' | 'cab' | 'cargo' | 'body' | 'cab_bed';
+export type SuggestionFamily =
+  'head' | 'arm' | 'wheel' | 'cab' | 'cargo' | 'body' | 'cab_bed' | 'semantic';
 
 /** A flat cut in the part's own coordinates. The normal points INTO the part: Piece A is the part. */
 export interface SuggestedPlane {
@@ -70,6 +71,12 @@ export interface Suggestion {
   readonly plane: SuggestedPlane | null;
   /** The suggested components, by rank (largest surface first). Empty unless the operation is COMPONENT. */
   readonly components: readonly number[];
+  readonly parentId?: string | null;
+  readonly importance?: 'major' | 'detail';
+  readonly semanticConfidence?: number;
+  readonly geometryConfidence?: number;
+  readonly quality?: 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
+  readonly instanceCount?: number;
 }
 
 /** A component the user could add to or remove from a selection. */

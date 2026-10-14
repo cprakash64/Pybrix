@@ -162,7 +162,18 @@ interface Spies {
   readonly signals: AbortSignal[];
 }
 
-function okResponse(mode: 'human' | 'vehicle'): ParsedResponse {
+function okResponse(mode: 'human' | 'vehicle' | 'semantic'): ParsedResponse {
+  if (mode === 'semantic')
+    return {
+      ok: true,
+      analysis: {
+        mode,
+        requestId: 'req-test-0001',
+        protocolVersion: PROTOCOL_VERSIONS.semantic,
+        semantic: { object: { label: 'assembly', confidence: 1 }, parts: [] },
+        raw: {},
+      },
+    };
   return {
     ok: true,
     analysis:
@@ -380,7 +391,7 @@ describe('the disclosure comes before anything is sent', () => {
     expect(spies.transport).not.toHaveBeenCalled();
   });
 
-  it('Other explains that Auto Split cannot help, offers Manual Split, and never asks for consent', async () => {
+  it('the Manual shortcut offers local Manual Split and never asks for consent', async () => {
     const spies = mount();
     await openAuto();
     click('auto-kind-other');
@@ -457,7 +468,7 @@ describe('an analysis', () => {
     const spies = mount({ response: () => pending });
     await findParts('human');
     expect(screen.getByTestId('auto-progress')).toBeInTheDocument();
-    expect(screen.getByTestId('auto-status')).toHaveTextContent(/finding parts/i);
+    expect(screen.getByTestId('auto-status')).toHaveTextContent('Looking for parts…');
     expect(screen.getByTestId('split-footer')).not.toHaveTextContent('Find parts first');
     expect(screen.getByTestId('auto-progress').textContent).not.toMatch(/\d\s*%/);
     expect(spies.signals[0]?.aborted).toBe(false);

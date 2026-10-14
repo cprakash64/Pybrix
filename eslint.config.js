@@ -54,6 +54,7 @@ export default tseslint.config(
       // Private qualification output and bundled reference snapshots are generated, not product source.
       'artifacts/open-mesh-split-01/**',
       'artifacts/split-ux-simplification-01/**',
+      'artifacts/semantic-auto-decompose-01/**',
       // The end-to-end harness's own build output. Its SOURCE, under
       // apps/web/e2e-harness/, IS linted; only the emitted bundle is not.
       '**/dist-e2e-harness/**',

@@ -40,6 +40,7 @@ import { WorkflowId } from './workflows';
 export type SplitTab = 'auto' | 'manual';
 
 export interface AutoSplitRow {
+  readonly sizeScore?: number;
   readonly id: string;
   readonly label: string;
   readonly operation: SuggestionOperation;
@@ -60,6 +61,7 @@ export interface AutoSplitComponentRow {
 }
 
 export interface AutoSplitControls {
+  readonly objectLabel?: string;
   readonly tab: SplitTab;
   readonly setTab: (tab: SplitTab) => void;
 
@@ -187,7 +189,12 @@ export function useAutoSplit(
     () =>
       model === undefined || part === undefined
         ? undefined
-        : { handle: model.handle, partId: part.partId, triangleCount: part.triangleCount },
+        : {
+            handle: model.handle,
+            partId: part.partId,
+            triangleCount: part.triangleCount,
+            scope: model.parts.length === 1 ? 'entire-model' : 'selected-piece',
+          },
     [model, part],
   );
 
@@ -209,6 +216,10 @@ export function useAutoSplit(
       (result?.suggestions ?? []).map((suggestion) => ({
         id: suggestion.id,
         label: suggestion.label,
+        sizeScore: suggestion.components.reduce(
+          (sum, rank) => sum + (result?.components.find((c) => c.rank === rank)?.areaShare ?? 0),
+          0,
+        ),
         operation: suggestion.operation,
         operationLabel: describeOperation(suggestion.operation),
         status: describeStatus(suggestion, true),
@@ -222,7 +233,10 @@ export function useAutoSplit(
           suggestion.operation !== SuggestionOperation.None,
         shown: snap.shownId === suggestion.id,
         selected: snap.selectedId === suggestion.id,
-        suggestion,
+        suggestion:
+          stale && suggestion.quality !== undefined
+            ? { ...suggestion, quality: 'STALE' as const }
+            : suggestion,
       })),
     [result, snap.selectedId, snap.shownId, stale, splitPhase],
   );
@@ -379,7 +393,7 @@ export function useAutoSplit(
   const canAnalyze =
     target !== undefined &&
     snap.disclosureAccepted &&
-    (kind === ModelKind.Character || kind === ModelKind.Vehicle) &&
+    (kind === ModelKind.Automatic || kind === ModelKind.Character || kind === ModelKind.Vehicle) &&
     tooDetailed === undefined &&
     snap.run !== 'preparing' &&
     snap.run !== 'analyzing';
@@ -392,8 +406,9 @@ export function useAutoSplit(
   const chooseKind = useCallback(
     (next: ModelKind): void => {
       session.chooseKind(next);
+      discardPreview();
     },
-    [session],
+    [session, discardPreview],
   );
 
   // Cancelling an analysis never touches a preview, and starting one does not either; but a preview
@@ -484,6 +499,7 @@ export function useAutoSplit(
               : undefined;
 
   return {
+    ...(result?.objectLabel === undefined ? {} : { objectLabel: result.objectLabel }),
     tab,
     setTab,
     phase: derived,

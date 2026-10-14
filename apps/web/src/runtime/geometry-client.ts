@@ -543,10 +543,17 @@ export class GeometryClient {
     source: DocumentHandle,
     partId: string,
     onProgress?: (update: ProgressUpdate) => void,
+    mode?: 'human' | 'vehicle' | 'semantic',
+    scope?: 'entire-model' | 'selected-piece',
   ): OperationHandle<AutoSplitRenderResult> {
     return this.coordinator.dispatch(
       'autosplit/render',
-      { source, partId },
+      {
+        source,
+        partId,
+        ...(mode === undefined ? {} : { mode }),
+        ...(scope === undefined ? {} : { scope }),
+      },
       // INTERRUPTIBLE: the six renders and the shell count are long synchronous loops over every face,
       // and Cancel must reach them. The shared word is visible from inside a loop; the cancel message
       // is not, until the loop ends. Where the page is not cross-origin isolated the dispatch falls
@@ -556,17 +563,28 @@ export class GeometryClient {
   }
 
   /** Auto Split: turns a provider's answer (untrusted data) into editable suggestions. A READ. */
+  public releaseAutoSplitPreparation(
+    source: DocumentHandle,
+    partId: string,
+    preparationId: number,
+  ): void {
+    void this.coordinator
+      .dispatch('autosplit/release', { source, partId, preparationId })
+      .promise.catch(() => undefined);
+  }
+
   public suggestAutoSplit(
     source: DocumentHandle,
     partId: string,
-    mode: 'human' | 'vehicle',
+    mode: 'human' | 'vehicle' | 'semantic',
     analysis: unknown,
+    preparationId?: number,
   ): OperationHandle<AutoSplitSuggestResult> {
     // INTERRUPTIBLE for the same reason as the render: the local suggestion pass is the longest
     // synchronous stretch of the analysis, and a Cancel that waited for it would be a button that lies.
     return this.coordinator.dispatch(
       'autosplit/suggest',
-      { source, partId, mode, analysis },
+      { source, partId, mode, analysis, ...(preparationId === undefined ? {} : { preparationId }) },
       { interruptible: true },
     );
   }

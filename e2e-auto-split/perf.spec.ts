@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -96,6 +97,7 @@ for (const rings of [60, 160, 270, 500, 610]) {
     await open(page, mesh);
     await page.getByTestId('workflow-split').click();
     await page.getByTestId('split-tab-auto').click();
+    await revealControl(page, page.getByTestId('auto-kind-human'));
     await page.getByTestId('auto-kind-human').check({ force: true });
     await page.getByTestId('auto-disclosure-continue').click();
     await page.evaluate(() => {

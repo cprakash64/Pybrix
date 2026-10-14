@@ -83,6 +83,7 @@ export function componentFacts(
   labelling: ComponentLabelling,
   facts: FaceFacts,
   geometry: NormalizedGeometry,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
 ): ComponentFacts[] {
   const n = labelling.count;
   const faces = new Int32Array(n);
@@ -91,6 +92,7 @@ export function componentFacts(
   const hi = new Float64Array(n * 3).fill(-Infinity);
   const sum = new Float64Array(n * 3);
   for (let f = 0; f < geometry.faceCount; f += 1) {
+    if (f % CHECKPOINT_STRIDE === 0) checkpoint();
     const r = labelling.faceRank[f] ?? 0;
     const a = facts.areas[f] ?? 0;
     faces[r] = (faces[r] ?? 0) + 1;

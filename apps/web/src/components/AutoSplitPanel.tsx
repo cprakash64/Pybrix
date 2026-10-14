@@ -165,6 +165,9 @@ export function AutoSplitSections({
       <Results auto={auto} />
       {!auto.busy ? (
         <PanelSection title="Details" defaultOpen={false} testId="auto-details">
+          {auto.tooDetailed === undefined && !showKinds ? (
+            <KindChoice auto={auto} disabled={auto.busy} compact={true} />
+          ) : null}
           <p data-testid="auto-part">{auto.partLabel}</p>
           <p data-testid="auto-tagline">{AUTO_SPLIT_COPY.tagline}</p>
           <p>{auto.statusText}</p>
@@ -363,7 +366,7 @@ function Progress({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
       {/* A polite live region, written when the phase sentence changes, never per tick. */}
       <p className="auto-progress__line" role="status" aria-live="polite" data-testid="auto-status">
         <Icon name="loader" size={14} className="spin" />
-        <span>Finding parts…</span>
+        <span>{auto.statusText}</span>
       </p>
       <p className="auto-progress__hint">{AUTO_SPLIT_COPY.waitHint}</p>
       {auto.cancellable ? (
@@ -440,6 +443,8 @@ function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
       meta={String(auto.rows.length)}
       testId="auto-results"
     >
+      {auto.objectLabel ? <p>{auto.objectLabel}</p> : null}
+      {auto.rows.some((row) => row.suggestion.importance !== undefined) ? <p>Major parts</p> : null}
       {auto.stale ? (
         <div className="auto-card auto-card--stale" role="status" data-testid="auto-stale">
           <p className="auto-card__body">The model changed. Find parts again to continue.</p>
@@ -461,10 +466,44 @@ function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
       ) : (
         <>
           <ul className="auto-list" aria-label={AUTO_SPLIT_COPY.resultsHeading}>
-            {auto.rows.map((row) => (
-              <Row key={row.id} row={row} auto={auto} />
-            ))}
+            {auto.rows
+              .filter(
+                (row) =>
+                  row.suggestion.importance === undefined ||
+                  (row.suggestion.importance === 'major' && row.suggestion.parentId === null),
+              )
+              .sort((a, b) =>
+                a.suggestion.importance === undefined || b.suggestion.importance === undefined
+                  ? 0
+                  : Number(b.executable) - Number(a.executable) ||
+                    (b.suggestion.semanticConfidence ?? 0) -
+                      (a.suggestion.semanticConfidence ?? 0) ||
+                    (b.suggestion.geometryConfidence ?? 0) -
+                      (a.suggestion.geometryConfidence ?? 0) ||
+                    (b.sizeScore ?? 0) - (a.sizeScore ?? 0),
+              )
+              .slice(0, 8)
+              .map((row) => (
+                <SemanticRow key={row.id} row={row} auto={auto} depth={0} />
+              ))}
           </ul>
+          {auto.rows.some(
+            (row) => row.suggestion.importance === 'detail' && row.suggestion.parentId === null,
+          ) ? (
+            <details data-testid="auto-more-parts">
+              <summary>More parts</summary>
+              <ul className="auto-list">
+                {auto.rows
+                  .filter(
+                    (row) =>
+                      row.suggestion.importance === 'detail' && row.suggestion.parentId === null,
+                  )
+                  .map((row) => (
+                    <SemanticRow key={row.id} row={row} auto={auto} depth={0} />
+                  ))}
+              </ul>
+            </details>
+          ) : null}
         </>
       )}
       {!auto.stale ? (
@@ -482,12 +521,41 @@ function Results({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
   );
 }
 
-function Row({
+function SemanticRow({
   row,
   auto,
+  depth,
 }: {
   readonly row: AutoSplitRow;
   readonly auto: AutoSplitControls;
+  readonly depth: number;
+}): ReactNode {
+  const children =
+    depth < 3 ? auto.rows.filter((child) => child.suggestion.parentId === row.id) : [];
+  return (
+    <Row row={row} auto={auto}>
+      {children.length > 0 ? (
+        <details>
+          <summary>Show parts</summary>
+          <ul className="auto-list">
+            {children.map((child) => (
+              <SemanticRow key={child.id} row={child} auto={auto} depth={depth + 1} />
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </Row>
+  );
+}
+
+function Row({
+  row,
+  auto,
+  children,
+}: {
+  readonly row: AutoSplitRow;
+  readonly auto: AutoSplitControls;
+  readonly children?: ReactNode;
 }): ReactNode {
   const reasonId = useId();
   const canToggle = !auto.stale && row.suggestion.operation !== SuggestionOperation.None;
@@ -501,15 +569,27 @@ function Row({
       <div className="auto-row__head">
         <span className="auto-row__name" data-testid={`auto-row-name-${row.id}`}>
           {row.label}
+          {(row.suggestion.instanceCount ?? 1) > 1
+            ? ` (${String(row.suggestion.instanceCount)})`
+            : null}
         </span>
       </div>
       <p className="auto-row__status" data-testid={`auto-row-status-${row.id}`}>
-        {row.selected && auto.unsafeCut
-          ? "Can't split this area safely"
-          : row.executable
-            ? 'Suggested cut'
-            : 'No separate part found'}
+        {auto.stale
+          ? 'Find parts again'
+          : row.selected && auto.unsafeCut
+            ? "Can't split this area safely"
+            : row.executable
+              ? 'Suggested cut'
+              : row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE'
+                ? 'Part of the body'
+                : row.suggestion.quality === 'LOW_CONFIDENCE'
+                  ? 'Needs a closer look'
+                  : row.suggestion.quality === 'UNSAFE'
+                    ? "Can't separate this safely"
+                    : 'No separate part found'}
       </p>
+      {children}
       <PanelSection title="Details" defaultOpen={false}>
         <p className="auto-row__reason" id={reasonId}>
           {describeReason(row.suggestion.reason, auto.sourceReady)}
@@ -572,6 +652,7 @@ function Components({ auto }: { readonly auto: AutoSplitControls }): ReactNode {
       title={AUTO_SPLIT_COPY.componentsHeading}
       meta={String(count)}
       testId="auto-components"
+      defaultOpen={auto.kind !== ModelKind.Automatic}
     >
       <p className="convert-workspace__note" id={hintId}>
         {AUTO_SPLIT_COPY.componentsHint}

@@ -30,6 +30,7 @@ import {
 import {
   autoSplitComponentFacesHandler,
   autoSplitExtractCreateHandler,
+  autoSplitReleaseHandler,
   autoSplitRenderHandler,
   autoSplitSuggestHandler,
 } from './auto-split-handlers';
@@ -100,6 +101,7 @@ host.register('split/create', splitCreateHandler);
 host.register('split/commit', splitCommitHandler);
 host.register('split/discard', splitDiscardHandler);
 // Auto Split, local half: two reads and one CANDIDATE. None of them commits; Apply is `split/commit`.
+host.register('autosplit/release', autoSplitReleaseHandler);
 host.register('autosplit/render', autoSplitRenderHandler);
 host.register('autosplit/suggest', autoSplitSuggestHandler);
 host.register('autosplit/component-faces', autoSplitComponentFacesHandler);

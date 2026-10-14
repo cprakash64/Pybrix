@@ -5,8 +5,8 @@
  * numbers are read by both, so a limit cannot be loosened on one side only.
  */
 
-/** The semantic categories the service understands. "Other" is not one: it has no protocol. */
-export const SEMANTIC_MODES = ['human', 'vehicle'] as const;
+/** Pinned protocol modes. Semantic labels/classes are free strings, never this enumeration. */
+export const SEMANTIC_MODES = ['human', 'vehicle', 'semantic'] as const;
 export type SemanticMode = (typeof SEMANTIC_MODES)[number];
 
 export function isSemanticMode(value: unknown): value is SemanticMode {
@@ -22,6 +22,7 @@ export function isSemanticMode(value: unknown): value is SemanticMode {
 export const PROTOCOL_VERSIONS: Readonly<Record<SemanticMode, string>> = Object.freeze({
   human: 'human-v1',
   vehicle: 'vehicle-v0',
+  semantic: 'semantic-v1',
 });
 
 /** The six canonical orthographic views, in the order the images are listed. */

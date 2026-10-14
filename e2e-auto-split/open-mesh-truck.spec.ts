@@ -134,6 +134,7 @@ test('original truck: plain Manual Split and a mock Vehicle plane preview', asyn
   await splitChain(page, browser, 'original', '1,988,877');
   await page.getByTestId('workflow-split').click();
   await page.getByTestId('split-tab-auto').click();
+  await revealControl(page, page.getByTestId('auto-kind-vehicle'));
   await page.getByTestId('auto-kind-vehicle').check({ force: true });
   await page.getByTestId('auto-disclosure-continue').click();
   await page.getByTestId('auto-analyze').click();

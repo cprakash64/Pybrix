@@ -1,0 +1,908 @@
+import { refineSemanticPlanes, type SemanticPlaneRefinement } from './semantic-plane';
+import { required } from './required';
+import type { SemanticCandidate } from './semantic-candidate';
+import {
+  SEMANTIC_LIMITS,
+  semanticComponentId,
+  VIEW_NAMES,
+  VIEW_IMAGE_SIZE,
+  cameraFor,
+  FRAME_FILL,
+  validateSemanticMetadata,
+  validateSemanticHierarchy,
+  type SemanticHierarchy,
+  type SemanticComponentMetadata,
+  type SemanticRequestMetadata,
+  type ImagePoint,
+  type Vec3,
+  type ViewName,
+} from '@cadfixer/auto-split-contract';
+import { MAX_SUPPORTED_SPLIT_TRIANGLES, type CanonicalMesh } from '@cadfixer/mesh-core';
+import { invalidState, resourceLimitExceeded } from '@cadfixer/shared';
+import {
+  labelComponents,
+  componentFacts,
+  type ComponentLabelling,
+  type ComponentFacts,
+} from './components';
+import { faceFacts, normalizeGeometry, toSourcePoint, type NormalizedGeometry } from './geometry';
+import { rasteriseView, shadeView, SUPERSAMPLE, type Raster } from './raster';
+import { encodePng, type Deflate } from './png';
+import { NO_CHECKPOINT, CHECKPOINT_STRIDE, type Checkpoint } from './checkpoint';
+import {
+  SuggestionOperation,
+  SuggestionStatus,
+  SuggestionReason,
+  type Suggestion,
+  type SuggestionResult,
+} from './suggestions';
+export const SEMANTIC_WORK_LIMITS = Object.freeze({
+  rasterPixels: 128000000,
+  rasterRows: 64000000,
+  components: 8192,
+  candidates: SEMANTIC_LIMITS.parts * (SEMANTIC_LIMITS.instances + 1),
+  regionPixels: 64000000,
+  scoredFaces: 48000000,
+  strongViews: 2,
+  coverage: 0.82,
+  semanticConfidence: 0.72,
+  planePurity: 0.72,
+});
+export interface PreparedSemanticGeometry {
+  readonly geometry: NormalizedGeometry;
+  readonly labelling: ComponentLabelling;
+  readonly facts: readonly ComponentFacts[];
+  readonly rasters: readonly Raster[];
+  readonly pngs: readonly Uint8Array[];
+  readonly componentPngs: readonly Uint8Array[];
+  readonly metadata: SemanticRequestMetadata;
+  readonly cameras: readonly {
+    readonly view: ViewName;
+    readonly camera: ReturnType<typeof cameraFor>;
+    readonly size: number;
+    readonly center: Vec3;
+    readonly scale: number;
+    readonly radius: number;
+    /** Row-major homogeneous normalized-model to normalized-image/depth transform. */
+    readonly projection: readonly number[];
+  }[];
+  readonly visibleTotals: readonly Uint32Array[];
+  readonly timings: Readonly<Record<string, number>>;
+}
+const elapsed = (start: number): number => Date.now() - start;
+const rounded = (x: number): number => Math.round(x * 1e6) / 1e6;
+export function semanticComponentColor(rank: number): readonly [number, number, number] {
+  const n = ((rank + 1) * 2654435761) >>> 0;
+  return [48 + (n & 159), 48 + ((n >>> 8) & 159), 48 + ((n >>> 16) & 159)];
+}
+/** Tiny internal analysis labels. No viewport/UI asset or network dependency. */
+const GLYPHS: Readonly<Record<string, readonly string[]>> = {
+  C: ['111', '100', '100', '100', '111'],
+  '0': ['111', '101', '101', '101', '111'],
+  '1': ['010', '110', '010', '010', '111'],
+  '2': ['111', '001', '111', '100', '111'],
+  '3': ['111', '001', '111', '001', '111'],
+  '4': ['101', '101', '111', '001', '001'],
+  '5': ['111', '100', '111', '001', '111'],
+  '6': ['111', '100', '111', '101', '111'],
+  '7': ['111', '001', '010', '010', '010'],
+  '8': ['111', '101', '111', '101', '111'],
+  '9': ['111', '101', '111', '001', '111'],
+};
+function componentImage(
+  raster: Raster,
+  labelling: ComponentLabelling,
+  admitted: number,
+  checkpoint: Checkpoint,
+): Uint8Array {
+  const rgb = new Uint8Array(VIEW_IMAGE_SIZE * VIEW_IMAGE_SIZE * 3).fill(236);
+  const colors = Array.from({ length: admitted }, (_, r) => semanticComponentColor(r));
+  const count = new Uint32Array(admitted),
+    sx = new Float64Array(admitted),
+    sy = new Float64Array(admitted);
+  for (let y = 0; y < VIEW_IMAGE_SIZE; y++) {
+    if ((y & 31) === 0) checkpoint();
+    for (let x = 0; x < VIEW_IMAGE_SIZE; x++) {
+      const f = raster.face[y * SUPERSAMPLE * raster.size + x * SUPERSAMPLE] ?? -1;
+      if (f < 0) continue;
+      const rank = labelling.faceRank[f] ?? -1;
+      const c = colors[rank] ?? [130, 130, 130];
+      const i = (y * VIEW_IMAGE_SIZE + x) * 3;
+      rgb.set(c, i);
+      if (rank >= 0 && rank < admitted) {
+        count[rank] = (count[rank] ?? 0) + 1;
+        sx[rank] = (sx[rank] ?? 0) + x;
+        sy[rank] = (sy[rank] ?? 0) + y;
+      }
+    }
+  }
+  for (let r = 0; r < admitted; r++) {
+    if ((count[r] ?? 0) < 64) continue;
+    const x = Math.round((sx[r] ?? 0) / (count[r] ?? 0)),
+      y = Math.round((sy[r] ?? 0) / (count[r] ?? 0));
+    const text = 'C' + String(r).padStart(2, '0');
+    for (let n = 0; n < text.length; n++) {
+      const glyph = required(GLYPHS[required(text[n], 'text[n]')], 'GLYPHS[text[n]!]');
+      for (let gy = 0; gy < 5; gy++)
+        for (let gx = 0; gx < 3; gx++) {
+          const px = x + n * 4 + gx,
+            py = y + gy;
+          if (px >= 0 && px < VIEW_IMAGE_SIZE && py >= 0 && py < VIEW_IMAGE_SIZE)
+            rgb.fill(
+              required(glyph[gy], 'glyph[gy]')[gx] === '1' ? 15 : 245,
+              (py * VIEW_IMAGE_SIZE + px) * 3,
+              (py * VIEW_IMAGE_SIZE + px) * 3 + 3,
+            );
+        }
+    }
+  }
+  return rgb;
+}
+export async function prepareSemanticGeometry(
+  mesh: CanonicalMesh,
+  deflate: Deflate,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
+  onView?: (view: ViewName, index: number) => void,
+): Promise<PreparedSemanticGeometry> {
+  const start = Date.now();
+  if (mesh.indices.length / 3 > MAX_SUPPORTED_SPLIT_TRIANGLES)
+    throw resourceLimitExceeded('This part exceeds the supported split size.');
+  const geometry = normalizeGeometry(mesh.positions, mesh.indices, checkpoint);
+  const face = faceFacts(geometry, checkpoint);
+  const labelling = labelComponents(mesh, face, checkpoint);
+  if (labelling.count > SEMANTIC_WORK_LIMITS.components)
+    throw resourceLimitExceeded('This model has too many separate pieces to analyze safely.');
+  const facts = componentFacts(labelling, face, geometry, checkpoint);
+  const admitted = Math.min(facts.length, SEMANTIC_LIMITS.components);
+  const lo = new Float64Array(admitted * 3).fill(Infinity),
+    hi = new Float64Array(admitted * 3).fill(-Infinity);
+  for (let f = 0; f < geometry.faceCount; f++) {
+    if (f % CHECKPOINT_STRIDE === 0) checkpoint();
+    const r = labelling.faceRank[f] ?? -1;
+    if (r < 0 || r >= admitted) continue;
+    for (let c = 0; c < 3; c++) {
+      const i = (geometry.indices[f * 3 + c] ?? 0) * 3;
+      for (let a = 0; a < 3; a++) {
+        const v = geometry.positions[i + a] ?? 0;
+        lo[r * 3 + a] = Math.min(lo[r * 3 + a] ?? 0, v);
+        hi[r * 3 + a] = Math.max(hi[r * 3 + a] ?? 0, v);
+      }
+    }
+  }
+  const components: SemanticComponentMetadata[] = facts.slice(0, admitted).map((f) => {
+    const min: [number, number, number] = [
+        lo[f.rank * 3] ?? 0,
+        lo[f.rank * 3 + 1] ?? 0,
+        lo[f.rank * 3 + 2] ?? 0,
+      ],
+      max: [number, number, number] = [
+        hi[f.rank * 3] ?? 0,
+        hi[f.rank * 3 + 1] ?? 0,
+        hi[f.rank * 3 + 2] ?? 0,
+      ];
+    const size = max.map((v, i) => v - (min[i] ?? 0)),
+      longest = Math.max(...size, 1e-9);
+    return {
+      id: semanticComponentId(f.rank),
+      faceCount: f.faces,
+      bounds: {
+        min: min.map(rounded) as unknown as Vec3,
+        max: max.map(rounded) as unknown as Vec3,
+      },
+      centroid: f.centroid.map(rounded) as unknown as Vec3,
+      areaShare: rounded(f.areaShare),
+      aspect: size.map((x) => rounded(x / longest)) as unknown as Vec3,
+      color: semanticComponentColor(f.rank),
+    };
+  });
+  const metadata: SemanticRequestMetadata = {
+    scope: 'selected-piece',
+    components,
+    totalComponents: labelling.count,
+  };
+  if (!validateSemanticMetadata(metadata))
+    throw invalidState('This model has invalid component bounds for analysis.');
+  const preprocessing = elapsed(start),
+    renderStart = Date.now();
+  const rasters: Raster[] = [],
+    pngs: Uint8Array[] = [],
+    componentPngs: Uint8Array[] = [],
+    visibleTotals: Uint32Array[] = [];
+  const rasterBudget = {
+    pixels: 0,
+    limit: SEMANTIC_WORK_LIMITS.rasterPixels,
+    rows: 0,
+    rowLimit: SEMANTIC_WORK_LIMITS.rasterRows,
+  };
+  for (const [index, view] of VIEW_NAMES.entries()) {
+    checkpoint();
+    const raster = rasteriseView(geometry, view, checkpoint, true, rasterBudget);
+    rasters.push(raster);
+    const normal = await encodePng(
+      VIEW_IMAGE_SIZE,
+      VIEW_IMAGE_SIZE,
+      shadeView(geometry, raster),
+      deflate,
+    );
+    const ids = await encodePng(
+      VIEW_IMAGE_SIZE,
+      VIEW_IMAGE_SIZE,
+      componentImage(raster, labelling, admitted, checkpoint),
+      deflate,
+    );
+    if (
+      normal.length > SEMANTIC_LIMITS.normalPngBytes ||
+      ids.length > SEMANTIC_LIMITS.overlayPngBytes
+    )
+      throw resourceLimitExceeded('The analysis images exceed the supported request size.');
+    pngs.push(normal);
+    componentPngs.push(ids);
+    const totals = new Uint32Array(labelling.count);
+    for (let i = 0; i < raster.face.length; i++) {
+      if (i % CHECKPOINT_STRIDE === 0) checkpoint();
+      const f = raster.face[i] ?? -1;
+      if (f >= 0) {
+        const r = labelling.faceRank[f] ?? -1;
+        totals[r] = (totals[r] ?? 0) + 1;
+      }
+    }
+    visibleTotals.push(totals);
+    onView?.(view, index);
+  }
+  return {
+    geometry,
+    labelling,
+    facts,
+    rasters,
+    pngs,
+    componentPngs,
+    visibleTotals,
+    metadata,
+    cameras: VIEW_NAMES.map((view) => ({
+      view,
+      camera: cameraFor(view),
+      size: VIEW_IMAGE_SIZE,
+      center: geometry.center,
+      scale: geometry.scale,
+      radius: geometry.radius,
+      projection: ((): readonly number[] => {
+        const c = cameraFor(view),
+          k = FRAME_FILL / (2 * geometry.radius);
+        return [
+          k * c.right[0],
+          k * c.right[1],
+          k * c.right[2],
+          0.5,
+          -k * c.up[0],
+          -k * c.up[1],
+          -k * c.up[2],
+          0.5,
+          ...c.forward,
+          0,
+          0,
+          0,
+          0,
+          1,
+        ];
+      })(),
+    })),
+    timings: {
+      preprocessing,
+      render: elapsed(renderStart),
+      rasterPixels: rasterBudget.pixels,
+      rasterRows: rasterBudget.rows,
+    },
+  };
+}
+export function pointInSemanticPolygon(x: number, y: number, p: readonly ImagePoint[]): boolean {
+  let inside = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    const a = required(p[i], 'p[i]'),
+      b = required(p[j], 'p[j]');
+    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0])
+      inside = !inside;
+  }
+  return inside;
+}
+export interface SemanticEvidence {
+  readonly id: string;
+  readonly components: readonly {
+    readonly rank: number;
+    readonly viewCoverage: readonly number[];
+    readonly strongViews: number;
+  }[];
+  readonly multiViewFaces: number;
+  readonly visibleFaces: number;
+  readonly refinement?: SemanticPlaneRefinement;
+  readonly instances?: readonly {
+    centroid: Vec3;
+    area: number;
+    faces: number;
+    mirroredAxes: readonly number[];
+  }[];
+  readonly planePurity: number | null;
+  readonly reason: string;
+}
+export interface SemanticDecomposition extends SuggestionResult {
+  readonly candidates: readonly SemanticCandidate[];
+  readonly objectLabel: string;
+  readonly evidence: readonly SemanticEvidence[];
+  readonly timings: Readonly<Record<string, number>>;
+}
+const bits = (n: number): number => {
+  let count = 0;
+  for (; n; n >>>= 1) count += n & 1;
+  return count;
+};
+function instanceGroups(
+  ranks: readonly number[],
+  count: number,
+  facts: readonly ComponentFacts[],
+  checkpoint: Checkpoint,
+): number[][] | undefined {
+  if (count === 1) return [[...ranks]];
+  if (ranks.length < count) return undefined;
+  const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const ordered = [...ranks].sort((a, b) => {
+    const x = required(facts[a], 'facts[a]').centroid,
+      y = required(facts[b], 'facts[b]').centroid;
+    return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || a - b;
+  });
+  const seeds: Vec3[] = [required(facts[ordered[0] ?? 0], 'facts[ordered[0]!]').centroid];
+  while (seeds.length < count) {
+    checkpoint();
+    let best = -1,
+      far = -1;
+    for (const r of ordered) {
+      const d = Math.min(...seeds.map((s) => distance(s, required(facts[r], 'facts[r]').centroid)));
+      if (d > far) {
+        far = d;
+        best = r;
+      }
+    }
+    if (far < 0.015) return undefined;
+    seeds.push(required(facts[best], 'facts[best]').centroid);
+  }
+  let groups: number[][] = [];
+  for (let pass = 0; pass < 6; pass++) {
+    checkpoint();
+    groups = seeds.map(() => []);
+    for (const r of ordered) {
+      let best = 0,
+        d = Infinity;
+      seeds.forEach((s, i) => {
+        const next = distance(s, required(facts[r], 'facts[r]').centroid);
+        if (next < d) {
+          best = i;
+          d = next;
+        }
+      });
+      required(groups[best], 'groups[best]').push(r);
+    }
+    if (groups.some((g) => g.length === 0)) return undefined;
+    groups.forEach((g, i) => {
+      const total = g.reduce((a, r) => a + required(facts[r], 'facts[r]').area, 0) || 1;
+      seeds[i] = [0, 1, 2].map(
+        (a) =>
+          g.reduce(
+            (s, r) =>
+              s +
+              (required(facts[r], 'facts[r]').centroid[a] ?? 0) *
+                required(facts[r], 'facts[r]').area,
+            0,
+          ) / total,
+      ) as unknown as Vec3;
+    });
+  }
+  const minGap = Math.min(
+    ...seeds.flatMap((a, i) => seeds.slice(i + 1).map((b) => distance(a, b))),
+  );
+  if (
+    groups.some((g, i) =>
+      g.some(
+        (r) =>
+          distance(required(facts[r], 'facts[r]').centroid, required(seeds[i], 'seeds[i]')) >
+          minGap * 0.35,
+      ),
+    )
+  )
+    return undefined;
+  // Similarity is supporting evidence after visibility/membership and spatial separation.
+  const areas = groups.map((g) =>
+    g.reduce((sum, r) => sum + required(facts[r], 'facts[r]').area, 0),
+  );
+  const faces = groups.map((g) =>
+    g.reduce((sum, r) => sum + required(facts[r], 'facts[r]').faces, 0),
+  );
+  if (Math.max(...areas) > Math.min(...areas) * 4 || Math.max(...faces) > Math.min(...faces) * 4)
+    return undefined;
+  return groups;
+}
+/** No arbitrary surface operation: unsupported local cuts are explicit future candidates only. */
+export function decomposeSemantic(
+  prepared: PreparedSemanticGeometry,
+  raw: unknown,
+  checkpoint: Checkpoint = NO_CHECKPOINT,
+): SemanticDecomposition {
+  const checked = validateSemanticHierarchy(raw);
+  if (!checked.ok) throw invalidState('The analysis did not match the expected shape.');
+  const answer: SemanticHierarchy = checked.value;
+  const start = Date.now();
+  const { geometry, labelling, rasters, visibleTotals, facts } = prepared;
+  const evidence: SemanticEvidence[] = [],
+    suggestions: Suggestion[] = [];
+  const partById = new Map(answer.parts.map((p) => [p.id, p]));
+  let work = 0,
+    faceWork = 0;
+  const refinement = refineSemanticPlanes(
+    geometry,
+    answer.parts.filter(
+      (p) =>
+        Math.min(answer.object.confidence, p.confidence) >= SEMANTIC_WORK_LIMITS.semanticConfidence,
+    ),
+    checkpoint,
+  );
+  for (const observedPart of answer.parts) {
+    const refined = refinement.refinements.get(observedPart.id);
+    const part = refined ? { ...observedPart, cut: refined.cut } : observedPart;
+    checkpoint();
+    const mask = new Uint8Array(geometry.faceCount);
+    const hits: Uint32Array[] = VIEW_NAMES.map(() => new Uint32Array(labelling.count));
+    const mentioned = new Set(part.views.map((v) => v.view));
+    for (const region of part.views) {
+      const vi = VIEW_NAMES.indexOf(region.view),
+        raster = required(rasters[vi], 'rasters[vi]');
+      const size = raster.size;
+      for (const polygon of region.polygons) {
+        const xs = polygon.map((p) => p[0]),
+          ys = polygon.map((p) => p[1]);
+        const x0 = Math.max(0, Math.floor(Math.min(...xs) * size)),
+          x1 = Math.min(size, Math.ceil(Math.max(...xs) * size)),
+          y0 = Math.max(0, Math.floor(Math.min(...ys) * size)),
+          y1 = Math.min(size, Math.ceil(Math.max(...ys) * size));
+        for (let y = y0; y < y1; y++) {
+          checkpoint();
+          for (let x = x0; x < x1; x++) {
+            if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
+              throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+            const f = raster.face[y * size + x] ?? -1;
+            if (f < 0 || !pointInSemanticPolygon((x + 0.5) / size, (y + 0.5) / size, polygon))
+              continue;
+            const rank = labelling.faceRank[f] ?? -1;
+            required(hits[vi], 'hits[vi]')[rank] = (required(hits[vi], 'hits[vi]')[rank] ?? 0) + 1;
+            mask[f] = (mask[f] ?? 0) | (1 << vi);
+          }
+        }
+      }
+    }
+    // Count each visible pixel once even if the provider polygons overlap, by rescanning their union.
+    if (part.views.some((v) => v.polygons.length > 1)) {
+      for (const region of part.views) {
+        const vi = VIEW_NAMES.indexOf(region.view),
+          raster = required(rasters[vi], 'rasters[vi]');
+        required(hits[vi], 'hits[vi]').fill(0);
+        for (let i = 0; i < raster.face.length; i++) {
+          if (i % CHECKPOINT_STRIDE === 0) checkpoint();
+          if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
+            throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+          const f = raster.face[i] ?? -1;
+          if (f < 0) continue;
+          const x = ((i % raster.size) + 0.5) / raster.size,
+            y = (Math.floor(i / raster.size) + 0.5) / raster.size;
+          if (region.polygons.some((p) => pointInSemanticPolygon(x, y, p))) {
+            const rank = labelling.faceRank[f] ?? -1;
+            required(hits[vi], 'hits[vi]')[rank] = (required(hits[vi], 'hits[vi]')[rank] ?? 0) + 1;
+          }
+        }
+      }
+    }
+    const scores = prepared.metadata.components.map((c) => {
+      const rank = Number(c.id.slice(1));
+      const coverage = VIEW_NAMES.map((v, i) =>
+        mentioned.has(v) && (required(visibleTotals[i], 'visibleTotals[i]')[rank] ?? 0) >= 8
+          ? Math.min(
+              1,
+              (required(hits[i], 'hits[i]')[rank] ?? 0) /
+                (required(visibleTotals[i], 'visibleTotals[i]')[rank] ?? 0),
+            )
+          : -1,
+      );
+      return {
+        rank,
+        viewCoverage: coverage,
+        strongViews: coverage.filter((c) => c >= SEMANTIC_WORK_LIMITS.coverage).length,
+      };
+    });
+    let ranks = scores
+      .filter(
+        (s) =>
+          s.strongViews >= SEMANTIC_WORK_LIMITS.strongViews &&
+          s.viewCoverage.filter((v) => v >= 0).every((v) => v >= 0.65),
+      )
+      .map((s) => s.rank);
+    const admitted = new Set(prepared.metadata.components.map((c) => c.id));
+    const missingIds = part.componentIds.some((c) => !admitted.has(c));
+    if (part.componentIds.length > 0)
+      ranks = ranks.filter((r) => part.componentIds.includes(semanticComponentId(r)));
+    if (missingIds || (part.componentIds.length > 0 && ranks.length !== part.componentIds.length))
+      ranks = [];
+    const regionPurity = VIEW_NAMES.map((_v, i) => {
+      const total = required(hits[i], 'hits[i]').reduce((a, b) => a + b, 0);
+      return total >= 8
+        ? ranks.reduce((n, r) => n + (required(hits[i], 'hits[i]')[r] ?? 0), 0) / total
+        : -1;
+    });
+    const coherentRegion =
+      regionPurity.filter((v) => v >= 0.72).length >= 2 &&
+      regionPurity.filter((v) => v >= 0).every((v) => v >= 0.55);
+    if (!coherentRegion) ranks = [];
+    let multiViewFaces = 0,
+      visibleFaces = 0;
+    for (let f = 0; f < geometry.faceCount; f++) {
+      if (f % CHECKPOINT_STRIDE === 0) checkpoint();
+      if (++faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
+        throw resourceLimitExceeded(
+          'The semantic correspondence exceeds the supported work limit.',
+        );
+      if ((mask[f] ?? 0) > 0) visibleFaces++;
+      if (bits(mask[f] ?? 0) >= 2) multiViewFaces++;
+    }
+    const sourceShare = ranks.reduce((s, r) => s + required(facts[r], 'facts[r]').areaShare, 0);
+    if (sourceShare >= 0.995 || sourceShare <= 0) ranks = [];
+    // Independent views validate a plane's visible selected halfspace. Occluded pixels never vote.
+    // Different visible faces of a component can corroborate it; an axis-aligned face need not appear twice.
+    const planeCoverage: number[] = [];
+    if (part.cut) {
+      for (const region of part.views) {
+        const vi = VIEW_NAMES.indexOf(region.view),
+          raster = required(rasters[vi], 'rasters[vi]'),
+          camera = cameraFor(region.view),
+          size = raster.size,
+          scale = (size * FRAME_FILL) / (2 * geometry.radius);
+        let selectedPixels = 0,
+          regionPixels = 0,
+          agreed = 0;
+        for (let i = 0; i < raster.face.length; i++) {
+          if (i % CHECKPOINT_STRIDE === 0) checkpoint();
+          if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
+            throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+          if ((raster.face[i] ?? -1) < 0) continue;
+          const z = raster.depth?.[i];
+          if (z === undefined || !Number.isFinite(z)) continue;
+          const x = ((i % size) + 0.5 - size / 2) / scale,
+            y = -(Math.floor(i / size) + 0.5 - size / 2) / scale;
+          let signed = 0;
+          for (let a = 0; a < 3; a++)
+            signed +=
+              ((camera.right[a] ?? 0) * x +
+                (camera.up[a] ?? 0) * y +
+                (camera.forward[a] ?? 0) * z -
+                (part.cut.origin[a] ?? 0)) *
+              (part.cut.normal[a] ?? 0);
+          const inside = region.polygons.some((p) =>
+            pointInSemanticPolygon(
+              ((i % size) + 0.5) / size,
+              (Math.floor(i / size) + 0.5) / size,
+              p,
+            ),
+          );
+          if (inside) regionPixels++;
+          if (signed < 0) continue;
+          selectedPixels++;
+          if (inside) agreed++;
+        }
+        if (selectedPixels >= 8 && regionPixels >= 8)
+          planeCoverage.push(Math.min(agreed / selectedPixels, agreed / regionPixels));
+      }
+    }
+    const semanticConfidence = Math.min(answer.object.confidence, part.confidence);
+    let quality: NonNullable<Suggestion['quality']> = 'RECOGNIZED_NOT_SEPARABLE',
+      reason = 'No independent geometry boundary';
+    let operation: SuggestionOperation = SuggestionOperation.None,
+      plane: Suggestion['plane'] = null;
+    const purity =
+      planeCoverage.length > 0
+        ? planeCoverage.reduce((a, b) => a + b, 0) / planeCoverage.length
+        : null;
+    const componentConfidence =
+      ranks.length > 0 && !missingIds
+        ? Math.min(
+            ...ranks.map(
+              (r) =>
+                required(
+                  scores.find((s) => s.rank === r),
+                  'scores\n              .find((s) => s.rank === r)',
+                )
+                  .viewCoverage.filter((v) => v >= 0)
+                  .reduce((a, b) => a + b, 0) /
+                required(
+                  scores.find((s) => s.rank === r),
+                  'scores.find((s) => s.rank === r)',
+                ).viewCoverage.filter((v) => v >= 0).length,
+            ),
+          )
+        : 0;
+    // Geometric evidence is measured independently even when the semantic label is uncertain.
+    const supportedPlane =
+      !missingIds &&
+      part.cut !== null &&
+      part.importance === 'major' &&
+      part.expectedGeometry.kind !== 'surface_part' &&
+      part.expectedGeometry.likelySeparable &&
+      part.views.length >= 2 &&
+      planeCoverage.filter((v) => v >= SEMANTIC_WORK_LIMITS.planePurity).length >= 2 &&
+      planeCoverage.every((v) => v >= 0.55) &&
+      purity !== null &&
+      purity >= SEMANTIC_WORK_LIMITS.planePurity;
+    let geometryConfidence = componentConfidence || (supportedPlane ? purity : 0);
+    if (semanticConfidence < SEMANTIC_WORK_LIMITS.semanticConfidence) {
+      quality = 'LOW_CONFIDENCE';
+      reason = 'Semantic evidence is uncertain';
+    } else if (ranks.length > 0 && !missingIds) {
+      quality = 'READY';
+      operation = SuggestionOperation.Component;
+      geometryConfidence = componentConfidence;
+      reason = 'Independent source components supported in multiple visible views';
+    } else if (
+      !missingIds &&
+      part.cut &&
+      part.importance === 'major' &&
+      part.expectedGeometry.kind !== 'surface_part' &&
+      part.expectedGeometry.likelySeparable &&
+      part.views.length >= 2 &&
+      planeCoverage.filter((v) => v >= SEMANTIC_WORK_LIMITS.planePurity).length >= 2 &&
+      planeCoverage.every((v) => v >= 0.55) &&
+      purity !== null &&
+      purity >= SEMANTIC_WORK_LIMITS.planePurity
+    ) {
+      quality = 'READY';
+      operation = SuggestionOperation.Plane;
+      const magnitude = Math.hypot(...part.cut.normal);
+      plane = {
+        normal: part.cut.normal.map((n) => n / magnitude) as unknown as Vec3,
+        origin: toSourcePoint(geometry, part.cut.origin),
+      };
+      geometryConfidence = purity;
+      reason = 'Approximate semantic boundary supported locally; Preview must validate the cut';
+    }
+    const groups =
+      operation === SuggestionOperation.Component && part.instances > 1
+        ? instanceGroups(ranks, part.instances, facts, checkpoint)
+        : undefined;
+    if (operation === SuggestionOperation.Component && part.instances > 1 && !groups) {
+      operation = SuggestionOperation.None;
+      quality = 'LOW_CONFIDENCE';
+      geometryConfidence = 0;
+      reason =
+        'Repeated instances are not independently resolved by spatial and similarity evidence';
+    }
+    const s: Suggestion = {
+      id: part.id,
+      family: 'semantic',
+      label: part.label,
+      operation,
+      status: quality === 'READY' ? SuggestionStatus.Suggested : SuggestionStatus.Unavailable,
+      reason: quality === 'READY' ? SuggestionReason.Clear : SuggestionReason.FusedIntoBody,
+      plane,
+      components: operation === SuggestionOperation.Component ? ranks : [],
+      parentId: part.parentId,
+      importance: part.importance,
+      semanticConfidence,
+      geometryConfidence,
+      quality,
+      instanceCount: part.instances,
+    };
+    suggestions.push(s);
+    evidence.push({
+      id: part.id,
+      ...(refined ? { refinement: refined } : {}),
+      components: scores,
+      multiViewFaces,
+      visibleFaces,
+      planePurity: purity,
+      reason,
+    });
+    if (operation === SuggestionOperation.Component && part.instances > 1) {
+      if (groups) {
+        const instances = groups.map((group) => {
+          const area = group.reduce((sum, r) => sum + required(facts[r], 'facts[r]').area, 0);
+          return {
+            centroid: [0, 1, 2].map(
+              (a) =>
+                group.reduce(
+                  (sum, r) =>
+                    sum +
+                    (required(facts[r], 'facts[r]').centroid[a] ?? 0) *
+                      required(facts[r], 'facts[r]').area,
+                  0,
+                ) / area,
+            ) as unknown as Vec3,
+            area,
+            faces: group.reduce((sum, r) => sum + required(facts[r], 'facts[r]').faces, 0),
+            mirroredAxes: [] as number[],
+          };
+        });
+        const centre = [0, 1, 2].map(
+          (a) => instances.reduce((sum, i) => sum + (i.centroid[a] ?? 0), 0) / instances.length,
+        );
+        for (const instance of instances)
+          for (let axis = 0; axis < 3; axis++) {
+            const reflected = instance.centroid.map((x, a) =>
+              a === axis ? 2 * (centre[a] ?? 0) - x : x,
+            );
+            if (Math.abs((instance.centroid[axis] ?? 0) - (centre[axis] ?? 0)) < 0.015) continue;
+            if (
+              instances.some(
+                (other) =>
+                  other !== instance &&
+                  Math.max(other.area, instance.area) / Math.min(other.area, instance.area) < 1.5 &&
+                  Math.hypot(...other.centroid.map((x, a) => x - (reflected[a] ?? 0))) < 0.025,
+              )
+            )
+              instance.mirroredAxes.push(axis);
+          }
+        evidence[evidence.length - 1] = {
+          ...required(evidence[evidence.length - 1], 'evidence[evidence.length - 1]'),
+          instances,
+        };
+        let depth = 1,
+          parent = part.parentId;
+        while (parent !== null) {
+          depth++;
+          parent = partById.get(parent)?.parentId ?? null;
+        }
+        if (depth < SEMANTIC_LIMITS.depth)
+          for (const [i, group] of groups.entries())
+            suggestions.push({
+              ...s,
+              id: `${s.id}:instance-${String(i + 1)}`,
+              label: `${s.label.slice(0, 60)} ${String(i + 1)}`,
+              parentId: s.id,
+              importance: 'detail',
+              components: group,
+              instanceCount: 1,
+            });
+      }
+    }
+  }
+  const suggestionById = new Map(suggestions.map((s) => [s.id, s]));
+  const ancestor = (a: Suggestion, b: Suggestion): boolean => {
+    let parent = b.parentId;
+    for (let depth = 0; parent && depth < SEMANTIC_LIMITS.depth; depth++) {
+      if (parent === a.id) return true;
+      parent = suggestionById.get(parent)?.parentId;
+    }
+    return false;
+  };
+  const refused = new Set<string>();
+  for (let i = 0; i < suggestions.length; i++)
+    for (let j = i + 1; j < suggestions.length; j++) {
+      const a = required(suggestions[i], 'suggestions[i]'),
+        b = required(suggestions[j], 'suggestions[j]');
+      if (
+        a.operation === SuggestionOperation.Component &&
+        b.operation === SuggestionOperation.Component &&
+        !ancestor(a, b) &&
+        !ancestor(b, a) &&
+        a.components.some((r) => b.components.includes(r))
+      ) {
+        refused.add(a.id);
+        refused.add(b.id);
+      }
+    }
+  // One bounded source-face pass rejects shared sibling ownership across component and plane paths.
+  // Plane boundaries may share preview caps intentionally, but no source face is claimed by two sibling interiors.
+  const planes = suggestions.filter((s) => s.operation === SuggestionOperation.Plane && s.plane);
+  if (planes.length > 0) {
+    const owners = new Map<number, Suggestion[]>();
+    for (const s of suggestions)
+      if (s.operation === SuggestionOperation.Component && !refused.has(s.id))
+        for (const rank of s.components) owners.set(rank, [...(owners.get(rank) ?? []), s]);
+    const claimed: Suggestion[] = [];
+    const coefficients = planes.map((s) => {
+      const p = required(s.plane, 's.plane');
+      return {
+        suggestion: s,
+        normal: p.normal,
+        offset: p.normal.reduce(
+          (sum, n, a) =>
+            sum + (n * ((p.origin[a] ?? 0) - (geometry.center[a] ?? 0))) / geometry.scale,
+          0,
+        ),
+      };
+    });
+    for (let f = 0; f < geometry.faceCount; f++) {
+      if (f % CHECKPOINT_STRIDE === 0) checkpoint();
+      if (!planes.some((s) => !refused.has(s.id))) break;
+      let x = 0,
+        y = 0,
+        z = 0;
+      for (let k = 0; k < 3; k++) {
+        const v = (geometry.indices[f * 3 + k] ?? 0) * 3;
+        x += (geometry.positions[v] ?? 0) / 3;
+        y += (geometry.positions[v + 1] ?? 0) / 3;
+        z += (geometry.positions[v + 2] ?? 0) / 3;
+      }
+      claimed.length = 0;
+      for (const p of coefficients)
+        if (
+          !refused.has(p.suggestion.id) &&
+          x * p.normal[0] + y * p.normal[1] + z * p.normal[2] - p.offset > 1e-7
+        )
+          claimed.push(p.suggestion);
+      const componentOwners = owners.get(labelling.faceRank[f] ?? -1);
+      if (componentOwners) for (const owner of componentOwners) claimed.push(owner);
+      for (let i = 0; i < claimed.length; i++)
+        for (let j = i + 1; j < claimed.length; j++) {
+          const a = required(claimed[i], 'claimed[i]'),
+            b = required(claimed[j], 'claimed[j]');
+          if (!ancestor(a, b) && !ancestor(b, a)) {
+            refused.add(a.id);
+            refused.add(b.id);
+          }
+        }
+    }
+  }
+  for (const e of evidence)
+    if (refused.has(e.id)) {
+      const index = evidence.indexOf(e);
+      evidence[index] = { ...e, reason: 'Overlapping sibling source membership refused' };
+    }
+  const resolved = suggestions.map((s) =>
+    refused.has(s.id)
+      ? {
+          ...s,
+          operation: SuggestionOperation.None,
+          status: SuggestionStatus.Unavailable,
+          quality: 'UNSAFE' as const,
+          plane: null,
+          components: [],
+          geometryConfidence: 0,
+        }
+      : s,
+  );
+  return {
+    suggestions: resolved,
+    candidates: resolved.map((s) => ({
+      id: s.id,
+      label: s.label,
+      parentId: s.parentId ?? null,
+      semanticConfidence: s.semanticConfidence ?? 0,
+      geometryConfidence: s.geometryConfidence ?? 0,
+      instances: s.instanceCount ?? 1,
+      quality: s.quality ?? 'UNSAFE',
+      realization:
+        s.operation === SuggestionOperation.Component
+          ? { kind: 'existing-components' as const, ranks: s.components }
+          : s.operation === SuggestionOperation.Plane && s.plane
+            ? { kind: 'plane-cut' as const, ...s.plane }
+            : s.quality !== 'RECOGNIZED_NOT_SEPARABLE'
+              ? { kind: 'unavailable' as const, executable: false as const }
+              : partById.get(s.id)?.expectedGeometry.kind === 'surface_part'
+                ? { kind: 'recognized-feature' as const, executable: false as const }
+                : {
+                    kind: 'local-cut-required' as const,
+                    regions: partById.get(s.id)?.views ?? [],
+                    executable: false as const,
+                  },
+    })),
+    components: prepared.metadata.components.map((c) => ({
+      rank: Number(c.id.slice(1)),
+      faces: c.faceCount,
+      areaShare: c.areaShare,
+    })),
+    componentCount: labelling.count,
+    faceCount: geometry.faceCount,
+    objectLabel: answer.object.label,
+    evidence,
+    timings: {
+      ...prepared.timings,
+      correspondence: elapsed(start) - refinement.milliseconds,
+      refinement: refinement.milliseconds,
+      refinementTriangleVisits: refinement.triangleVisits,
+      regionPixels: work,
+      scoredFaces: faceWork,
+      siblingMembershipFaces: planes.length > 0 ? geometry.faceCount : 0,
+    },
+  };
+}

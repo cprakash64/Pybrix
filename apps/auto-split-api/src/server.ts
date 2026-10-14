@@ -4,6 +4,7 @@ import {
   AnalyzeErrorCode,
   MAX_REQUEST_BODY_BYTES,
   validateAnalyzeRequest,
+  validateSemanticHierarchy,
   validateHuman,
   validateVehicle,
   type AnalyzeError,
@@ -191,7 +192,11 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
     signal: AbortSignal,
   ): Promise<{ result: ProviderResult; attempts: number; providerMs: number }> {
     const plan = planFor(request);
-    const input = { mode: request.mode, plan, pngBase64: request.views.map((v) => v.png) };
+    const input = {
+      mode: request.mode,
+      plan,
+      pngBase64: [...request.views, ...(request.componentViews ?? [])].map((v) => v.png),
+    };
     let attempts = 0;
     const started = now();
     for (;;) {
@@ -298,7 +303,12 @@ export function createAnalysisServer(deps: ServiceDeps): Server {
       } catch {
         throw new ProviderFailure(ProviderFailureKind.Incomplete, result.providerStatus);
       }
-      const checked = request.mode === 'human' ? validateHuman(answer) : validateVehicle(answer);
+      const checked =
+        request.mode === 'semantic'
+          ? validateSemanticHierarchy(answer)
+          : request.mode === 'human'
+            ? validateHuman(answer)
+            : validateVehicle(answer);
       if (!checked.ok)
         throw new ProviderFailure(ProviderFailureKind.Incomplete, result.providerStatus);
       logger.log({

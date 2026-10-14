@@ -157,6 +157,8 @@ describe.skipIf(!live)('Auto Split live smoke (real provider, generated models o
       });
       expect(parsed.ok, `the service answered ${String(response.status)}`).toBe(true);
       if (!parsed.ok) return;
+      if (parsed.analysis.mode === 'semantic')
+        throw new Error('Legacy live suite received semantic mode.');
       const answer =
         parsed.analysis.mode === 'human'
           ? ({ mode: 'human', human: parsed.analysis.human } as const)

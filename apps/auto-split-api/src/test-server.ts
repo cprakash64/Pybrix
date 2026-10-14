@@ -1,3 +1,10 @@
+import { deflateSync } from 'node:zlib';
+import { prepareSemanticGeometry } from '@cadfixer/auto-split';
+import {
+  semanticFixture,
+  annotatedFixture,
+  SEMANTIC_TRUCK_ANSWER,
+} from '@cadfixer/auto-split/fixtures';
 import type { IncomingMessage } from 'node:http';
 import { SCENARIOS, scenarioAnswer, type ScenarioName } from '@cadfixer/auto-split/fixtures';
 import { parseConfig } from './config';
@@ -23,8 +30,17 @@ import { createAnalysisServer } from './server';
 const BEHAVIOURS = ['ok', 'timeout', 'malformed', 'unavailable', 'rate_limited', 'slow'] as const;
 type Behaviour = (typeof BEHAVIOURS)[number];
 
+const SEMANTIC_SCENARIOS = [
+  'semantic-vehicle',
+  'semantic-chair',
+  'semantic-character',
+  'semantic-mechanical',
+  'semantic-unknown',
+  'semantic-truck',
+] as const;
+type TestScenario = ScenarioName | (typeof SEMANTIC_SCENARIOS)[number];
 interface Control {
-  scenario: ScenarioName;
+  scenario: TestScenario;
   behaviour: Behaviour;
   delayMs: number;
 }
@@ -42,12 +58,22 @@ const control: Control = { scenario: 'human-ok', behaviour: 'ok', delayMs: 0 };
 const received: Received[] = [];
 let aborted = 0;
 let completed = 0;
-const answers = new Map<ScenarioName, string>();
+const answers = new Map<TestScenario, string>();
+answers.set('semantic-truck', JSON.stringify(SEMANTIC_TRUCK_ANSWER));
+for (const category of ['vehicle', 'chair', 'character', 'mechanical', 'unknown'] as const) {
+  const fixture = semanticFixture(category);
+  const prepared = await prepareSemanticGeometry(fixture.mesh, (raw) =>
+    Promise.resolve(new Uint8Array(deflateSync(raw))),
+  );
+  answers.set(`semantic-${category}`, JSON.stringify(annotatedFixture(prepared, fixture)));
+}
 
-function answerText(name: ScenarioName): string {
+function answerText(name: TestScenario): string {
   const cached = answers.get(name);
   if (cached !== undefined) return cached;
-  const text = JSON.stringify(scenarioAnswer(name));
+  if ((SEMANTIC_SCENARIOS as readonly string[]).includes(name))
+    throw new Error('Semantic mock missing');
+  const text = JSON.stringify(scenarioAnswer(name as ScenarioName));
   answers.set(name, text);
   return text;
 }
@@ -170,7 +196,7 @@ const server = createAnalysisServer({
           const b = body as Partial<Control>;
           if (
             typeof b.scenario === 'string' &&
-            (SCENARIOS as readonly string[]).includes(b.scenario)
+            ([...SCENARIOS, ...SEMANTIC_SCENARIOS] as readonly string[]).includes(b.scenario)
           )
             control.scenario = b.scenario;
           if (

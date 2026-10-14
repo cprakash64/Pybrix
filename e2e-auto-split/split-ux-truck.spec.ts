@@ -177,6 +177,7 @@ test('original truck: plain Manual Split and a mock Vehicle plane preview', asyn
   await splitChain(page, browser, 'original', '1,988,877');
   await page.getByTestId('workflow-split').click();
   await page.getByTestId('split-tab-auto').click();
+  await revealControl(page, page.getByTestId('auto-kind-vehicle'));
   await page.getByTestId('auto-kind-vehicle').check({ force: true });
   await capture(page, 'E-auto-initial');
   await page.getByTestId('auto-disclosure-continue').click();
@@ -248,6 +249,7 @@ test('final polish: named exact position and the normal Find parts setup', async
   await disclose(page, 'split-advanced');
   await capture(page, 'original-J-advanced');
   await page.getByTestId('split-tab-auto').click();
+  await revealControl(page, page.getByTestId('auto-kind-vehicle'));
   await page.getByTestId('auto-kind-vehicle').check({ force: true });
   await page.getByTestId('auto-disclosure-continue').click();
   await expect(page.getByTestId('auto-analyze')).toBeEnabled();

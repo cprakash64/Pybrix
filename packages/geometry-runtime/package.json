@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@cadfixer/auto-split-contract": "*",
     "@cadfixer/auto-split": "*",
     "@cadfixer/mesh-core": "*",
     "@cadfixer/mesh-hole-fill": "*",

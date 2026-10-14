@@ -54,3 +54,5 @@ packages/geometry-runtime/src/third-party/earcut.js
 artifacts/open-mesh-split-01/
 
 artifacts/split-ux-simplification-01/
+
+artifacts/semantic-auto-decompose-01/

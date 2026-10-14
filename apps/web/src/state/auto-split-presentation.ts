@@ -38,18 +38,18 @@ export const AUTO_SPLIT_COPY = {
 
   disclosureHeading: 'Before Auto Split looks at your model',
   disclosure:
-    'Auto Split uses AI to identify parts. Your original 3D file stays on your device. Auto Split sends six rendered views and limited model metadata for AI analysis. Repair and Manual Split remain local.',
+    'Auto Split uses AI to identify parts. Your original 3D file stays on your device. Auto Split sends rendered views, optional component maps, and limited model metadata for AI analysis. Repair and Manual Split remain local.',
   disclosureContinue: 'Continue',
   disclosureCancel: 'Cancel',
 
-  kindHeading: 'What kind of model is this?',
+  kindHeading: 'Model type (optional)',
   kindCharacter: 'Character',
   kindVehicle: 'Vehicle',
-  kindOther: 'Other',
-  kindHint: 'Choose one so Auto Split looks for the right parts.',
+  kindOther: 'Manual',
+  kindHint: 'Automatic looks for recognizable parts. A model type is optional.',
   characterScope: 'Looks for the head and the left and right arms.',
   vehicleScope: 'Finds useful parts like wheels, body, cab and bed.',
-  otherHeading: 'Auto Split can’t find parts in this kind of model yet.',
+  otherHeading: 'Place a cut yourself with Manual Split.',
   otherBody: 'Manual Split works on any model: choose a plane, preview the cut, then apply it.',
   openManual: 'Open Manual Split',
 
@@ -92,6 +92,7 @@ export const AUTO_SPLIT_COPY = {
 } as const;
 
 export const MODEL_KIND_ORDER: readonly ModelKind[] = Object.freeze([
+  ModelKind.Automatic,
   ModelKind.Character,
   ModelKind.Vehicle,
   ModelKind.Other,
@@ -99,6 +100,8 @@ export const MODEL_KIND_ORDER: readonly ModelKind[] = Object.freeze([
 
 export function describeModelKind(kind: ModelKind): string {
   switch (kind) {
+    case ModelKind.Automatic:
+      return 'Automatic';
     case ModelKind.Character:
       return AUTO_SPLIT_COPY.kindCharacter;
     case ModelKind.Vehicle:
@@ -110,6 +113,8 @@ export function describeModelKind(kind: ModelKind): string {
 
 export function describeScope(kind: ModelKind): string {
   switch (kind) {
+    case ModelKind.Automatic:
+      return 'Find recognizable parts, then review a safe separation.';
     case ModelKind.Character:
       return AUTO_SPLIT_COPY.characterScope;
     case ModelKind.Vehicle:

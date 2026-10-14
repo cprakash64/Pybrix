@@ -1,3 +1,8 @@
+import { required } from '@cadfixer/auto-split/fixtures';
+import { deflateSync } from 'node:zlib';
+import { prepareSemanticGeometry } from '@cadfixer/auto-split';
+import { semanticFixture, annotatedFixture } from '@cadfixer/auto-split/fixtures';
+import { encodeBase64, VIEW_NAMES } from '@cadfixer/auto-split-contract';
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { request as httpRequest, createServer as createHttpServer, type Server } from 'node:http';
@@ -23,9 +28,7 @@ import { planFor } from './prompts';
 import { createAnalysisServer, ANALYZE_PATH, HEALTH_PATH, clientKey } from './server';
 import { buildUserText, SYSTEM_PROMPT, vehicleJsonSchema } from './vehicle-protocol';
 import { buildHumanUserText, humanJsonSchema, HUMAN_SYSTEM_PROMPT } from './human-protocol';
-
 const KEY = 'sk-test-0000000000000000000000-DO-NOT-LOG';
-
 function config(over: Partial<ServerConfig> = {}): ServerConfig {
   return {
     host: '127.0.0.1',
@@ -43,7 +46,6 @@ function config(over: Partial<ServerConfig> = {}): ServerConfig {
     ...over,
   };
 }
-
 const HUMAN_ANSWER = {
   figure: { kind: 'humanoid_figure' },
   parts: Object.fromEntries(
@@ -59,7 +61,6 @@ const HUMAN_ANSWER = {
     ]),
   ),
 };
-
 interface Harness {
   readonly url: string;
   readonly logs: LogEvent[];
@@ -75,7 +76,6 @@ afterEach(async () => {
       }),
     );
 });
-
 async function start(provider: Provider, over: Partial<ServerConfig> = {}): Promise<Harness> {
   const rawLines: string[] = [];
   const logs: LogEvent[] = [];
@@ -99,7 +99,6 @@ async function start(provider: Provider, over: Partial<ServerConfig> = {}): Prom
     server,
   };
 }
-
 const okProvider = (answer: unknown = HUMAN_ANSWER): Provider => ({
   analyze: () =>
     Promise.resolve({
@@ -108,12 +107,15 @@ const okProvider = (answer: unknown = HUMAN_ANSWER): Provider => ({
       providerStatus: 200,
     }),
 });
-
 async function post(
   h: Harness,
   body: unknown,
   headers: Record<string, string> = {},
-): Promise<{ status: number; json: Record<string, unknown>; headers: Headers }> {
+): Promise<{
+  status: number;
+  json: Record<string, unknown>;
+  headers: Headers;
+}> {
   const res = await fetch(`${h.url}${ANALYZE_PATH}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
@@ -125,8 +127,52 @@ async function post(
     headers: res.headers,
   };
 }
-
 describe('the analysis route', () => {
+  it('validates semantic hierarchy and passes exactly twelve images plus bounded metadata to the provider', async () => {
+    const fixture = semanticFixture('chair'),
+      prepared = await prepareSemanticGeometry(fixture.mesh, (raw) =>
+        Promise.resolve(new Uint8Array(deflateSync(raw))),
+      ),
+      answer = annotatedFixture(prepared, fixture);
+    const inputs: ProviderInput[] = [];
+    const h = await start({
+      analyze: (input) => {
+        inputs.push(input);
+        return okProvider(answer).analyze(input, new AbortController().signal);
+      },
+    });
+    const body = {
+      requestId: 'semantic-service-test',
+      mode: 'semantic',
+      protocolVersion: PROTOCOL_VERSIONS.semantic,
+      views: VIEW_NAMES.map((view, i) => ({
+        view,
+        png: encodeBase64(required(prepared.pngs[i], 'prepared.pngs[i]')),
+      })),
+      componentViews: VIEW_NAMES.map((view, i) => ({
+        view,
+        png: encodeBase64(required(prepared.componentPngs[i], 'prepared.componentPngs[i]')),
+      })),
+      semantic: prepared.metadata,
+      summary: {
+        extents: prepared.geometry.extents,
+        shells: prepared.labelling.count,
+        radius: prepared.geometry.radius,
+      },
+    };
+    const response = await post(h, body);
+    expect(response.status).toBe(200);
+    expect(response.json.analysis).toEqual(answer);
+    expect(inputs[0]?.pngBase64).toHaveLength(12);
+    expect(inputs[0]?.plan.schemaName).toBe('semantic_hierarchy');
+    expect(inputs[0]?.plan.userText).toContain('selected-piece');
+    expect(inputs[0]?.plan.userText).toContain('camera at');
+    expect(h.rawLines.join('')).not.toContain('Backrest');
+    expect(h.rawLines.join('')).not.toContain(required(body.views[0], 'body.views[0]').png);
+    const invalid = await post(h, { ...body, semantic: { ...body.semantic, positions: [0] } });
+    expect(invalid.status).toBe(400);
+    expect(inputs).toHaveLength(1);
+  });
   it('answers a valid human request with the validated answer and logs only operational facts', async () => {
     const h = await start(okProvider());
     const body = await makeRequest('human');
@@ -146,12 +192,19 @@ describe('the analysis route', () => {
     expect(logged).toContain('"inputTokens":4500');
     expect(logged).toContain('"costUsd"');
     // No image, no base64, no key, no header.
-    const png = ((body.views as { png: string }[])[0] as { png: string }).png;
+    const png = (
+      (
+        body.views as {
+          png: string;
+        }[]
+      )[0] as {
+        png: string;
+      }
+    ).png;
     expect(logged).not.toContain(png.slice(0, 64));
     expect(logged).not.toContain(KEY);
     expect(logged.toLowerCase()).not.toContain('authorization');
   });
-
   it('refuses raw geometry, an unsupported mode and a stale protocol before calling the provider', async () => {
     let calls = 0;
     const h = await start({
@@ -177,7 +230,6 @@ describe('the analysis route', () => {
     });
     expect(calls).toBe(0);
   });
-
   it('refuses an oversized body by declared length and by streamed length', async () => {
     const h = await start(okProvider());
     const big = 'x'.repeat(MAX_REQUEST_BODY_BYTES + 1000);
@@ -185,7 +237,6 @@ describe('the analysis route', () => {
     expect(declared.status).toBe(413);
     expect(declared.json).toMatchObject({ error: { code: AnalyzeErrorCode.PayloadTooLarge } });
   });
-
   it('refuses a wrong content type, a wrong method and a cross-origin request', async () => {
     const h = await start(okProvider());
     const body = JSON.stringify(await makeRequest('human'));
@@ -207,7 +258,6 @@ describe('the analysis route', () => {
     const same = await post(h, JSON.parse(body) as unknown, { 'sec-fetch-site': 'same-origin' });
     expect(same.status).toBe(200);
   });
-
   it('compares the browser Origin with the Host it was sent, port included (why nginx forwards $http_host)', async () => {
     const h = await start(okProvider());
     const body = JSON.stringify(await makeRequest('human'));
@@ -238,14 +288,12 @@ describe('the analysis route', () => {
     // The default port: both sides omit it.
     expect(await send('app.example', 'https://app.example')).toBe(200);
   });
-
   it('serves a health route and 404s everything else', async () => {
     const h = await start(okProvider());
     expect((await fetch(`${h.url}${HEALTH_PATH}`)).status).toBe(200);
     expect((await fetch(`${h.url}/api/auto-split/other`)).status).toBe(404);
     expect((await fetch(`${h.url}/`)).status).toBe(404);
   });
-
   it('sanitises a provider failure to our own sentence and never forwards provider text', async () => {
     const h = await start({
       analyze: () =>
@@ -263,7 +311,6 @@ describe('the analysis route', () => {
       error: { code: AnalyzeErrorCode.ProviderUnavailable },
     });
   });
-
   it('turns a malformed or schema-invalid provider answer into PROVIDER_INVALID_RESPONSE without retrying it', async () => {
     let calls = 0;
     const bad: Provider = {
@@ -292,7 +339,6 @@ describe('the analysis route', () => {
       error: { code: AnalyzeErrorCode.ProviderInvalidResponse },
     });
   });
-
   it('retries a transient failure a bounded number of times and stops on a permanent one', async () => {
     let calls = 0;
     const flaky: Provider = {
@@ -327,7 +373,6 @@ describe('the analysis route', () => {
     await post(h3, await makeRequest('human'));
     expect(calls).toBe(1);
   });
-
   it('maps a provider timeout to PROVIDER_TIMEOUT', async () => {
     const h = await start({
       analyze: () => Promise.reject(new ProviderFailure(ProviderFailureKind.Timeout)),
@@ -336,7 +381,6 @@ describe('the analysis route', () => {
     expect(r.status).toBe(504);
     expect(r.json).toMatchObject({ error: { code: AnalyzeErrorCode.ProviderTimeout } });
   });
-
   it('aborts the provider call when the browser goes away', async () => {
     const seen = { aborted: false };
     let started!: () => void;
@@ -369,7 +413,6 @@ describe('the analysis route', () => {
       await new Promise((r) => setTimeout(r, 10));
     expect(h.logs.some((l) => l.outcome === AnalyzeErrorCode.Cancelled)).toBe(true);
   });
-
   it('rate limits one client, with a retry time, and counts only its own requests', async () => {
     const h = await start(okProvider(), {
       trustProxy: true,
@@ -386,7 +429,6 @@ describe('the analysis route', () => {
     expect((await post(h, body, { 'x-real-ip': '203.0.113.8' })).status).toBe(200);
   });
 });
-
 describe('the limiter', () => {
   it('slides the window, caps concurrency per client and globally, and releases exactly once', () => {
     let clock = 0;
@@ -418,7 +460,6 @@ describe('the limiter', () => {
     expect(b.allowed).toBe(true);
     expect(limiter.admit('c')).toMatchObject({ allowed: false, reason: 'busy' });
   });
-
   it('forgets the oldest idle clients and never one that is running', () => {
     const limiter = new AnalysisLimiter(
       {
@@ -441,14 +482,19 @@ describe('the limiter', () => {
     expect(limiter.inFlight).toBe(0);
   });
 });
-
 describe('the OpenAI provider', () => {
   async function fakeUpstream(
     handler: (
       body: Record<string, unknown>,
       headers: Record<string, string | string[] | undefined>,
-    ) => { status: number; body: unknown },
-  ): Promise<{ url: string; seen: Record<string, unknown>[] }> {
+    ) => {
+      status: number;
+      body: unknown;
+    },
+  ): Promise<{
+    url: string;
+    seen: Record<string, unknown>[];
+  }> {
     const seen: Record<string, unknown>[] = [];
     const server = createHttpServer((req, res) => {
       const chunks: Buffer[] = [];
@@ -476,7 +522,6 @@ describe('the OpenAI provider', () => {
     }),
     pngBase64: ['AAAA', 'AAAA', 'AAAA', 'AAAA', 'AAAA', 'AAAA'],
   });
-
   it('sends the Responses request the research used: store false, strict schema, the pinned model, six images', async () => {
     const up = await fakeUpstream(() => ({
       status: 200,
@@ -507,8 +552,17 @@ describe('the OpenAI provider', () => {
       reasoningTokens: 1,
     });
     const sent = up.seen[0] as Record<string, unknown> & {
-      text: { format: { strict: boolean; type: string } };
-      input: { content: { type: string }[] }[];
+      text: {
+        format: {
+          strict: boolean;
+          type: string;
+        };
+      };
+      input: {
+        content: {
+          type: string;
+        }[];
+      }[];
     };
     expect(sent.__path).toBe('/responses');
     expect(sent.__auth).toBe(`Bearer ${KEY}`);
@@ -528,7 +582,6 @@ describe('the OpenAI provider', () => {
       'text',
     ]);
   });
-
   it('maps statuses to failure kinds and never copies provider text', async () => {
     const cases: [number, ProviderFailureKind, boolean][] = [
       [429, ProviderFailureKind.RateLimited, true],
@@ -559,7 +612,6 @@ describe('the OpenAI provider', () => {
       expect(failure.message).not.toContain(KEY);
     }
   });
-
   it('reports a refusal, an incomplete response, a timeout and a cancel', async () => {
     const refusal = await fakeUpstream(() => ({
       status: 200,
@@ -616,7 +668,6 @@ describe('the OpenAI provider', () => {
     expect(((await pending) as ProviderFailure).kind).toBe(ProviderFailureKind.Cancelled);
   });
 });
-
 async function createServerThatNeverAnswers(): Promise<string> {
   const server = createHttpServer(() => undefined);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -624,7 +675,6 @@ async function createServerThatNeverAnswers(): Promise<string> {
   server.closeAllConnections();
   return `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
 }
-
 describe('configuration', () => {
   const env = { OPENAI_API_KEY: KEY } as NodeJS.ProcessEnv;
   it('requires a usable key for the real provider and refuses mock where it is not built', () => {
@@ -671,7 +721,6 @@ describe('configuration', () => {
     expect(clientKey(forged, true)).toBe('unknown');
   });
 });
-
 describe('the logger', () => {
   it('drops anything that is not a number, a boolean or a short plain token', () => {
     const dirty = {
@@ -684,7 +733,6 @@ describe('the logger', () => {
     expect(sanitize(dirty)).toEqual({ event: 'request', mode: 'human', status: 200 });
   });
 });
-
 describe('the pinned protocols', () => {
   const sha = (text: string): string => createHash('sha256').update(text).digest('hex');
   it('keeps the vehicle protocol byte for byte what the research froze (VEHICLE_SEMANTIC_PROTOCOL_V0)', () => {

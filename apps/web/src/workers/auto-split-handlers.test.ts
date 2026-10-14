@@ -1,3 +1,7 @@
+import { required } from '@cadfixer/auto-split/fixtures';
+import { fixtureDeflate } from '@cadfixer/auto-split/fixtures';
+import { prepareSemanticGeometry } from '@cadfixer/auto-split';
+import { semanticFixture, annotatedFixture } from '@cadfixer/auto-split/fixtures';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   MAX_SUPPORTED_SPLIT_TRIANGLES,
@@ -21,6 +25,7 @@ import {
   type AppError,
 } from '@cadfixer/shared';
 import {
+  autoSplitReleaseHandler,
   autoSplitComponentFacesHandler,
   autoSplitExtractCreateHandler,
   autoSplitRenderHandler,
@@ -29,7 +34,6 @@ import {
 import { repairUndoHandler } from './repair-handlers';
 import { splitCommitHandler } from './split-handlers';
 import { repairHistory, residentDocuments, splitCandidates } from './stl-handlers';
-
 /**
  * THE LOCAL HALF OF AUTO SPLIT, AT THE WORKER BOUNDARY.
  *
@@ -37,9 +41,7 @@ import { repairHistory, residentDocuments, splitCandidates } from './stl-handler
  * candidate leave the document exactly as it was, and the only way geometry changes is the existing
  * `split/commit`, whose undo is the existing `repair/undo`.
  */
-
 const PART = partId('part-1');
-
 function context(): OperationContext {
   return {
     cancellation: uncancellable,
@@ -48,17 +50,14 @@ function context(): OperationContext {
     throwIfCancelled: (): void => undefined,
   };
 }
-
 function install(mesh: CanonicalMesh): DocumentHandle {
   return residentDocuments.commit(singlePartDocument(mesh));
 }
-
 function meshOf(handle: DocumentHandle): CanonicalMesh {
   const part = residentDocuments.resolvePart(handle, PART);
   if (!isPart(part)) throw part;
   return part.mesh;
 }
-
 async function refusalOf(run: () => unknown): Promise<AppError> {
   try {
     await run();
@@ -68,12 +67,10 @@ async function refusalOf(run: () => unknown): Promise<AppError> {
   }
   throw new Error('expected a refusal');
 }
-
 afterEach(() => {
   residentDocuments.releaseAll();
   repairHistory.releaseAll();
 });
-
 describe('autosplit/render', () => {
   it('returns six clean views and a bounded summary, and does not touch the document', async () => {
     const mesh = carMultipart().mesh;
@@ -86,7 +83,6 @@ describe('autosplit/render', () => {
     expect(meshOf(handle)).toBe(mesh);
     expect(residentDocuments.resolve(handle)).not.toBeInstanceOf(Error);
   });
-
   it('refuses a stale handle rather than rendering whatever replaced it', async () => {
     const handle = install(carMultipart().mesh);
     const stale: DocumentHandle = { ...handle, revision: handle.revision + 7 };
@@ -96,7 +92,6 @@ describe('autosplit/render', () => {
     expect(refusal.code).toBe(AppErrorCode.ModelUnavailable);
   });
 });
-
 /**
  * `faces` copies of one tiny triangle, plus one far-away vertex no face uses, so the part has a real
  * extent and each face covers about a pixel: a mesh whose size is the whole point and whose renders are
@@ -108,7 +103,6 @@ function tinyFaces(faces: number): CanonicalMesh {
   const positions = new Float32Array([0, 0, 0, 1e-3, 0, 0, 0, 1e-3, 0, 1, 1, 1]);
   return { positions, indices, metadata: {} };
 }
-
 describe('the resource gate', () => {
   it('refuses 2,000,001 triangles, naming the metric, the value and the limit, before any work', async () => {
     const faces = MAX_SUPPORTED_SPLIT_TRIANGLES + 1;
@@ -122,8 +116,8 @@ describe('the resource gate', () => {
     expect(render.details).toMatchObject({
       code: AUTO_SPLIT_TOO_DETAILED,
       metric: 'triangles',
-      value: 2_000_001,
-      limit: 2_000_000,
+      value: 2000001,
+      limit: 2000000,
     });
     expect(render.message).toContain('2,000,001');
     expect(render.message).toContain('2,000,000');
@@ -139,8 +133,7 @@ describe('the resource gate', () => {
       autoSplitExtractCreateHandler({ source: handle, partId: PART, ranks: [0] }, context()),
     );
     expect(extract.details).toMatchObject({ code: AUTO_SPLIT_TOO_DETAILED });
-  }, 120_000);
-
+  }, 120000);
   it('does not refuse 1,999,999 or 2,000,000 triangles for their size', async () => {
     for (const faces of [MAX_SUPPORTED_SPLIT_TRIANGLES - 1, MAX_SUPPORTED_SPLIT_TRIANGLES]) {
       const handle = install(tinyFaces(faces));
@@ -148,12 +141,14 @@ describe('the resource gate', () => {
       expect(out.value.pngs).toHaveLength(6);
       residentDocuments.releaseAll();
     }
-  }, 300_000);
+  }, 300000);
 });
-
 describe('cancelling the local analysis', () => {
   /** A context whose cancellation turns on after `allowed` reads, as the shared word would mid-loop. */
-  function cancelAfter(allowed: number): { context: OperationContext; reads: () => number } {
+  function cancelAfter(allowed: number): {
+    context: OperationContext;
+    reads: () => number;
+  } {
     let reads = 0;
     return {
       reads: () => reads,
@@ -167,9 +162,8 @@ describe('cancelling the local analysis', () => {
       },
     };
   }
-
   it('stops the six renders inside a long loop, not at the end of a view', async () => {
-    const handle = install(tinyFaces(400_000));
+    const handle = install(tinyFaces(400000));
     const { context: cancelling, reads } = cancelAfter(4);
     const refusal = await refusalOf(() =>
       autoSplitRenderHandler({ source: handle, partId: PART }, cancelling),
@@ -178,7 +172,6 @@ describe('cancelling the local analysis', () => {
     // Stopped almost at once: a handful of reads, where a full run reads hundreds.
     expect(reads()).toBeLessThan(10);
   });
-
   it('stops the local suggestion pass inside its loops', async () => {
     const handle = install(carMultipart().mesh);
     const { context: cancelling, reads } = cancelAfter(2);
@@ -197,7 +190,6 @@ describe('cancelling the local analysis', () => {
     expect(reads()).toBeLessThan(10);
   });
 });
-
 describe('autosplit/suggest', () => {
   it('turns an answer into suggestions and leaves the part byte-identical', async () => {
     const mesh = humanFigure().mesh;
@@ -215,7 +207,6 @@ describe('autosplit/suggest', () => {
     expect(meshOf(handle)).toBe(mesh);
     expect(Array.from(mesh.positions)).toEqual(Array.from(before));
   });
-
   it('reports why a part is not a closed solid, and still returns the suggestions', async () => {
     const cube = openCube().mesh;
     const handle = install(cube);
@@ -225,7 +216,6 @@ describe('autosplit/suggest', () => {
     );
     expect(out.value.sourceReasons).toContain('OPEN_BOUNDARIES');
   });
-
   it('treats an answer as data: unknown fields, a wrong shape or a wrong mode are refused', async () => {
     const handle = install(humanFigure().mesh);
     const injected = {
@@ -251,7 +241,6 @@ describe('autosplit/suggest', () => {
     expect(residentDocuments.resolve(handle)).not.toBeInstanceOf(Error);
   });
 });
-
 describe('autosplit/extract-create and the existing Apply and Undo', () => {
   async function wheelRanks(handle: DocumentHandle): Promise<readonly number[]> {
     const out = await autoSplitSuggestHandler(
@@ -267,12 +256,10 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     if (wheel === undefined) throw new Error('no wheel suggestion');
     return wheel.components;
   }
-
   it('prepares a candidate without changing the document, applies it as one revision, and undoes it exactly', async () => {
     const mesh = carMultipart().mesh;
     const handle = install(mesh);
     const ranks = await wheelRanks(handle);
-
     const created = await autoSplitExtractCreateHandler(
       { source: handle, partId: PART, ranks },
       context(),
@@ -282,20 +269,17 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     // PREPARING IS NOT APPLYING: the resident document is the one that was installed.
     expect(meshOf(handle)).toBe(mesh);
     expect(residentDocuments.resolve(handle)).not.toBeInstanceOf(Error);
-
     const field = await autoSplitComponentFacesHandler(
       { source: handle, partId: PART, ranks },
       context(),
     );
     expect(field.value.faces.length).toBeGreaterThan(0);
-
     const applied = await splitCommitHandler(
       { candidate: preview.candidate, expectedSource: handle, expectedPart: PART },
       context(),
     );
     expect(applied.value.handle.revision).toBeGreaterThan(handle.revision);
     expect(applied.value.parts).toHaveLength(2);
-
     const undone = await repairUndoHandler(
       { handle: applied.value.handle, recordId: applied.value.recordId },
       context(),
@@ -304,7 +288,6 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     expect(meshOf(undone.value.handle)).toBe(mesh);
     expect(undone.value.handle.revision).toBeGreaterThan(applied.value.handle.revision);
   });
-
   it('refuses selecting an entire open surface as a component, without a global topology gate', async () => {
     const handle = install(openCube().mesh);
     const refusal = await refusalOf(() =>
@@ -313,7 +296,6 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     expect(refusal.details).toMatchObject({ code: 'AUTO_SPLIT_SELECTION_INVALID' });
     expect(splitCandidates.stats().candidateCount).toBe(0);
   });
-
   it('partitions disconnected open surfaces, then applies and restores the exact source', async () => {
     const closed = carMultipart().mesh;
     const open = { ...closed, indices: closed.indices.slice(3) };
@@ -334,7 +316,6 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     );
     expect(meshOf(undone.value.handle)).toBe(open);
   });
-
   it('refuses an empty selection and a selection of everything', async () => {
     const handle = install(carMultipart().mesh);
     for (const ranks of [[], [0, 1, 2, 3, 4], [99]]) {
@@ -345,7 +326,6 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     }
     expect(splitCandidates.stats().candidateCount).toBe(0);
   });
-
   it('refuses to prepare against a revision the user has left', async () => {
     const handle = install(carMultipart().mesh);
     const stale: DocumentHandle = { ...handle, revision: handle.revision + 3 };
@@ -353,5 +333,85 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
       autoSplitExtractCreateHandler({ source: stale, partId: PART, ranks: [1] }, context()),
     );
     expect(refusal.code).toBe(AppErrorCode.ModelUnavailable);
+  });
+});
+describe('semantic worker authority and preparation lifetime', () => {
+  it('uses matching render preparation, extracts a multi-shell family, then restores the exact source', async () => {
+    const fixture = semanticFixture('chair'),
+      handle = install(fixture.mesh);
+    const truth = await prepareSemanticGeometry(fixture.mesh, fixtureDeflate);
+    const render = await autoSplitRenderHandler(
+      { source: handle, partId: PART, mode: 'semantic' },
+      context(),
+    );
+    expect(render.value.componentPngs).toHaveLength(6);
+    const result = await autoSplitSuggestHandler(
+      {
+        source: handle,
+        partId: PART,
+        mode: 'semantic',
+        analysis: annotatedFixture(truth, fixture),
+        preparationId: required(render.value.preparationId, 'render.value.preparationId'),
+      },
+      context(),
+    );
+    const legs = required(
+      result.value.suggestions.find((s) => s.id === 'legs'),
+      "result.value.suggestions.find((s) => s.id === 'legs')",
+    );
+    expect(legs.operation).toBe(SuggestionOperation.Component);
+    const preview = await autoSplitExtractCreateHandler(
+      { source: handle, partId: PART, ranks: legs.components },
+      context(),
+    );
+    expect(meshOf(handle)).toBe(fixture.mesh);
+    const applied = await splitCommitHandler(
+      { candidate: preview.value.candidate, expectedSource: handle, expectedPart: PART },
+      context(),
+    );
+    expect(residentDocuments.resolve(applied.value.handle)).toHaveProperty('parts.length', 2);
+    const undone = await repairUndoHandler(
+      { handle: applied.value.handle, recordId: applied.value.recordId },
+      context(),
+    );
+    expect(meshOf(undone.value.handle)).toBe(fixture.mesh);
+    const stale = await refusalOf(() =>
+      autoSplitExtractCreateHandler(
+        { source: handle, partId: PART, ranks: legs.components },
+        context(),
+      ),
+    );
+    expect(stale.code).toBe(AppErrorCode.ModelUnavailable);
+  });
+  it('refuses discarded and mismatched preparations without touching a document', async () => {
+    const fixture = semanticFixture('unknown'),
+      handle = install(fixture.mesh),
+      render = await autoSplitRenderHandler(
+        { source: handle, partId: PART, mode: 'semantic' },
+        context(),
+      );
+    const result = await autoSplitReleaseHandler(
+      {
+        source: handle,
+        partId: PART,
+        preparationId: required(render.value.preparationId, 'render.value.preparationId'),
+      },
+      context(),
+    );
+    expect(result.value.released).toBe(true);
+    const refused = await refusalOf(() =>
+      autoSplitSuggestHandler(
+        {
+          source: handle,
+          partId: PART,
+          mode: 'semantic',
+          analysis: {},
+          preparationId: required(render.value.preparationId, 'render.value.preparationId'),
+        },
+        context(),
+      ),
+    );
+    expect(refused.details).toMatchObject({ code: 'AUTO_SPLIT_SOURCE_STALE' });
+    expect(meshOf(handle)).toBe(fixture.mesh);
   });
 });

@@ -93,6 +93,7 @@ for (const size of SIZES) {
     await enter(page, { manualShot: () => shot(page, size.name, '00-manual-default') });
 
     await shot(page, size.name, '01-empty');
+    await revealControl(page, page.getByTestId('auto-kind-human'));
     await page.getByTestId('auto-kind-human').check({ force: true });
     await shot(page, size.name, '02-disclosure');
     await page.getByTestId('auto-disclosure-continue').click();
@@ -151,6 +152,7 @@ for (const size of SIZES) {
     await control(page, { scenario: 'vehicle-component' });
     await openMesh(page, 'car.stl', carMultipart().mesh);
     await enter(page);
+    await revealControl(page, page.getByTestId('auto-kind-vehicle'));
     await page.getByTestId('auto-kind-vehicle').check({ force: true });
     await page.getByTestId('auto-disclosure-continue').click();
     await page.getByTestId('auto-analyze').click();
@@ -166,6 +168,7 @@ for (const size of SIZES) {
     await page.goto('/');
     await openMesh(page, 'car2.stl', carMultipart().mesh);
     await enter(page);
+    await revealControl(page, page.getByTestId('auto-kind-vehicle'));
     await page.getByTestId('auto-kind-vehicle').check({ force: true });
     await page.getByTestId('auto-disclosure-continue').click();
     await page.getByTestId('auto-analyze').click();
@@ -180,6 +183,7 @@ for (const size of SIZES) {
     await page.goto('/');
     await openMesh(page, 'truck.stl', truckFused().mesh);
     await enter(page);
+    await revealControl(page, page.getByTestId('auto-kind-vehicle'));
     await page.getByTestId('auto-kind-vehicle').check({ force: true });
     await page.getByTestId('auto-disclosure-continue').click();
     await page.getByTestId('auto-analyze').click();
@@ -193,6 +197,7 @@ for (const size of SIZES) {
     await control(page, { scenario: 'human-ok' });
     await openMesh(page, 'open.stl', openCube().mesh);
     await enter(page);
+    await revealControl(page, page.getByTestId('auto-kind-human'));
     await page.getByTestId('auto-kind-human').check({ force: true });
     await page.getByTestId('auto-disclosure-continue').click();
     await page.getByTestId('auto-analyze').click();
@@ -200,6 +205,7 @@ for (const size of SIZES) {
     await expect(page.getByTestId('auto-source-not-ready')).toHaveCount(0);
     await shot(page, size.name, '12-open-source-ready');
 
+    await revealControl(page, page.getByTestId('auto-kind-other'));
     await page.getByTestId('auto-kind-other').check({ force: true });
     await shot(page, size.name, '13-other-kind');
   });

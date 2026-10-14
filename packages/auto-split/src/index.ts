@@ -15,3 +15,6 @@ export * from './suggest';
 export * from './suggestions';
 export * from './vehicle-match';
 export * from './vehicle-suggest';
+
+export * from './semantic';
+export type { SemanticRealization, SemanticCandidate } from './semantic-candidate';

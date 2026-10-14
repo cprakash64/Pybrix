@@ -1,3 +1,4 @@
+import { SuggestionOperation } from '@cadfixer/auto-split';
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import {
   CONNECTOR_OPTIONS,
@@ -99,7 +100,13 @@ export function SplitWorkspace(): ReactNode {
         ) : null}
         {split.preview !== undefined || (split.applied !== undefined && !splitAgain) ? (
           <section className="workflow-intent" data-testid="split-intent">
-            <h2>{split.preview !== undefined ? 'Preview' : 'Split complete'}</h2>
+            <h2>
+              {split.preview !== undefined && auto.selected?.suggestion.family === 'semantic'
+                ? auto.selected.label
+                : split.preview !== undefined
+                  ? 'Preview'
+                  : 'Split complete'}
+            </h2>
             <p
               data-testid={
                 split.preview === undefined ? 'split-applied-label' : 'split-preview-label'
@@ -207,6 +214,10 @@ export function SplitWorkspace(): ReactNode {
         ) : null}
       </div>
       <SplitFooter
+        componentSeparation={
+          auto.selected?.suggestion.family === 'semantic' &&
+          auto.selected.operation === SuggestionOperation.Component
+        }
         split={split}
         pendingPhysical={pendingConnector !== 'none'}
         onClearPending={() => {
@@ -899,6 +910,7 @@ function SplitOutcome({
  */
 function SplitFooter({
   split,
+  componentSeparation,
   exportMode,
   previewBlock,
   onCancelAnalysis,
@@ -909,6 +921,7 @@ function SplitFooter({
   onClearPending,
 }: {
   readonly split: SplitControls;
+  readonly componentSeparation: boolean;
   readonly exportMode: ExportMode;
   readonly hideIdle: boolean;
   readonly splitAgain: boolean;
@@ -1060,7 +1073,7 @@ function SplitFooter({
                 data-testid="split-apply"
               >
                 <Icon name="ok" size={16} />
-                <span>{SPLIT_COPY.applyButton}</span>
+                <span>{componentSeparation ? 'Separate' : SPLIT_COPY.applyButton}</span>
               </button>
             ) : (
               <button

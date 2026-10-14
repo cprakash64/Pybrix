@@ -1,3 +1,4 @@
+import type { SemanticRequestMetadata } from '@cadfixer/auto-split-contract';
 import type { Diagnostic, OperationId, SerializedAppError } from '@cadfixer/shared';
 import type { MeshBounds, PartTransform } from '@cadfixer/mesh-core';
 // Type-only, so no topology code is pulled into the main-thread bundle. The
@@ -239,6 +240,10 @@ export interface OperationMap {
    * the same store `split/create` uses, so Apply and Undo are the existing `split/commit` and
    * `repair/undo`. An answer from a provider is DATA to `autosplit/suggest`, never an instruction.
    */
+  'autosplit/release': {
+    payload: { source: DocumentHandle; partId: string; preparationId: number };
+    result: { released: boolean };
+  };
   'autosplit/render': { payload: AutoSplitRenderPayload; result: AutoSplitRenderResult };
   'autosplit/suggest': { payload: AutoSplitSuggestPayload; result: AutoSplitSuggestResult };
   'autosplit/component-faces': {
@@ -320,10 +325,15 @@ export interface SplitDiscardResult {
 
 /* -------------------------------------------------------------- auto split -- */
 export interface AutoSplitRenderPayload {
+  readonly scope?: 'entire-model' | 'selected-piece';
+  readonly mode?: 'human' | 'vehicle' | 'semantic';
   readonly source: DocumentHandle;
   readonly partId: string;
 }
 export interface AutoSplitRenderResult {
+  readonly preparationId?: number;
+  readonly semantic?: SemanticRequestMetadata;
+  readonly componentPngs?: readonly Uint8Array[];
   readonly source: DocumentHandle;
   readonly partId: string;
   /** Six clean 512 x 512 RGB PNGs, in the contract's view order. Transferred, not copied. */
@@ -336,16 +346,19 @@ export interface AutoSplitRenderResult {
   };
 }
 export interface AutoSplitSuggestPayload {
+  readonly preparationId?: number;
   readonly source: DocumentHandle;
   readonly partId: string;
-  readonly mode: 'human' | 'vehicle';
+  readonly mode: 'human' | 'vehicle' | 'semantic';
   /** The provider's answer in the contract's schema shape, UNTRUSTED: the worker validates it again. */
   readonly analysis: unknown;
 }
 export interface AutoSplitSuggestResult {
+  readonly sourceDiagnostics?: 'deferred-to-preview';
+  readonly objectLabel?: string;
   readonly source: DocumentHandle;
   readonly partId: string;
-  readonly mode: 'human' | 'vehicle';
+  readonly mode: 'human' | 'vehicle' | 'semantic';
   readonly suggestions: readonly Suggestion[];
   readonly components: readonly ComponentSummary[];
   readonly componentCount: number;

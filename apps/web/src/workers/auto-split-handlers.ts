@@ -1,10 +1,14 @@
 import {
+  validateSemanticHierarchy,
   validateHuman,
   validateVehicle,
   type HumanAnswer,
   type VehicleAnswer,
 } from '@cadfixer/auto-split-contract';
 import {
+  prepareSemanticGeometry,
+  decomposeSemantic,
+  type PreparedSemanticGeometry,
   componentPieces,
   faceFacts,
   AUTO_SPLIT_TOO_DETAILED,
@@ -30,7 +34,12 @@ import {
 } from '@cadfixer/geometry-runtime';
 import { MAX_SUPPORTED_SPLIT_TRIANGLES, partId, type CanonicalMesh } from '@cadfixer/mesh-core';
 import { analyseTopology } from '@cadfixer/mesh-topology';
-import { invalidState, resourceLimitExceeded, type CancellationToken } from '@cadfixer/shared';
+import {
+  invalidState,
+  resourceLimitExceeded,
+  isAppError,
+  type CancellationToken,
+} from '@cadfixer/shared';
 import {
   buildDocumentRenderSnapshot,
   describeParts,
@@ -153,6 +162,26 @@ function labellingFor(
   return labelling;
 }
 
+let semanticPrepared:
+  | { key: string; mesh: CanonicalMesh; prepared: PreparedSemanticGeometry; preparationId: number }
+  | undefined;
+let preparationSequence = 0;
+let preparationExpiry: ReturnType<typeof setTimeout> | undefined;
+function clearSemanticPreparation(): void {
+  semanticPrepared = undefined;
+  if (preparationExpiry !== undefined) clearTimeout(preparationExpiry);
+  preparationExpiry = undefined;
+}
+export const autoSplitReleaseHandler: OperationHandler<'autosplit/release'> = (payload) => {
+  const released =
+    semanticPrepared?.key === semanticKey(payload.source, payload.partId) &&
+    semanticPrepared.preparationId === payload.preparationId;
+  if (released) clearSemanticPreparation();
+  return Promise.resolve({ value: { released } });
+};
+const semanticKey = (source: DocumentHandle, id: string): string =>
+  `${source.documentId}@${String(source.revision)}/${id}`;
+
 export const autoSplitRenderHandler: OperationHandler<'autosplit/render'> = async (
   payload,
   context,
@@ -160,6 +189,48 @@ export const autoSplitRenderHandler: OperationHandler<'autosplit/render'> = asyn
   context.throwIfCancelled();
   const mesh = resolveMesh(payload.source, payload.partId);
   refuseIfTooLarge(mesh);
+  clearSemanticPreparation();
+  if (payload.mode === 'semantic') {
+    if (payload.scope === 'entire-model') {
+      const document = residentDocuments.resolve(payload.source);
+      if (isAppError(document)) throw document;
+      if (document.parts.length !== 1) throw invalidState('Choose a piece to find its parts.');
+    }
+    const prepared = await prepareSemanticGeometry(
+      mesh,
+      deflate,
+      checkpointOf(context),
+      (_view, index) => {
+        context.reportProgress((index + 1) / 6, `Preparing model… view ${String(index + 1)} of 6`);
+      },
+    );
+    context.throwIfCancelled();
+    const key = semanticKey(payload.source, payload.partId);
+    const preparationId = ++preparationSequence;
+    semanticPrepared = { key, mesh, prepared, preparationId };
+    preparationExpiry = setTimeout(() => {
+      if (semanticPrepared?.preparationId === preparationId) clearSemanticPreparation();
+    }, 240_000);
+    lastLabelling = { key, mesh, labelling: prepared.labelling };
+    return {
+      value: {
+        source: payload.source,
+        partId: payload.partId,
+        pngs: prepared.pngs,
+        preparationId,
+        componentPngs: prepared.componentPngs,
+        semantic: { ...prepared.metadata, scope: payload.scope ?? 'selected-piece' },
+        summary: {
+          extents: prepared.geometry.extents,
+          shells: prepared.labelling.count,
+          radius: prepared.geometry.radius,
+        },
+      },
+      transfer: [...prepared.pngs, ...prepared.componentPngs].map(
+        (png) => png.buffer as ArrayBuffer,
+      ),
+    };
+  }
   const prepared = await prepareViews(
     mesh,
     deflate,
@@ -190,6 +261,39 @@ export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = (
   context.throwIfCancelled();
   const mesh = resolveMesh(payload.source, payload.partId);
   refuseIfTooLarge(mesh);
+  if (payload.mode === 'semantic') {
+    const cached = semanticPrepared;
+    clearSemanticPreparation();
+    if (
+      cached?.key !== semanticKey(payload.source, payload.partId) ||
+      cached.mesh !== mesh ||
+      cached.preparationId !== payload.preparationId
+    )
+      throw invalidState('Prepare this piece again before finding parts.', {
+        code: 'AUTO_SPLIT_SOURCE_STALE',
+      });
+    const checked = validateSemanticHierarchy(payload.analysis);
+    if (!checked.ok)
+      throw invalidState('The analysis did not match the expected shape.', {
+        code: 'AUTO_SPLIT_ANSWER_INVALID',
+      });
+    const result = decomposeSemantic(cached.prepared, checked.value, checkpointOf(context));
+    context.throwIfCancelled();
+    return Promise.resolve({
+      value: {
+        source: payload.source,
+        partId: payload.partId,
+        mode: payload.mode,
+        objectLabel: result.objectLabel,
+        suggestions: result.suggestions,
+        components: result.components,
+        componentCount: result.componentCount,
+        faceCount: result.faceCount,
+        sourceReasons: [],
+        sourceDiagnostics: 'deferred-to-preview',
+      },
+    });
+  }
   let answer: SemanticAnswer;
   if (payload.mode === 'human') {
     const checked = validateHuman(payload.analysis);

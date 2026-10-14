@@ -1,4 +1,9 @@
 import {
+  SEMANTIC_SYSTEM_PROMPT,
+  semanticJsonSchema,
+  buildSemanticUserText,
+} from './semantic-protocol';
+import {
   PROTOCOL_VERSIONS,
   VIEW_NAMES,
   type AnalyzeRequest,
@@ -26,6 +31,15 @@ export interface ProtocolPlan {
 }
 
 export function planFor(request: AnalyzeRequest): ProtocolPlan {
+  if (request.mode === 'semantic')
+    return {
+      mode: 'semantic',
+      protocolVersion: PROTOCOL_VERSIONS.semantic,
+      instructions: SEMANTIC_SYSTEM_PROMPT,
+      userText: buildSemanticUserText(request),
+      schemaName: 'semantic_hierarchy',
+      schema: semanticJsonSchema(),
+    };
   if (request.mode === 'human')
     return {
       mode: 'human',

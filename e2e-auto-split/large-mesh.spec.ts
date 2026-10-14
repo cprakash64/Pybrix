@@ -189,6 +189,7 @@ async function chain(page: Page, mesh: CanonicalMesh, label: string): Promise<vo
     await page.getByTestId('split-tab-auto').click();
     // The verdict precedes the question: a part within the ceiling shows no size card.
     await expect(page.getByTestId('auto-too-detailed')).toHaveCount(0);
+    await revealControl(page, page.getByTestId('auto-kind-vehicle'));
     await page.getByTestId('auto-kind-vehicle').check({ force: true });
     await page.getByTestId('auto-disclosure-continue').click();
     await startGaps(page);
@@ -407,6 +408,7 @@ test(`Cancel is observed by the worker, not just shown, at ${process.env.LM_CANC
   await page.waitForTimeout(3000);
   await page.getByTestId('workflow-split').click();
   await page.getByTestId('split-tab-auto').click();
+  await revealControl(page, page.getByTestId('auto-kind-vehicle'));
   await page.getByTestId('auto-kind-vehicle').check({ force: true });
   await page.getByTestId('auto-disclosure-continue').click();
   await observeStatus(page);
@@ -532,6 +534,7 @@ test('screenshots: the size notice, the phases and the results at the ceiling', 
   await page.waitForTimeout(3000);
   await page.getByTestId('workflow-split').click();
   await page.getByTestId('split-tab-auto').click();
+  await revealControl(page, page.getByTestId('auto-kind-vehicle'));
   await page.getByTestId('auto-kind-vehicle').check({ force: true });
   await page.screenshot({ path: `${dir}/03-auto-disclosure.png` });
   await page.getByTestId('auto-disclosure-continue').click();
@@ -595,6 +598,7 @@ test('the reported file: size acceptance and topology-aware splitting preserve t
   await page.getByTestId('workflow-split').click();
   await page.getByTestId('split-tab-auto').click();
   await expect(page.getByTestId('auto-too-detailed')).toHaveCount(0);
+  await revealControl(page, page.getByTestId('auto-kind-vehicle'));
   await page.getByTestId('auto-kind-vehicle').check({ force: true });
   await page.getByTestId('auto-disclosure-continue').click();
   await startGaps(page);
@@ -746,6 +750,7 @@ test('the reported file in Repair: does the current Repair make it splittable', 
   const readiness = async (): Promise<Record<string, unknown>> => {
     await page.getByTestId('workflow-split').click();
     await page.getByTestId('split-tab-auto').click();
+    await revealControl(page, page.getByTestId('auto-kind-vehicle'));
     await page.getByTestId('auto-kind-vehicle').check({ force: true });
     if ((await page.getByTestId('auto-disclosure-continue').count()) > 0)
       await page.getByTestId('auto-disclosure-continue').click();
