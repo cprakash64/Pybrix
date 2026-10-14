@@ -301,6 +301,6 @@ export function describeSemanticUnavailable(diagnostic: Suggestion['diagnostic']
       return "Couldn't isolate this part reliably";
     case 'NO_REALIZATION_PROPOSAL':
     case undefined:
-      return 'Recognized, but no safe split was found';
+      return 'No safe split found';
   }
 }

@@ -96,6 +96,13 @@ describe('local semantic realization with optional provider geometry hints', () 
       expect(candidate.operation).toBe('PLANE');
       expect(candidate.plane?.normal[0]).toBeGreaterThan(0.5);
     });
+  it('uncertain object taxonomy cannot relax synthesized-plane admission', () => {
+    const result = decomposeSemantic(fused, {
+      object: { label: 'unknown assembly', confidence: 0.2 },
+      parts: [half('detached', true, null), half('main', false, null)],
+    });
+    expect(result.suggestions.every((s) => s.operation === 'NONE')).toBe(true);
+  });
   it('G: identical competing masks remain ambiguous and non-executable', () => {
     const part = half('first', true, null);
     const result = decomposeSemantic(fused, {

@@ -176,9 +176,7 @@ it('distinguishes unsupported mapping and missing proposal from confirmed fusion
   expect(describeSemanticUnavailable('MAPPING_UNCERTAIN')).toBe(
     "Couldn't isolate this part reliably",
   );
-  expect(describeSemanticUnavailable('NO_REALIZATION_PROPOSAL')).toBe(
-    'Recognized, but no safe split was found',
-  );
-  expect(describeSemanticUnavailable(undefined)).toBe('Recognized, but no safe split was found');
+  expect(describeSemanticUnavailable('NO_REALIZATION_PROPOSAL')).toBe('No safe split found');
+  expect(describeSemanticUnavailable(undefined)).toBe('No safe split found');
   expect(describeSemanticUnavailable('CONFIRMED_FUSED')).toBe('Part of the body');
 });

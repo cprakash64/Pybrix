@@ -1,4 +1,10 @@
 import {
+  completeSemanticFamily,
+  familySignatures,
+  type FamilyCompletion,
+  type FamilySignatures,
+} from './semantic-family';
+import {
   synthesizeSemanticPlane,
   confirmSemanticPlane,
   type LocalPlaneProposal,
@@ -350,6 +356,22 @@ export interface SemanticEvidence {
     readonly polygon: number;
     readonly ranks: readonly number[];
   }[];
+  readonly confidence?: {
+    readonly objectConfidence: number;
+    readonly partSemanticConfidence: number;
+    readonly geometryConfidence: number;
+    readonly realizationConfidence: number;
+  };
+  readonly familyCompletion?: FamilyCompletion;
+  readonly viewEvidence?: readonly {
+    readonly rank: number;
+    readonly views: readonly {
+      readonly view: ViewName;
+      readonly state:
+        'POSITIVE' | 'CONTRADICTORY' | 'OMITTED' | 'OCCLUDED' | 'FAMILY_INSTANCE_OMITTED';
+      readonly coverage: number;
+    }[];
+  }[];
   readonly multiViewFaces: number;
   readonly visibleFaces: number;
   readonly refinement?: SemanticPlaneRefinement;
@@ -479,6 +501,18 @@ export function decomposeSemantic(
   const partById = new Map(answer.parts.map((p) => [p.id, p]));
   let work = 0,
     faceWork = 0;
+  let signatures: FamilySignatures | undefined;
+  const getSignatures = (): FamilySignatures => {
+    if (!signatures) {
+      if (faceWork + geometry.faceCount > SEMANTIC_WORK_LIMITS.scoredFaces)
+        throw resourceLimitExceeded(
+          'The semantic correspondence exceeds the supported work limit.',
+        );
+      faceWork += geometry.faceCount;
+      signatures = familySignatures(prepared, checkpoint);
+    }
+    return signatures;
+  };
   const localPlanes = new Map<string, LocalPlaneProposal>();
   for (const part of answer.parts) {
     checkpoint();
@@ -523,7 +557,8 @@ export function decomposeSemantic(
     const mask = new Uint8Array(geometry.faceCount);
     const hits: Uint32Array[] = VIEW_NAMES.map(() => new Uint32Array(labelling.count));
     const mentioned = new Set(part.views.map((v) => v.view));
-    const regionInstances: { view: ViewName; polygon: number; ranks: number[] }[] = [];
+    const regionInstances: { view: ViewName; polygon: number; ranks: number[]; purity: number }[] =
+      [];
     for (const region of part.views) {
       const vi = VIEW_NAMES.indexOf(region.view),
         raster = required(rasters[vi], 'rasters[vi]');
@@ -550,7 +585,10 @@ export function decomposeSemantic(
             mask[f] = (mask[f] ?? 0) | (1 << vi);
           }
         }
+        const polygonTotal = polygonHits.reduce((a, b) => a + b, 0);
+        const polygonMax = polygonHits.reduce((a, b) => Math.max(a, b), 0);
         regionInstances.push({
+          purity: polygonTotal ? polygonMax / polygonTotal : 0,
           view: region.view,
           polygon: polygonIndex,
           ranks: prepared.metadata.components
@@ -636,10 +674,25 @@ export function decomposeSemantic(
       .map((score) => score.rank);
     if (part.instances > 1)
       ranks = ranks.filter((rank) => regionInstances.some((region) => region.ranks.includes(rank)));
+    const familyCompletion = completeSemanticFamily(
+      prepared,
+      part,
+      ranks,
+      scores,
+      regionInstances.map((r) => ({
+        view: VIEW_NAMES.indexOf(r.view),
+        ranks: r.ranks,
+        purity: r.purity,
+      })),
+      getSignatures,
+      checkpoint,
+    );
+    if (familyCompletion?.ranks.length) ranks = [...familyCompletion.ranks];
     // References are optional priors. Only local source evidence can admit a rank;
     // unavailable or contradictory provider IDs never enter the resulting group.
+    const hitTotals = hits.map((h) => h.reduce((a, b) => a + b, 0));
     const regionPurity = VIEW_NAMES.map((_v, i) => {
-      const total = required(hits[i], 'hits[i]').reduce((a, b) => a + b, 0);
+      const total = hitTotals[i] ?? 0;
       return total >= 8
         ? ranks.reduce((n, r) => n + (required(hits[i], 'hits[i]')[r] ?? 0), 0) / total
         : -1;
@@ -711,7 +764,8 @@ export function decomposeSemantic(
           planeCoverage.push(Math.min(agreed / selectedPixels, agreed / regionPixels));
       }
     }
-    const semanticConfidence = Math.min(answer.object.confidence, part.confidence);
+    const semanticConfidence = part.confidence;
+    const planeSemanticConfidence = Math.min(answer.object.confidence, part.confidence);
     let quality: NonNullable<Suggestion['quality']> = 'RECOGNIZED_NOT_SEPARABLE',
       reason = 'No independent geometry boundary';
     let operation: SuggestionOperation = SuggestionOperation.None,
@@ -728,11 +782,29 @@ export function decomposeSemantic(
                 'component score',
               ),
               visible = visibility.find((v) => v.rank === rank)?.observableViews ?? [],
-              values = visible.map((i) => score.viewCoverage[i] ?? -1).filter((v) => v >= 0);
-            return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+              values = visible
+                .map((i) => score.viewCoverage[i] ?? -1)
+                .filter((v) =>
+                  familyCompletion?.ranks.length ? v >= SEMANTIC_WORK_LIMITS.coverage : v >= 0,
+                );
+            if (values.length) return values.reduce((a, b) => a + b, 0) / values.length;
+            // A positive view can be analytically occluded at low resolution. A complete proven
+            // family still requires direct strong polygon support for every source member.
+            return familyCompletion?.ranks.length ? SEMANTIC_WORK_LIMITS.coverage : 0;
           }),
         )
       : 0;
+    const exactLeafEvidence =
+      !answer.parts.some((child) => child.parentId === part.id) &&
+      ranks.every(
+        (rank) =>
+          Boolean(familyCompletion?.ranks.length) ||
+          (visibility.find((v) => v.rank === rank)?.observableViews ?? []).every(
+            (vi) =>
+              (scores.find((s) => s.rank === rank)?.viewCoverage[vi] ?? 0) >=
+              SEMANTIC_WORK_LIMITS.coverage,
+          ),
+      );
     // Geometric evidence is measured independently even when the semantic label is uncertain.
     const localPlane = localPlanes.get(part.id);
     const supportedPlane = Boolean(localPlane);
@@ -741,12 +813,19 @@ export function decomposeSemantic(
     if (semanticConfidence < SEMANTIC_WORK_LIMITS.semanticConfidence) {
       quality = 'LOW_CONFIDENCE';
       reason = 'Semantic evidence is uncertain';
-    } else if (ranks.length > 0) {
+    } else if (
+      ranks.length > 0 &&
+      (answer.object.confidence >= SEMANTIC_WORK_LIMITS.semanticConfidence ||
+        (componentConfidence >= SEMANTIC_WORK_LIMITS.coverage && exactLeafEvidence))
+    ) {
       quality = 'READY';
       operation = SuggestionOperation.Component;
       geometryConfidence = componentConfidence;
-      reason = 'Independent source components supported in multiple visible views';
+      reason = familyCompletion?.ranks.length
+        ? familyCompletion.reason
+        : 'Independent source components supported in multiple visible views';
     } else if (
+      planeSemanticConfidence >= SEMANTIC_WORK_LIMITS.semanticConfidence &&
       supportedPlane &&
       part.cut &&
       part.importance === 'major' &&
@@ -774,10 +853,34 @@ export function decomposeSemantic(
       reason =
         'Repeated instances are not independently resolved by spatial and similarity evidence';
     }
+    const dominant = facts.find((f) => f.areaShare >= 0.995);
+    const confirmedFused =
+      operation === SuggestionOperation.None &&
+      semanticConfidence >= SEMANTIC_WORK_LIMITS.semanticConfidence &&
+      part.expectedGeometry.kind !== 'solid_part' &&
+      dominant !== undefined &&
+      hitTotals.filter(
+        (total, vi) =>
+          total >= 8 &&
+          (hits[vi]?.[dominant.rank] ?? 0) / total >= 0.98 &&
+          (scores.find((s) => s.rank === dominant.rank)?.viewCoverage[vi] ?? 1) <
+            SEMANTIC_WORK_LIMITS.coverage,
+      ).length >= 2;
+    const mappingEvidence =
+      (part.instances > 1 && scores.some((score) => score.strongViews > 0)) ||
+      (sourceShare > 0 && sourceShare < 0.995) ||
+      familyCompletion !== undefined ||
+      part.cut !== null ||
+      part.componentIds.length > 0;
     const s: Suggestion = {
       id: part.id,
       family: 'semantic',
-      label: part.label,
+      label:
+        operation === SuggestionOperation.Plane &&
+        localPlane?.scope === 'assembly' &&
+        !/\bassembly\b/i.test(part.label)
+          ? `${part.label.slice(0, 55)} assembly`
+          : part.label,
       operation,
       status: quality === 'READY' ? SuggestionStatus.Suggested : SuggestionStatus.Unavailable,
       reason: quality === 'READY' ? SuggestionReason.Clear : SuggestionReason.FusedIntoBody,
@@ -791,8 +894,9 @@ export function decomposeSemantic(
       // Missing/unsupported grounding is not proof of fusion. This field only selects copy.
       ...(operation === SuggestionOperation.None
         ? {
-            diagnostic:
-              part.cut !== null || part.componentIds.length > 0
+            diagnostic: confirmedFused
+              ? ('CONFIRMED_FUSED' as const)
+              : mappingEvidence
                 ? ('MAPPING_UNCERTAIN' as const)
                 : ('NO_REALIZATION_PROPOSAL' as const),
           }
@@ -802,6 +906,35 @@ export function decomposeSemantic(
     suggestions.push(s);
     evidence.push({
       id: part.id,
+      confidence: {
+        objectConfidence: answer.object.confidence,
+        partSemanticConfidence: part.confidence,
+        geometryConfidence,
+        realizationConfidence:
+          operation === SuggestionOperation.None
+            ? 0
+            : Math.min(part.confidence, geometryConfidence),
+      },
+      ...(familyCompletion ? { familyCompletion } : {}),
+      viewEvidence: scores.map((score) => ({
+        rank: score.rank,
+        views: VIEW_NAMES.map((view, vi) => {
+          const visible = visibleTotals[vi]?.[score.rank] ?? 0,
+            projected = prepared.projectedTotals[vi]?.[score.rank] ?? 0,
+            coverage = score.viewCoverage[vi] ?? -1;
+          const state =
+            visible < 8 || (visible < 64 && projected >= 8 && visible / projected < 0.1)
+              ? ('OCCLUDED' as const)
+              : !mentioned.has(view)
+                ? ('OMITTED' as const)
+                : coverage >= SEMANTIC_WORK_LIMITS.coverage
+                  ? ('POSITIVE' as const)
+                  : familyCompletion?.ranks.includes(score.rank) && coverage === 0
+                    ? ('FAMILY_INSTANCE_OMITTED' as const)
+                    : ('CONTRADICTORY' as const);
+          return { view, state, coverage };
+        }),
+      })),
       visibility,
       regionInstances,
       ...(localPlane ? { localPlane } : {}),
@@ -1026,7 +1159,21 @@ export function decomposeSemantic(
     componentCount: labelling.count,
     faceCount: geometry.faceCount,
     objectLabel: answer.object.label,
-    evidence,
+    evidence: evidence.map((e) => {
+      const result = resolved.find((s) => s.id === e.id);
+      return e.confidence
+        ? {
+            ...e,
+            confidence: {
+              ...e.confidence,
+              realizationConfidence:
+                result?.quality === 'READY'
+                  ? Math.min(result.semanticConfidence ?? 0, result.geometryConfidence ?? 0)
+                  : 0,
+            },
+          }
+        : e;
+    }),
     timings: {
       ...prepared.timings,
       correspondence: elapsed(start) - refinement.milliseconds,
@@ -1034,6 +1181,20 @@ export function decomposeSemantic(
       refinementTriangleVisits: refinement.triangleVisits,
       regionPixels: work,
       scoredFaces: faceWork,
+      familyCandidatesConsidered: evidence.reduce(
+        (n, e) => n + (e.familyCompletion?.candidatesConsidered ?? 0),
+        0,
+      ),
+      familySimilarityComparisons: evidence.reduce(
+        (n, e) => n + (e.familyCompletion?.comparisons ?? 0),
+        0,
+      ),
+      familyCompletionMilliseconds: evidence.reduce(
+        (n, e) => n + (e.familyCompletion?.workerMs ?? 0),
+        0,
+      ),
+      familySignatureFaces: signatures?.facesVisited ?? 0,
+      familySignatureBytes: signatures?.bytes ?? 0,
       siblingMembershipFaces: planes.length > 0 ? geometry.faceCount : 0,
     },
   };

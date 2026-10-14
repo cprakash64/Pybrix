@@ -582,7 +582,9 @@ function Row({
             ? "Can't split this area safely"
             : row.executable
               ? 'Suggested cut'
-              : row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE'
+              : row.suggestion.family === 'semantic' &&
+                  (row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE' ||
+                    row.suggestion.quality === 'LOW_CONFIDENCE')
                 ? describeSemanticUnavailable(row.suggestion.diagnostic)
                 : row.suggestion.quality === 'LOW_CONFIDENCE'
                   ? 'Needs a closer look'
@@ -593,7 +595,9 @@ function Row({
       {children}
       <PanelSection title="Details" defaultOpen={false}>
         <p className="auto-row__reason" id={reasonId}>
-          {describeReason(row.suggestion.reason, auto.sourceReady)}
+          {row.suggestion.family === 'semantic' && !row.executable
+            ? describeSemanticUnavailable(row.suggestion.diagnostic)
+            : describeReason(row.suggestion.reason, auto.sourceReady)}
         </p>
         <p>
           {row.operationLabel} · {row.status.label}
