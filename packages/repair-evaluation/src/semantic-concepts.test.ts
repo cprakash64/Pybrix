@@ -79,3 +79,36 @@ describe('prospective phrase-level semantic matcher', () => {
     expect(m('Feet').concept).toBe('foot');
   });
 });
+
+describe('prospective physical-role head phrases for plane ownership evaluation', () => {
+  const role = compileSemanticConceptMatcher([
+    { concept: 'base', phrases: ['base', 'base platform'] },
+    { concept: 'platform', phrases: ['platform'] },
+    { concept: 'body', phrases: ['body', 'body block'] },
+    { concept: 'top', phrases: ['top block', 'upper part'] },
+    { concept: 'bottom', phrases: ['lower part'] },
+    { concept: 'member', phrases: ['member', 'central member'] },
+    { concept: 'ring', phrases: ['ring'] },
+  ]);
+  for (const [label, concept] of [
+    ['rectangular base platform', 'base'],
+    ['raised central body block', 'body'],
+    ['rectangular top block', 'top'],
+    ['upper part', 'top'],
+    ['lower part', 'bottom'],
+    ['central member', 'member'],
+    ['lower rectangular base platforms', 'base'],
+    ['raised body blocks', 'body'],
+    ['upright ring', 'ring'],
+  ] as const)
+    it(`matches ${label} by a frozen noun phrase`, () => {
+      expect(role(label).concept).toBe(concept);
+    });
+  it('retains adjective role distinctions and avoids substring matches', () => {
+    expect(role('upper platform').concept).toBe('platform');
+    expect(role('lower top block').concept).toBe('top');
+    expect(role('platformer').concept).toBeNull();
+    expect(role('bodywork').concept).toBeNull();
+    expect(role('upper part and lower part').reason).toBe('AMBIGUOUS');
+  });
+});

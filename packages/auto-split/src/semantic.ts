@@ -7,6 +7,7 @@ import {
 } from './semantic-family';
 import {
   synthesizeSemanticPlane,
+  planeOwnershipTelemetry,
   confirmSemanticPlane,
   type LocalPlaneProposal,
 } from './semantic-local-plane';
@@ -516,10 +517,21 @@ export function decomposeSemantic(
     return signatures;
   };
   const ownershipSupport = rasters.map((r) => new Uint32Array(r.face.length));
+  const planeOwnership = planeOwnershipTelemetry();
+  let planeOwnershipMilliseconds = 0;
+  const planeContext = {
+    telemetry: planeOwnership,
+    charge: (): void => {
+      if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
+        throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+    },
+  };
   const localPlanes = new Map<string, LocalPlaneProposal>();
   for (const part of answer.parts) {
     checkpoint();
-    const proposal = synthesizeSemanticPlane(prepared, answer, part, checkpoint);
+    const planeStarted = Date.now();
+    const proposal = synthesizeSemanticPlane(prepared, answer, part, checkpoint, planeContext);
+    planeOwnershipMilliseconds += Date.now() - planeStarted;
     if (proposal) localPlanes.set(part.id, proposal);
   }
   const localParts = answer.parts.map((part) => {
@@ -544,6 +556,7 @@ export function decomposeSemantic(
     let refined = refinement.refinements.get(observedPart.id);
     const originalProposal = localPlanes.get(observedPart.id);
     if (refined && originalProposal) {
+      const planeStarted = Date.now();
       const confirmed = confirmSemanticPlane(
         prepared,
         answer,
@@ -551,7 +564,9 @@ export function decomposeSemantic(
         refined.cut,
         originalProposal,
         checkpoint,
+        planeContext,
       );
+      planeOwnershipMilliseconds += Date.now() - planeStarted;
       if (confirmed) localPlanes.set(observedPart.id, confirmed);
       else refined = undefined;
     }
@@ -1239,6 +1254,17 @@ export function decomposeSemantic(
       ),
       familySignatureFaces: signatures?.facesVisited ?? 0,
       familySignatureBytes: signatures?.bytes ?? 0,
+      semanticPlaneOwnershipWork: planeOwnership.workUnits,
+      semanticPlaneOwnershipMilliseconds: planeOwnershipMilliseconds,
+      semanticPlaneOwnershipPeers: planeOwnership.peers,
+      semanticPlaneOwnershipNormals: planeOwnership.normals,
+      semanticPlaneOwnershipOffsets: planeOwnership.offsets,
+      semanticPlaneOwnershipHistogramBins: planeOwnership.histogramBins,
+      semanticPlaneOwnershipTypedScratchUpperBoundBytes: planeOwnership.scratchBytes,
+      semanticPlaneOwnershipObservations: planeOwnership.observations,
+      semanticPlaneOwnershipFinalists: planeOwnership.finalists,
+      semanticPlaneOwnershipPeerScoringPasses: planeOwnership.peerScoringPasses,
+      semanticPlaneOwnershipRankingComparisons: planeOwnership.rankingComparisons,
       semanticOwnershipWork: ownershipWork,
       semanticOwnershipMilliseconds: ownershipMilliseconds,
       semanticOwnershipScratchUpperBoundBytes:
