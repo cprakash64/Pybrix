@@ -1,3 +1,4 @@
+import { buildSemanticReservations, type SemanticReservation } from './semantic-reservation';
 import { componentSemanticExtents, type SemanticExtent } from './semantic-extent';
 import {
   completeSemanticFamily,
@@ -358,6 +359,9 @@ export interface SemanticEvidence {
     readonly view: ViewName;
     readonly polygon: number;
     readonly ranks: readonly number[];
+    readonly purity?: number;
+    readonly pixels?: number;
+    readonly support?: readonly { readonly rank: number; readonly pixels: number }[];
   }[];
   readonly confidence?: {
     readonly objectConfidence: number;
@@ -394,6 +398,7 @@ export interface SemanticEvidence {
   readonly reason: string;
 }
 export interface SemanticDecomposition extends SuggestionResult {
+  readonly reservations?: readonly SemanticReservation[];
   readonly candidates: readonly SemanticCandidate[];
   readonly objectLabel: string;
   readonly evidence: readonly SemanticEvidence[];
@@ -1069,17 +1074,27 @@ export function decomposeSemantic(
   };
   let ownershipWork = 0;
   const ownershipStart = Date.now();
+  const chargeOwnership = (): void => {
+    ownershipWork++;
+    if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
+      throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+  };
+  const reservation = buildSemanticReservations(
+    prepared,
+    answer,
+    evidence,
+    getSignatures,
+    checkpoint,
+    chargeOwnership,
+  );
   const extents = componentSemanticExtents(
     prepared,
     answer,
     suggestions,
     ownershipSupport,
     checkpoint,
-    () => {
-      ownershipWork++;
-      if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
-        throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
-    },
+    chargeOwnership,
+    reservation.reservations,
   );
   const ownershipMilliseconds = Date.now() - ownershipStart;
   const extentRefused = new Set([...extents].filter(([, e]) => !e.admitted).map(([id]) => id));
@@ -1244,6 +1259,7 @@ export function decomposeSemantic(
       : s,
   );
   return {
+    reservations: reservation.reservations,
     suggestions: published,
     candidates: published.map((s) => ({
       id: s.id,
@@ -1326,6 +1342,11 @@ export function decomposeSemantic(
       semanticPlaneOwnershipFinalists: planeOwnership.finalists,
       semanticPlaneOwnershipPeerScoringPasses: planeOwnership.peerScoringPasses,
       semanticPlaneOwnershipRankingComparisons: planeOwnership.rankingComparisons,
+      semanticReservationParts: reservation.reservations.length,
+      semanticReservedComponents: reservation.components,
+      semanticReservationWork: reservation.workUnits,
+      semanticReservationTypedScratchBytes: reservation.scratchBytes,
+      semanticReservationMilliseconds: reservation.milliseconds,
       semanticOwnershipWork: ownershipWork,
       semanticOwnershipMilliseconds: ownershipMilliseconds,
       semanticOwnershipScratchUpperBoundBytes:

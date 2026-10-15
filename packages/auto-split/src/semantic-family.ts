@@ -194,6 +194,53 @@ export interface FamilyCompletion {
   readonly workerMs: number;
   readonly reason: string;
 }
+/** Independent observations, not labels or component IDs, establish the semantic anchors. */
+export function familyGrounding(
+  part: SemanticPart,
+  scores: readonly FamilyScore[],
+  polygons: readonly FamilyPolygon[],
+): {
+  readonly direct: readonly number[];
+  readonly strict: readonly number[];
+  readonly collective: boolean;
+  readonly distributed: boolean;
+} {
+  const direct = scores
+    .filter(
+      (s) =>
+        s.strongViews >= 1 &&
+        polygons.some(
+          (poly) =>
+            poly.ranks.length === 1 &&
+            poly.ranks[0] === s.rank &&
+            poly.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity,
+        ),
+    )
+    .map((s) => s.rank);
+  const strict = scores
+    .filter((s) => s.strongViews >= 2 && direct.includes(s.rank))
+    .map((s) => s.rank);
+  const views = new Set(
+    polygons
+      .filter(
+        (poly) =>
+          poly.ranks.length === 1 &&
+          direct.includes(poly.ranks[0] ?? -1) &&
+          poly.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity,
+      )
+      .map((poly) => poly.view),
+  );
+  return {
+    direct,
+    strict,
+    distributed: part.confidence >= 0.9 && direct.length === part.instances && views.size >= 3,
+    collective:
+      part.confidence >= 0.9 &&
+      strict.length >= 1 &&
+      direct.length >= Math.max(2, Math.ceil(part.instances / 2)) &&
+      views.size >= 3,
+  };
+}
 /** A complete equivalent class is required. No best-subset search, labels, axis assumptions, or inferred geometry. */
 export function completeSemanticFamily(
   p: PreparedSemanticGeometry,
@@ -243,23 +290,17 @@ export function completeSemanticFamily(
         .filter((p) => p.ranks.length === 1 && p.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity)
         .map((p) => p.ranks[0]),
     ).size === part.instances;
-  const directlyGrounded = (s: FamilyScore): boolean =>
-    polygons.some(
-      (poly) =>
-        poly.ranks.length === 1 &&
-        poly.ranks[0] === s.rank &&
-        poly.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity,
-    );
-  const strongAnchors = scores
-    .filter((s) => s.strongViews >= 2 && directlyGrounded(s))
-    .map((s) => s.rank);
+  const grounding = familyGrounding(part, scores, polygons);
+  const strongAnchors = grounding.strict;
   const start = Date.now(),
     anchors =
       strongAnchors.length >= FAMILY_COMPLETION_LIMITS.minimumAnchors
         ? strongAnchors
         : distributed
-          ? scores.filter((s) => s.strongViews >= 1 && directlyGrounded(s)).map((s) => s.rank)
-          : [];
+          ? grounding.direct
+          : grounding.collective
+            ? grounding.direct
+            : [];
   if (anchors.length < FAMILY_COMPLETION_LIMITS.minimumAnchors) return undefined;
   const data = signatures(),
     first = required(
@@ -288,6 +329,38 @@ export function completeSemanticFamily(
     !initial.every((r) => ranks.includes(r))
   )
     return refuse('No unique complete equivalent component class');
+  // Missing observations require a uniquely corroborated whole class, not a best subset.
+  // All members must agree mutually: overlapping loose equivalence neighbourhoods are ambiguous.
+  let collectiveClass = grounding.collective;
+  if (collectiveClass) {
+    const members = ranks.map((r) =>
+      required(
+        data.signatures.find((s) => s.rank === r),
+        'class member',
+      ),
+    );
+    for (const member of members)
+      for (const signature of data.signatures) {
+        checkpoint();
+        comparisons++;
+        if (similarFamilyComponents(member, signature) !== ranks.includes(signature.rank))
+          return refuse('Ambiguous overlapping equivalent component classes');
+      }
+    for (let axis = 0; axis < 3; axis++) {
+      const extent = (rs: readonly number[]): number => {
+        const xs = rs.map(
+          (r) => required(p.facts[r], 'grounded family center').centroid[axis] ?? 0,
+        );
+        return Math.max(...xs) - Math.min(...xs);
+      };
+      const full = extent(ranks);
+      if (
+        full > first.diagonal * 0.1 &&
+        extent(grounding.direct) < full * (1 - FAMILY_COMPLETION_LIMITS.spatialResidual)
+      )
+        collectiveClass = false;
+    }
+  }
   const classPurity = (poly: FamilyPolygon): number =>
     poly.support && poly.pixels
       ? poly.support.filter((x) => ranks.includes(x.rank)).reduce((sum, x) => sum + x.pixels, 0) /
@@ -335,7 +408,8 @@ export function completeSemanticFamily(
           poly.ranks.includes(r) &&
           (poly.ranks.length === 1 || grouped) &&
           classPurity(poly) >= FAMILY_COMPLETION_LIMITS.polygonPurity,
-      )
+      ) &&
+      !collectiveClass
     )
       return refuse('No direct semantic observation for a proposed sibling');
     const score = required(
@@ -385,8 +459,10 @@ export function completeSemanticFamily(
     candidatesConsidered: data.signatures.length,
     comparisons,
     workerMs: Date.now() - start,
-    reason: distributed
-      ? 'Exact equivalent family corroborates distributed direct instance observations'
-      : 'Exact isolated equivalent family corroborates omitted instance annotations',
+    reason: collectiveClass
+      ? 'Exact-count isolated spatial class corroborates collectively grounded family observations'
+      : distributed
+        ? 'Exact equivalent family corroborates distributed direct instance observations'
+        : 'Exact isolated equivalent family corroborates omitted instance annotations',
   };
 }

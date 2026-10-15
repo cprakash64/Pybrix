@@ -75,7 +75,36 @@ export function compileSemanticConceptMatcher(
         ? { concept: best[0]?.concept ?? null, phrase: best[0]?.phrase ?? null, reason: 'MATCH' }
         : { concept: null, phrase: null, reason: 'AMBIGUOUS' };
     }
-    const matches = label
+    // A bounded trailing spatial relation describes context, not a new head noun.
+    // An explicitly frozen phrase spanning the relation takes precedence over this grammar.
+    const relation = /\s+(above|below|beside|behind|under|over|atop|next to|in front of)\s+/i;
+    const relational = relation.exec(label);
+    let head = label;
+    if (relational && relational.index > 0) {
+      const tail = label.slice(relational.index + relational[0].length);
+      const declared = phrases.filter(
+        (p) =>
+          relation.test(` ${p.phrase} `) &&
+          p.tokens.length <= full.length &&
+          p.tokens.every((t, i) => t === full[full.length - p.tokens.length + i]),
+      );
+      if (declared.length) {
+        const length = Math.max(...declared.map((p) => p.tokens.length));
+        const best = declared.filter((p) => p.tokens.length === length);
+        return new Set(best.map((p) => p.concept)).size === 1
+          ? { concept: best[0]?.concept ?? null, phrase: best[0]?.phrase ?? null, reason: 'MATCH' }
+          : { concept: null, phrase: null, reason: 'AMBIGUOUS' };
+      }
+      head = label.slice(0, relational.index);
+      if (
+        normalize(head).length > 8 ||
+        normalize(tail).length > 6 ||
+        !normalize(tail).length ||
+        relation.test(tail)
+      )
+        return { concept: null, phrase: null, reason: 'AMBIGUOUS' };
+    }
+    const matches = head
       .split(/\b(?:and|or|with)\b|[&/]/i)
       .map((segment) => {
         const tokens = normalize(segment);

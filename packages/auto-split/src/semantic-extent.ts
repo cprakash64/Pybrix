@@ -1,3 +1,4 @@
+import type { SemanticReservation } from './semantic-reservation';
 import {
   VIEW_NAMES,
   type SemanticHierarchy,
@@ -18,6 +19,7 @@ export interface SemanticExtent {
     maximumShare: number;
     minimumEvidencePurity: number;
     independentComponent: boolean;
+    reservedComponents?: readonly number[];
   }[];
   readonly targetPixels: number;
   readonly potentialCompetingPixelsUpperBound: number;
@@ -68,6 +70,7 @@ export function componentSemanticExtents(
   support: readonly Uint32Array[],
   checkpoint: Checkpoint,
   charge: () => void,
+  reservations: readonly SemanticReservation[] = [],
 ): Map<string, SemanticExtent> {
   const results = new Map<string, SemanticExtent>();
   if (!suggestions.some((s) => s.operation === 'COMPONENT' && s.quality === 'READY'))
@@ -124,6 +127,7 @@ export function componentSemanticExtents(
         minimumEvidencePurity: 1,
         independentComponent: false,
         aggregateViews: 0,
+        coarseHierarchyViews: 0,
       }))
       .filter(
         (s) =>
@@ -180,6 +184,7 @@ export function componentSemanticExtents(
           selected.length === 1 &&
           share >= 0.95 &&
           inside / Math.max(1, meaningful) >= 0.9;
+        if (coarseHierarchyOverlap) state.coarseHierarchyViews++;
         const localized = grounded && purity < 0.9 && !coarseHierarchyOverlap;
         if (localized || (grounded && independent && (!isChild || selected.length > 1))) {
           state.views.push(VIEW_NAMES[vi] ?? '');
@@ -193,7 +198,7 @@ export function componentSemanticExtents(
       potentialCompetingPixelsUpperBound += Math.min(visible, otherTotal);
       unknownPixelsLowerBound += Math.max(0, visible - targetTotal - otherTotal);
     }
-    const conflicts = stats
+    const conflicts: SemanticExtent['conflicts'][number][] = stats
       .filter((state) => {
         if (state.views.length < 2) return false;
         const child = descendant(answer, target.id, state.part);
@@ -214,6 +219,61 @@ export function componentSemanticExtents(
         minimumEvidencePurity: s.minimumEvidencePurity,
         independentComponent: s.independentComponent,
       }));
+    // Component-local claims survive global family dilution and execution refusal.
+    for (const reservation of reservations) {
+      checkpoint();
+      charge();
+      const owner = answer.parts.find((part) => part.id === reservation.id);
+      if (!owner || owner.id === target.id || descendant(answer, owner.id, target)) continue;
+      const reserved = reservation.components.filter((rank) => {
+        charge();
+        return selected.includes(rank);
+      });
+      if (!reserved.length) continue;
+      const state = stats.find((s) => s.part.id === owner.id);
+      const child = descendant(answer, target.id, owner);
+      // The existing whole-region hierarchy rule treats indistinguishable coarse masks as
+      // unlocalized evidence. Reservation must not turn that same ambiguity into ownership.
+      if (child && selected.length === 1 && (state?.coarseHierarchyViews ?? 0) >= 2) continue;
+      const contained = reservation.components.every((rank) => selected.includes(rank));
+      if (
+        child &&
+        contained &&
+        ((scope === 'WHOLE_ASSEMBLY' && (state?.aggregateViews ?? 0) >= 2) ||
+          (scope === 'REPEATED_FAMILY' && owner.instances === 1))
+      )
+        continue;
+      if (conflicts.some((s) => s.id === owner.id)) continue;
+      const index = answer.parts.indexOf(owner),
+        views: string[] = [];
+      let maximumShare = 0,
+        minimumEvidencePurity = 1;
+      for (const [vi] of p.rasters.entries())
+        for (const rank of reserved) {
+          checkpoint();
+          charge();
+          const base = vi * ranks + rank,
+            visible = totals[base] ?? 0,
+            hit = counts[base * parts + index] ?? 0;
+          if (visible < 8 || hit / visible < 0.82) continue;
+          if (!views.includes(VIEW_NAMES[vi] ?? '')) views.push(VIEW_NAMES[vi] ?? '');
+          const requested = counts[base * parts + ti] ?? 0;
+          const joint = joints[base * pairs + jointIndex(ti, index, parts)] ?? 0;
+          maximumShare = Math.max(maximumShare, hit / visible);
+          minimumEvidencePurity = Math.min(
+            minimumEvidencePurity,
+            Math.max(0, requested - joint) / Math.max(1, requested + hit - joint),
+          );
+        }
+      conflicts.push({
+        id: owner.id,
+        views,
+        maximumShare,
+        minimumEvidencePurity,
+        independentComponent: true,
+        reservedComponents: reserved,
+      });
+    }
     results.set(target.id, {
       scope,
       admitted: conflicts.length === 0 && scope !== 'UNKNOWN_SCOPE' && scope !== 'DETAIL_FEATURE',

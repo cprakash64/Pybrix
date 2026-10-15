@@ -96,6 +96,56 @@ describe('semantically anchored exact family completion', () => {
     expect(result?.ranks).toEqual(f.ranks);
     expect(result?.anchors).toEqual(f.ranks.slice(0, 2));
   });
+  it('completes an omitted member only with exact count, distributed anchors and full spatial extent', async () => {
+    const f = await fixture();
+    f.polygons = f.polygons.filter((poly) => poly.ranks[0] !== f.ranks[5]);
+    f.scores = f.scores.map((score) =>
+      score.rank === f.ranks[5]
+        ? { ...score, strongViews: 0, viewCoverage: [0, 0, -1, -1, -1, -1] }
+        : score,
+    );
+    expect(complete(f)?.ranks).toEqual(f.ranks);
+  });
+  it('cannot guess a class from an adjacent localized subset that fails spatial coverage', async () => {
+    const f = await fixture();
+    const first = required(f.p.facts[f.ranks[0] ?? -1], 'first anchor').centroid;
+    const anchors = f.ranks.filter((r) => (f.p.facts[r]?.centroid[1] ?? 0) === first[1]);
+    f.polygons = anchors.flatMap((rank) =>
+      [0, 1, 2].map((view) => ({ rank, view, ranks: [rank], purity: 1 })),
+    );
+    f.scores = f.scores.map((score) => ({
+      ...score,
+      strongViews: anchors.includes(score.rank) ? 2 : 0,
+    }));
+    expect(complete(f)?.ranks ?? []).toEqual([]);
+  });
+  it('refuses two plausible repeated sets instead of selecting an arbitrary exact-count subset', async () => {
+    expect(complete(await fixture(12))?.ranks ?? []).toEqual([]);
+  });
+  it('refuses overlapping non-transitive shape classes', async () => {
+    const f = await fixture();
+    const center =
+      required(
+        f.signatures.signatures.find((s) => s.rank === f.ranks[0]),
+        'signature',
+      ).moments[0] ?? 0;
+    f.signatures = {
+      ...f.signatures,
+      signatures: f.signatures.signatures.map((s) =>
+        f.ranks.includes(s.rank)
+          ? {
+              ...s,
+              moments: s.moments.map((v, i) =>
+                i === 0
+                  ? center + (s.rank === f.ranks[1] ? 0.002 : s.rank === f.ranks[2] ? -0.002 : 0)
+                  : v,
+              ),
+            }
+          : s,
+      ),
+    };
+    expect(complete(f)?.ranks ?? []).toEqual([]);
+  });
   it('refuses five legs plus a decorative support', async () => {
     expect(complete(await fixture(6, 'decorative'))?.ranks ?? []).toEqual([]);
   });

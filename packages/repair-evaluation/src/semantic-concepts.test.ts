@@ -162,3 +162,73 @@ describe('prospective structural nouns remain concept-specific', () => {
     expect(structural('support frame and structural post').reason).toBe('AMBIGUOUS');
   });
 });
+
+describe('prospective synonyms and bounded relational descriptions', () => {
+  const roles = [
+    { concept: 'bar', phrases: ['bar', 'cylindrical bar', 'cylindrical pin', 'side pin'] },
+    { concept: 'retainer', phrases: ['pin', 'retaining pin'] },
+    { concept: 'post', phrases: ['post', 'upright post', 'offset upright post'] },
+    {
+      concept: 'frame',
+      phrases: ['frame', 'upright frame', 'frame assembly', 'structural upright', 'openwork frame'],
+    },
+    { concept: 'platform', phrases: ['platform', 'tabletop', 'table top', 'top platform'] },
+    { concept: 'base', phrases: ['base'] },
+    { concept: 'support', phrases: ['platform support', 'lower platform support'] },
+  ];
+  const match = compileSemanticConceptMatcher(roles);
+  for (const [label, concept] of [
+    ['cylindrical side pin', 'bar'],
+    ['cylindrical bar', 'bar'],
+    ['retaining pin', 'retainer'],
+    ['upright post above platform', 'post'],
+    ['offset upright post above platform', 'post'],
+    ['upright frame above base', 'frame'],
+    ['top platform', 'platform'],
+    ['rectangular platform', 'platform'],
+    ['lower platform support', 'support'],
+  ] as const)
+    it(label, () => {
+      expect(match(label).concept).toBe(concept);
+    });
+  it('does not match a pin-shaped decoration as a physical pin', () => {
+    expect(match('pin-shaped decoration').concept).toBeNull();
+  });
+  it('requires explicit concept-specific synonyms', () => {
+    expect(
+      compileSemanticConceptMatcher([{ concept: 'bar', phrases: ['bar'] }])('side pin').concept,
+    ).toBeNull();
+    expect(
+      compileSemanticConceptMatcher([{ concept: 'frame', phrases: ['frame'] }])(
+        'upright post above platform',
+      ).concept,
+    ).toBeNull();
+  });
+  it('rejects coordinated post/frame overlap without a frozen composite', () => {
+    expect(match('post-and-frame assembly').reason).toBe('AMBIGUOUS');
+    expect(
+      compileSemanticConceptMatcher([
+        ...roles,
+        { concept: 'assembly', phrases: ['post and frame assembly'] },
+      ])('post-and-frame assembly').concept,
+    ).toBe('assembly');
+  });
+  it('gives a declared full relational phrase precedence', () => {
+    expect(
+      compileSemanticConceptMatcher([
+        ...roles,
+        { concept: 'bracket', phrases: ['post above platform'] },
+      ])('upright post above platform').concept,
+    ).toBe('bracket');
+  });
+  it('refuses multiple or unbounded relational tails', () => {
+    expect(match('post above platform below frame').reason).toBe('AMBIGUOUS');
+    expect(match('post above one two three four five six seven platform').reason).toBe('AMBIGUOUS');
+    expect(match('postscript above platform').concept).toBeNull();
+  });
+  it('rejects conflicting aliases before dispatch', () => {
+    expect(() =>
+      compileSemanticConceptMatcher([...roles, { concept: 'other', phrases: ['side pin'] }]),
+    ).toThrow();
+  });
+});
