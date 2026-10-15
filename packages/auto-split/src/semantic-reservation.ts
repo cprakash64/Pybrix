@@ -37,7 +37,11 @@ export function buildSemanticReservations(
   for (const part of answer.parts) {
     work();
     const scope = semanticRoleScope(part, answer);
-    if (part.confidence < 0.9 || (scope !== 'EXTRACTABLE_PART' && scope !== 'REPEATED_FAMILY'))
+    if (
+      part.expectedGeometry.kind === 'unknown' ||
+      part.confidence < 0.9 ||
+      (scope !== 'EXTRACTABLE_PART' && scope !== 'REPEATED_FAMILY')
+    )
       continue;
     const e = evidence.find((e) => e.id === part.id);
     if (!e) continue;
