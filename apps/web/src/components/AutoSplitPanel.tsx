@@ -580,17 +580,21 @@ function Row({
           ? 'Find parts again'
           : row.selected && auto.unsafeCut
             ? "Can't split this area safely"
-            : row.executable
-              ? 'Suggested cut'
-              : row.suggestion.family === 'semantic' &&
-                  (row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE' ||
-                    row.suggestion.quality === 'LOW_CONFIDENCE')
-                ? describeSemanticUnavailable(row.suggestion.diagnostic)
-                : row.suggestion.quality === 'LOW_CONFIDENCE'
-                  ? 'Needs a closer look'
-                  : row.suggestion.quality === 'UNSAFE'
-                    ? "Can't separate this safely"
-                    : 'No separate part found'}
+            : row.selected && auto.checkingCut
+              ? 'Checking cut…'
+              : row.suggestion.family === 'semantic' && row.suggestion.quality === 'READY'
+                ? 'Ready'
+                : row.executable || row.suggestion.quality === 'SUGGESTED'
+                  ? 'Suggested cut'
+                  : row.suggestion.family === 'semantic' &&
+                      (row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE' ||
+                        row.suggestion.quality === 'LOW_CONFIDENCE')
+                    ? describeSemanticUnavailable(row.suggestion.diagnostic)
+                    : row.suggestion.quality === 'LOW_CONFIDENCE'
+                      ? 'Needs a closer look'
+                      : row.suggestion.quality === 'UNSAFE'
+                        ? "Can't separate this safely"
+                        : 'No separate part found'}
       </p>
       {children}
       <PanelSection title="Details" defaultOpen={false}>

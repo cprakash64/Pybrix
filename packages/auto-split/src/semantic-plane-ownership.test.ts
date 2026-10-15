@@ -94,7 +94,7 @@ function membership(
     'suggestion',
   );
   expect(s.operation).toBe('PLANE');
-  expect(s.quality).toBe('READY');
+  expect(s.quality).toBe('SUGGESTED');
   const plane = required(s.plane ?? undefined, 'plane');
   let selected = 0,
     hit = 0,

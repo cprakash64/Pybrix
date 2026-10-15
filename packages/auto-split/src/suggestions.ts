@@ -75,9 +75,13 @@ export interface Suggestion {
   readonly importance?: 'major' | 'detail';
   readonly semanticConfidence?: number;
   readonly geometryConfidence?: number;
-  readonly quality?: 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
+  readonly quality?:
+    'SUGGESTED' | 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
   /** Presentation diagnosis only; never grants an operation or changes validation. */
   readonly diagnostic?: 'CONFIRMED_FUSED' | 'MAPPING_UNCERTAIN' | 'NO_REALIZATION_PROPOSAL';
+  /** Semantically admitted alternatives, never native-validity claims. At most three. */
+  readonly semanticFinalists?: readonly SuggestedPlane[];
+  readonly semanticPreparationId?: number;
   readonly instanceCount?: number;
 }
 

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { SuggestionOperation, SuggestionStatus, type Suggestion } from '@cadfixer/auto-split';
+import {
+  SuggestionOperation,
+  SuggestionStatus,
+  sameSemanticPlane,
+  type Suggestion,
+} from '@cadfixer/auto-split';
 import { useGeometryClient } from '../runtime/client-context';
 import { createAnalysisTransport, type AnalysisTransport } from '../runtime/auto-split-transport';
 import {
@@ -119,6 +124,7 @@ export interface AutoSplitControls {
   /** True when the loaded plane is not exactly what the suggestion was (the controls cannot express it). */
   readonly planeApproximate: boolean;
   /** A preview from a suggestion failed local validation. */
+  readonly checkingCut?: boolean;
   readonly unsafeCut: boolean;
   /** A preview from a suggestion was declined for resources (a limit, not a defect in the cut). */
   readonly cutNeedsMoreRoom: boolean;
@@ -241,6 +247,26 @@ export function useAutoSplit(
     [result, snap.selectedId, snap.shownId, stale, splitPhase],
   );
   const selected = rows.find((row) => row.selected);
+  useEffect(() => {
+    const proof = split.preview?.semanticQualification;
+    if (splitPhase === SplitPhase.Preview && proof) session.nativeQualified(proof);
+    else if (
+      selected?.suggestion.quality === 'SUGGESTED' &&
+      splitError &&
+      !split.errorIsResourceLimit &&
+      !split.errorIsOperationFailure
+    )
+      session.nativeRefused(selected.id);
+  }, [
+    session,
+    splitPhase,
+    split.preview,
+    selected?.id,
+    selected?.suggestion.quality,
+    splitError,
+    split.errorIsResourceLimit,
+    split.errorIsOperationFailure,
+  ]);
 
   const components: readonly AutoSplitComponentRow[] = useMemo(() => {
     if (selected?.operation !== SuggestionOperation.Component || result === undefined) return [];
@@ -297,6 +323,17 @@ export function useAutoSplit(
     (id: string, thenPreview: boolean): void => {
       const row = rows.find((candidate) => candidate.id === id);
       if (!row?.executable) return;
+      if (
+        thenPreview &&
+        row.selected &&
+        splitPhase === SplitPhase.Preview &&
+        split.preview?.semanticQualification?.candidateId === id &&
+        split.preview.semanticQualification.preparationId ===
+          row.suggestion.semanticPreparationId &&
+        row.suggestion.plane !== null &&
+        sameSemanticPlane(split.preview.semanticQualification.plane, row.suggestion.plane)
+      )
+        return;
       const loadCut = (): void => {
         session.select(id);
         setApproximate(false);
@@ -310,6 +347,9 @@ export function useAutoSplit(
               normal: row.suggestion.plane.normal,
             },
             row.label,
+            row.suggestion.semanticPreparationId === undefined
+              ? undefined
+              : { preparationId: row.suggestion.semanticPreparationId, candidateId: row.id },
           );
           setApproximate(loaded?.exact === false);
         } else {
@@ -320,7 +360,15 @@ export function useAutoSplit(
       if (thenPreview) preparePreview(loadCut);
       else loadCut();
     },
-    [loadSuggestedPlane, rows, session, setComponentSource, preparePreview],
+    [
+      loadSuggestedPlane,
+      rows,
+      session,
+      setComponentSource,
+      preparePreview,
+      splitPhase,
+      split.preview,
+    ],
   );
   const preview = useCallback(
     (id: string): void => {
@@ -543,6 +591,9 @@ export function useAutoSplit(
     edit,
     previewSelection,
     planeApproximate: approximate && selected?.operation === SuggestionOperation.Plane,
+    checkingCut:
+      selected?.operation === SuggestionOperation.Plane &&
+      (splitPhase === SplitPhase.Preparing || splitPhase === SplitPhase.Computing),
     unsafeCut:
       tab === 'auto' &&
       selected !== undefined &&

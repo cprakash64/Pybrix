@@ -94,6 +94,7 @@ interface Score {
   }[];
 }
 export interface LocalPlaneProposal {
+  readonly finalists?: readonly { readonly normal: Vec3; readonly origin: Vec3 }[];
   readonly cut: { readonly normal: Vec3; readonly origin: Vec3 };
   readonly confidence: number;
   readonly scope: 'part' | 'assembly';
@@ -964,7 +965,13 @@ export function synthesizeSemanticPlane(
   });
   const winner = confirmed[0];
   return winner
-    ? proposal(winner, evidence, part, candidates, answer, checkpoint, charge)
+    ? {
+        ...proposal(winner, evidence, part, candidates, answer, checkpoint, charge),
+        finalists: confirmed.map((c) => ({
+          normal: c.normal,
+          origin: vector(c.normal.map((n) => n * c.offset)),
+        })),
+      }
     : undefined;
 }
 /** A geometric refinement never bypasses ownership or its previously established search frontier. */
@@ -1004,6 +1011,7 @@ export function confirmSemanticPlane(
   });
   return {
     ...result,
+    ...(previous.finalists ? { finalists: previous.finalists } : {}),
     candidates: previous.candidates,
     ownership: { ...result.ownership, frontierCandidates: previous.ownership.frontierCandidates },
   };

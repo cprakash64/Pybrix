@@ -174,6 +174,8 @@ export function similarFamilyComponents(a: FamilySignature, b: FamilySignature):
   );
 }
 export interface FamilyPolygon {
+  readonly pixels?: number;
+  readonly support?: readonly { readonly rank: number; readonly pixels: number }[];
   readonly view: number;
   readonly ranks: readonly number[];
   readonly purity: number;
@@ -202,25 +204,62 @@ export function completeSemanticFamily(
   signatures: () => FamilySignatures,
   checkpoint: Checkpoint,
 ): FamilyCompletion | undefined {
-  if (
-    part.instances < 3 ||
-    initial.length >= part.instances ||
-    part.expectedGeometry.kind !== 'repeated_part'
-  )
+  if (part.instances < 3 || part.expectedGeometry.kind !== 'repeated_part') return undefined;
+  // Fully mapped groups retain their existing admission, but cannot hide a contradictory
+  // complete shape class merely because coarse masks provide no single-instance anchors.
+  if (initial.length >= part.instances) {
+    const start = Date.now(),
+      data = signatures(),
+      first = required(
+        data.signatures.find((s) => s.rank === initial[0]),
+        'mapped family signature',
+      );
+    const ranks: number[] = [];
+    let comparisons = 0;
+    for (const signature of data.signatures) {
+      checkpoint();
+      comparisons++;
+      if (similarFamilyComponents(first, signature)) ranks.push(signature.rank);
+    }
+    if (ranks.length !== part.instances || !initial.every((r) => ranks.includes(r)))
+      return {
+        ranks: [],
+        anchors: [],
+        propagated: [],
+        candidatesConsidered: data.signatures.length,
+        comparisons,
+        workerMs: Date.now() - start,
+        reason: 'Mapped family contradicts the complete equivalent component class',
+      };
     return undefined;
+  }
+  // Independently isolated instance footprints may be distributed across views.
+  // This mode never invents an unobserved sibling: every declared member must be directly grounded.
+  const distributed =
+    part.confidence >= 0.9 &&
+    new Set(polygons.map((p) => p.view)).size >= 3 &&
+    new Set(
+      polygons
+        .filter((p) => p.ranks.length === 1 && p.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity)
+        .map((p) => p.ranks[0]),
+    ).size === part.instances;
+  const directlyGrounded = (s: FamilyScore): boolean =>
+    polygons.some(
+      (poly) =>
+        poly.ranks.length === 1 &&
+        poly.ranks[0] === s.rank &&
+        poly.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity,
+    );
+  const strongAnchors = scores
+    .filter((s) => s.strongViews >= 2 && directlyGrounded(s))
+    .map((s) => s.rank);
   const start = Date.now(),
-    anchors = scores
-      .filter(
-        (s) =>
-          s.strongViews >= 2 &&
-          polygons.some(
-            (poly) =>
-              poly.ranks.length === 1 &&
-              poly.ranks[0] === s.rank &&
-              poly.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity,
-          ),
-      )
-      .map((s) => s.rank);
+    anchors =
+      strongAnchors.length >= FAMILY_COMPLETION_LIMITS.minimumAnchors
+        ? strongAnchors
+        : distributed
+          ? scores.filter((s) => s.strongViews >= 1 && directlyGrounded(s)).map((s) => s.rank)
+          : [];
   if (anchors.length < FAMILY_COMPLETION_LIMITS.minimumAnchors) return undefined;
   const data = signatures(),
     first = required(
@@ -243,27 +282,59 @@ export function completeSemanticFamily(
     workerMs: Date.now() - start,
     reason,
   });
-  if (ranks.length !== part.instances || !anchors.every((r) => ranks.includes(r)))
+  if (
+    ranks.length !== part.instances ||
+    !anchors.every((r) => ranks.includes(r)) ||
+    !initial.every((r) => ranks.includes(r))
+  )
     return refuse('No unique complete equivalent component class');
-  // Every supplied polygon must prove one member of this class. A polygon elsewhere is contradiction.
+  const classPurity = (poly: FamilyPolygon): number =>
+    poly.support && poly.pixels
+      ? poly.support.filter((x) => ranks.includes(x.rank)).reduce((sum, x) => sum + x.pixels, 0) /
+        poly.pixels
+      : poly.ranks.length === 1 && ranks.includes(poly.ranks[0] ?? -1)
+        ? poly.purity
+        : 0;
+  const grouped =
+    part.confidence >= 0.9 &&
+    anchors.length >= 2 &&
+    new Set(
+      polygons
+        .filter((p) => classPurity(p) >= FAMILY_COMPLETION_LIMITS.polygonPurity)
+        .map((p) => p.view),
+    ).size >= 2;
   if (
     !polygons.length ||
     polygons.some(
       (poly) =>
-        poly.ranks.length !== 1 ||
-        !ranks.includes(poly.ranks[0] ?? -1) ||
-        poly.purity < FAMILY_COMPLETION_LIMITS.polygonPurity,
+        !poly.ranks.length ||
+        poly.ranks.some((r) => !ranks.includes(r)) ||
+        classPurity(poly) < FAMILY_COMPLETION_LIMITS.polygonPurity,
     )
   )
     return refuse('Contradictory or ambiguous family polygon');
+  if (
+    polygons.some(
+      (poly, i) =>
+        poly.ranks.length === 1 &&
+        polygons.some(
+          (other, j) =>
+            j < i &&
+            other.view === poly.view &&
+            other.ranks.length === 1 &&
+            other.ranks[0] === poly.ranks[0],
+        ),
+    )
+  )
+    return refuse('Duplicated direct instance region');
   for (const r of ranks) {
     checkpoint();
     if (
       !polygons.some(
         (poly) =>
-          poly.ranks.length === 1 &&
-          poly.ranks[0] === r &&
-          poly.purity >= FAMILY_COMPLETION_LIMITS.polygonPurity,
+          poly.ranks.includes(r) &&
+          (poly.ranks.length === 1 || grouped) &&
+          classPurity(poly) >= FAMILY_COMPLETION_LIMITS.polygonPurity,
       )
     )
       return refuse('No direct semantic observation for a proposed sibling');
@@ -314,6 +385,8 @@ export function completeSemanticFamily(
     candidatesConsidered: data.signatures.length,
     comparisons,
     workerMs: Date.now() - start,
-    reason: 'Exact isolated equivalent family corroborates omitted instance annotations',
+    reason: distributed
+      ? 'Exact equivalent family corroborates distributed direct instance observations'
+      : 'Exact isolated equivalent family corroborates omitted instance annotations',
   };
 }

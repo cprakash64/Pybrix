@@ -1,3 +1,4 @@
+import { sameSemanticPlane } from '@cadfixer/auto-split';
 import { preservesAssemblyInterfaces } from './assembly-presentation';
 import { flushSync } from 'react-dom';
 import { afterPaint } from './after-paint';
@@ -134,6 +135,7 @@ export interface SplitControls {
   readonly loadSuggestedPlane: (
     plane: SplitPlane,
     label?: string,
+    semanticQualification?: { readonly preparationId: number; readonly candidateId: string },
   ) => { readonly exact: boolean } | undefined;
   /** Makes the next preview a component split, or (with undefined) returns to the plane. */
   readonly setComponentSource: (ranks: readonly number[] | undefined, label?: string) => void;
@@ -349,7 +351,14 @@ export function useSplitWorkflow(): SplitControls {
   const running = useRef<OperationHandle<SplitCreateResult> | undefined>(undefined);
   const previewRef = useRef<SplitCreateResult | undefined>(undefined);
   const action = useRef<{ phase: SplitPhase } | undefined>(undefined);
-  const semanticIntent = useRef<{ key: string; label: string } | undefined>(undefined);
+  const semanticIntent = useRef<
+    | {
+        key: string;
+        label: string;
+        qualification?: { readonly preparationId: number; readonly candidateId: string };
+      }
+    | undefined
+  >(undefined);
   const plainRequested = useRef(false);
   const [assemblyEditing, setAssemblyEditing] = useState(false);
   const [automaticUnitPrompt, setAutomaticUnitPrompt] = useState(false);
@@ -527,6 +536,7 @@ export function useSplitWorkflow(): SplitControls {
     (next: (current: SplitPlaneSettings) => SplitPlaneSettings): void => {
       if (action.current !== undefined && action.current.phase !== SplitPhase.Preparing) return;
       invalidate();
+      semanticIntent.current = undefined;
       setError(undefined);
       setComponentState(undefined);
       setPlane(next);
@@ -569,11 +579,17 @@ export function useSplitWorkflow(): SplitControls {
   }, [edit]);
 
   const loadSuggestedPlane = useCallback(
-    (suggested: SplitPlane, label?: string): { readonly exact: boolean } | undefined => {
+    (
+      suggested: SplitPlane,
+      label?: string,
+      qualification?: { readonly preparationId: number; readonly candidateId: string },
+    ): { readonly exact: boolean } | undefined => {
       if (part === undefined) return undefined;
       const mapped = planeSettingsFor(suggested, part.bounds);
       edit(() => mapped.settings);
-      semanticIntent.current = label ? { key: partKey, label } : undefined;
+      semanticIntent.current = label
+        ? { key: partKey, label, ...(mapped.exact && qualification ? { qualification } : {}) }
+        : undefined;
       plainRequested.current = false;
       return { exact: mapped.exact };
     },
@@ -720,12 +736,18 @@ export function useSplitWorkflow(): SplitControls {
                       : connectorRequest(connector, unitValue),
                 },
                 onProgress,
+                semanticIntent.current?.key === partKey
+                  ? semanticIntent.current.qualification
+                  : undefined,
               );
           running.current = operation;
           const result = await operation.promise;
           {
             if (running.current !== operation) return;
             running.current = undefined;
+            const qualifiedPlane = result.semanticQualification?.plane;
+            if (qualifiedPlane && !sameSemanticPlane(qualifiedPlane, splitPlane))
+              setPlane(() => planeSettingsFor(qualifiedPlane, part.bounds).settings);
             previewRef.current = result;
             setPreviewState({ key: session, result });
             store.setSplitPreview(model.handle, result.render, result.parts);
@@ -772,6 +794,7 @@ export function useSplitWorkflow(): SplitControls {
       session,
       setError,
       setPhase,
+      setPlane,
       setProgress,
       setNotClosedError,
       setResourceError,

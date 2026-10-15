@@ -92,7 +92,7 @@ describe('local semantic realization with optional provider geometry hints', () 
         result.suggestions.find((s) => s.id === 'detached'),
         'detached',
       );
-      expect(candidate.quality).toBe('READY');
+      expect(candidate.quality).toBe(candidate.operation === 'PLANE' ? 'SUGGESTED' : 'READY');
       expect(candidate.operation).toBe('PLANE');
       expect(candidate.plane?.normal[0]).toBeGreaterThan(0.5);
     });

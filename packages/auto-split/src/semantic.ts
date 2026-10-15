@@ -576,8 +576,14 @@ export function decomposeSemantic(
     const mask = new Uint8Array(geometry.faceCount);
     const hits: Uint32Array[] = VIEW_NAMES.map(() => new Uint32Array(labelling.count));
     const mentioned = new Set(part.views.map((v) => v.view));
-    const regionInstances: { view: ViewName; polygon: number; ranks: number[]; purity: number }[] =
-      [];
+    const regionInstances: {
+      view: ViewName;
+      polygon: number;
+      ranks: number[];
+      purity: number;
+      pixels: number;
+      support: { rank: number; pixels: number }[];
+    }[] = [];
     for (const region of part.views) {
       const vi = VIEW_NAMES.indexOf(region.view),
         raster = required(rasters[vi], 'rasters[vi]');
@@ -610,6 +616,10 @@ export function decomposeSemantic(
         const polygonTotal = polygonHits.reduce((a, b) => a + b, 0);
         const polygonMax = polygonHits.reduce((a, b) => Math.max(a, b), 0);
         regionInstances.push({
+          pixels: polygonTotal,
+          support: Array.from(polygonHits, (pixels, rank) => ({ rank, pixels })).filter(
+            (x) => x.pixels > 0,
+          ),
           purity: polygonTotal ? polygonMax / polygonTotal : 0,
           view: region.view,
           polygon: polygonIndex,
@@ -705,11 +715,13 @@ export function decomposeSemantic(
         view: VIEW_NAMES.indexOf(r.view),
         ranks: r.ranks,
         purity: r.purity,
+        pixels: r.pixels,
+        support: r.support,
       })),
       getSignatures,
       checkpoint,
     );
-    if (familyCompletion?.ranks.length) ranks = [...familyCompletion.ranks];
+    if (familyCompletion) ranks = [...familyCompletion.ranks];
     // References are optional priors. Only local source evidence can admit a rank;
     // unavailable or contradictory provider IDs never enter the resulting group.
     const hitTotals = hits.map((h) => h.reduce((a, b) => a + b, 0));
@@ -907,6 +919,22 @@ export function decomposeSemantic(
       status: quality === 'READY' ? SuggestionStatus.Suggested : SuggestionStatus.Unavailable,
       reason: quality === 'READY' ? SuggestionReason.Clear : SuggestionReason.FusedIntoBody,
       plane,
+      ...(operation === SuggestionOperation.Plane
+        ? {
+            semanticFinalists: [
+              ...(plane ? [plane] : []),
+              ...(localPlane?.finalists ?? []).map((cut) => ({
+                normal: cut.normal,
+                origin: toSourcePoint(geometry, cut.origin),
+              })),
+            ]
+              .filter(
+                (cut, index, all) =>
+                  all.findIndex((c) => JSON.stringify(c) === JSON.stringify(cut)) === index,
+              )
+              .slice(0, 3),
+          }
+        : {}),
       components: operation === SuggestionOperation.Component ? ranks : [],
       parentId: part.parentId,
       importance: part.importance,
@@ -1182,9 +1210,42 @@ export function decomposeSemantic(
         }
       : s,
   );
+  // READY for exact component partitions; planes need authoritative Preview first.
+  const published = resolved.map((s) =>
+    s.operation === SuggestionOperation.Plane && s.quality === 'READY'
+      ? {
+          ...s,
+          quality: 'SUGGESTED' as const,
+          semanticFinalists: (s.semanticFinalists ?? []).filter((cut, index) => {
+            if (index === 0 || !s.plane) return true;
+            // A fallback cannot introduce ownership outside this already-admitted source selection.
+            const epsilon = geometry.scale * 1e-7;
+            for (let f = 0; f < geometry.faceCount; f++) {
+              if ((f & 255) === 0) checkpoint();
+              if (++faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
+                throw resourceLimitExceeded(
+                  'The semantic correspondence exceeds the supported work limit.',
+                );
+              let before = 0,
+                after = 0;
+              for (let a = 0; a < 3; a++) {
+                let x = 0;
+                for (let k = 0; k < 3; k++)
+                  x += (geometry.positions[(geometry.indices[f * 3 + k] ?? 0) * 3 + a] ?? 0) / 3;
+                x = x * geometry.scale + (geometry.center[a] ?? 0);
+                before += (x - (s.plane.origin[a] ?? 0)) * (s.plane.normal[a] ?? 0);
+                after += (x - (cut.origin[a] ?? 0)) * (cut.normal[a] ?? 0);
+              }
+              if (after > epsilon && before < -epsilon) return false;
+            }
+            return true;
+          }),
+        }
+      : s,
+  );
   return {
-    suggestions: resolved,
-    candidates: resolved.map((s) => ({
+    suggestions: published,
+    candidates: published.map((s) => ({
       id: s.id,
       label: s.label,
       parentId: s.parentId ?? null,
@@ -1216,7 +1277,7 @@ export function decomposeSemantic(
     faceCount: geometry.faceCount,
     objectLabel: answer.object.label,
     evidence: evidence.map((e) => {
-      const result = resolved.find((s) => s.id === e.id);
+      const result = published.find((s) => s.id === e.id);
       return e.confidence
         ? {
             ...e,

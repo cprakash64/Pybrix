@@ -514,10 +514,11 @@ export class GeometryClient {
     partId: string,
     request: SplitRequest,
     onProgress?: (update: ProgressUpdate) => void,
+    semanticQualification?: { readonly preparationId: number; readonly candidateId: string },
   ): OperationHandle<SplitCreateResult> {
     return this.coordinator.dispatch(
       'split/create',
-      { source, partId, request },
+      { source, partId, request, ...(semanticQualification ? { semanticQualification } : {}) },
       onProgress === undefined ? {} : { onProgress },
     );
   }

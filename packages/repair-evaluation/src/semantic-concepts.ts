@@ -16,7 +16,6 @@ const modifiers = new Set([
   'rectangular',
   'horizontal',
   'vertical',
-  'upright',
   'integrated',
 ]);
 function normalize(value: string): string[] {

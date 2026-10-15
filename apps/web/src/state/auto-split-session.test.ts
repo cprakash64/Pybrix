@@ -712,3 +712,54 @@ describe('semantic preparation cleanup', () => {
     expect(r.signals[0]?.aborted).toBe(true);
   });
 });
+
+describe('semantic final READY lifecycle', () => {
+  async function suggested(): Promise<Rig> {
+    const r = rig();
+    ready(r);
+    r.session.analyze(target());
+    r.render.resolve(VIEWS);
+    await flush();
+    r.transport.resolve(okHuman());
+    await flush();
+    r.suggest.resolve(
+      suggestResult('human', [
+        { ...HEAD, family: 'semantic', quality: 'SUGGESTED', semanticPreparationId: 7 },
+      ]),
+    );
+    await flush();
+    r.session.select('head');
+    return r;
+  }
+  const proof = {
+    preparationId: 7,
+    candidateId: 'head',
+    plane: { normal: [0, 0, 1] as const, origin: [0, 0, 1.2] as const },
+    attempts: 2,
+    failures: 1,
+    winnerIndex: 1,
+    milliseconds: 10,
+  };
+  it('suggestions are pending until the matching authoritative Preview succeeds', async () => {
+    const r = await suggested();
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('SUGGESTED');
+    r.session.nativeQualified({ ...proof, preparationId: 6 });
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('SUGGESTED');
+    r.session.nativeQualified(proof);
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('READY');
+    expect(r.session.getSnapshot().result?.suggestions[0]?.plane).toEqual(proof.plane);
+  });
+  it('all native failures withdraw execution and cannot later be rescued by a stale completion', async () => {
+    const r = await suggested();
+    r.session.nativeRefused('head');
+    r.session.nativeQualified(proof);
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('UNSAFE');
+    expect(r.session.getSnapshot().result?.suggestions[0]?.operation).toBe('NONE');
+  });
+  it('a revised source never receives READY from the old preview', async () => {
+    const r = await suggested();
+    r.session.follow(target(2));
+    r.session.nativeQualified(proof);
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).not.toBe('READY');
+  });
+});

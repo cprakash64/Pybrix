@@ -180,3 +180,14 @@ it('distinguishes unsupported mapping and missing proposal from confirmed fusion
   expect(describeSemanticUnavailable(undefined)).toBe('No safe split found');
   expect(describeSemanticUnavailable('CONFIRMED_FUSED')).toBe('Part of the body');
 });
+
+it('distinguishes a semantic suggestion from final native/component readiness', () => {
+  expect(describeStatus(suggestion({ family: 'semantic', quality: 'SUGGESTED' }), true)).toEqual({
+    label: 'Suggested',
+    tone: 'review',
+  });
+  expect(describeStatus(suggestion({ family: 'semantic', quality: 'READY' }), true)).toEqual({
+    label: 'Ready',
+    tone: 'ready',
+  });
+});

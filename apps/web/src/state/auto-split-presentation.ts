@@ -152,6 +152,9 @@ export function describeStatus(suggestion: Suggestion, sourceReady: boolean): Su
   if (!sourceReady) return { label: NOT_CLOSED_COPY.chip, tone: 'repair' };
   switch (suggestion.status) {
     case SuggestionStatus.Suggested:
+      if (suggestion.quality === 'SUGGESTED') return { label: 'Suggested', tone: 'review' };
+      if (suggestion.family === 'semantic' && suggestion.quality === 'READY')
+        return { label: 'Ready', tone: 'ready' };
       return { label: 'Suggested', tone: 'ready' };
     case SuggestionStatus.NeedsAdjustment:
       return suggestion.operation === SuggestionOperation.Component

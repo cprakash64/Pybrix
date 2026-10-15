@@ -1,4 +1,8 @@
 import {
+  clearSemanticNativeFinalists,
+  registerSemanticNativeFinalists,
+} from './semantic-native-finalists';
+import {
   validateSemanticHierarchy,
   validateHuman,
   validateVehicle,
@@ -189,6 +193,7 @@ export const autoSplitRenderHandler: OperationHandler<'autosplit/render'> = asyn
   context.throwIfCancelled();
   const mesh = resolveMesh(payload.source, payload.partId);
   refuseIfTooLarge(mesh);
+  clearSemanticNativeFinalists();
   clearSemanticPreparation();
   if (payload.mode === 'semantic') {
     if (payload.scope === 'entire-model') {
@@ -279,13 +284,22 @@ export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = (
       });
     const result = decomposeSemantic(cached.prepared, checked.value, checkpointOf(context));
     context.throwIfCancelled();
+    registerSemanticNativeFinalists(
+      payload.source,
+      payload.partId,
+      mesh,
+      cached.preparationId,
+      result.suggestions,
+    );
     return Promise.resolve({
       value: {
         source: payload.source,
         partId: payload.partId,
         mode: payload.mode,
         objectLabel: result.objectLabel,
-        suggestions: result.suggestions,
+        suggestions: result.suggestions.map((s) =>
+          s.operation === 'PLANE' ? { ...s, semanticPreparationId: cached.preparationId } : s,
+        ),
         components: result.components,
         componentCount: result.componentCount,
         faceCount: result.faceCount,

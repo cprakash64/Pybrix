@@ -13,6 +13,7 @@ import {
   type Suggestion,
 } from '@cadfixer/auto-split';
 import type {
+  SplitCreateResult,
   AutoSplitRenderResult,
   AutoSplitSuggestResult,
   DocumentHandle,
@@ -577,6 +578,45 @@ export class AutoSplitSession {
   }
 
   /* -------------------------------------------------------- selection -- */
+
+  /** Only the matching authoritative Preview completion promotes a suggested semantic plane. */
+  public nativeQualified(proof: NonNullable<SplitCreateResult['semanticQualification']>): void {
+    const result = this.snapshot.result;
+    if (!result || this.snapshot.stale || this.snapshot.selectedId !== proof.candidateId) return;
+    this.set({
+      result: {
+        ...result,
+        suggestions: result.suggestions.map((s) =>
+          s.id === proof.candidateId &&
+          s.semanticPreparationId === proof.preparationId &&
+          s.operation === 'PLANE'
+            ? { ...s, quality: 'READY' as const, plane: proof.plane }
+            : s,
+        ),
+      },
+    });
+  }
+  public nativeRefused(id: string): void {
+    const result = this.snapshot.result;
+    if (!result || this.snapshot.stale) return;
+    this.set({
+      result: {
+        ...result,
+        suggestions: result.suggestions.map((s) =>
+          s.id === id && s.quality === 'SUGGESTED'
+            ? {
+                ...s,
+                quality: 'UNSAFE' as const,
+                operation: 'NONE' as const,
+                status: 'UNAVAILABLE' as const,
+                plane: null,
+                components: [],
+              }
+            : s,
+        ),
+      },
+    });
+  }
 
   public select(id: string | undefined): void {
     const result = this.snapshot.result;

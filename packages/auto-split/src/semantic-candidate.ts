@@ -22,5 +22,6 @@ export interface SemanticCandidate {
   readonly geometryConfidence: number;
   readonly instances: number;
   readonly realization: SemanticRealization;
-  readonly quality: 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
+  readonly quality:
+    'SUGGESTED' | 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
 }

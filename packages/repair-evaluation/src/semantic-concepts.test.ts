@@ -112,3 +112,53 @@ describe('prospective physical-role head phrases for plane ownership evaluation'
     expect(role('upper part and lower part').reason).toBe('AMBIGUOUS');
   });
 });
+
+describe('prospective structural nouns remain concept-specific', () => {
+  const structural = compileSemanticConceptMatcher([
+    {
+      concept: 'frame',
+      phrases: [
+        'frame',
+        'upright frame',
+        'open frame',
+        'openwork frame',
+        'support frame',
+        'structural upright',
+        'openwork upright',
+      ],
+    },
+    { concept: 'member', phrases: ['upright member'] },
+    { concept: 'post', phrases: ['post', 'structural post'] },
+    { concept: 'ring', phrases: ['ring'] },
+    { concept: 'plate', phrases: ['plate'] },
+    { concept: 'support', phrases: ['frame support'] },
+  ]);
+  for (const [label, role] of [
+    ['upright ring', 'ring'],
+    ['upright post', 'post'],
+    ['upright frame', 'frame'],
+    ['upright plate', 'plate'],
+    ['openwork frame', 'frame'],
+    ['support frame', 'frame'],
+    ['frame support', 'support'],
+    ['structural post', 'post'],
+    ['stepped frame', 'frame'],
+    ['stepped plate', 'plate'],
+    ['structural upright', 'frame'],
+    ['upright member', 'member'],
+    ['stepped openwork upright', 'frame'],
+  ] as const)
+    it(label, () => {
+      expect(structural(label).concept).toBe(role);
+    });
+  it('does not globally equate upright with frame', () => {
+    expect(structural('upright').concept).toBeNull();
+    expect(
+      compileSemanticConceptMatcher([{ concept: 'frame', phrases: ['frame'] }])('openwork upright')
+        .concept,
+    ).toBeNull();
+  });
+  it('preserves coordinated structural ambiguity', () => {
+    expect(structural('support frame and structural post').reason).toBe('AMBIGUOUS');
+  });
+});

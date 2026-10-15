@@ -1,3 +1,6 @@
+import { qualifySemanticFinalists } from '@cadfixer/auto-split';
+import { semanticNativePlan, recordSemanticNativeWinner } from './semantic-native-finalists';
+import { isAppError, AppErrorCode, invalidState } from '@cadfixer/shared';
 import { documentTriangleCount, documentVertexCount, partId } from '@cadfixer/mesh-core';
 import {
   documentByteLength,
@@ -67,7 +70,7 @@ function uniformPhysicalScale(t: readonly number[]): number {
   return scale;
 }
 
-export const splitCreateHandler: OperationHandler<'split/create'> = async (payload, context) => {
+const createSingleSplit: OperationHandler<'split/create'> = async (payload, context) => {
   context.throwIfCancelled();
   const sourcePart = residentDocuments.resolvePart(payload.source, partId(payload.partId));
   if (!isPart(sourcePart)) throw sourcePart;
@@ -126,6 +129,73 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
       stats: booleanOperations.stats,
     });
   }
+};
+
+/** Lazy qualification IS Preview. Its one successful candidate is subsequently committed unchanged. */
+export const splitCreateHandler: OperationHandler<'split/create'> = async (payload, context) => {
+  context.throwIfCancelled();
+  const part = residentDocuments.resolvePart(payload.source, partId(payload.partId));
+  if (!isPart(part)) throw part;
+  const plan = semanticNativePlan(payload, part.mesh);
+  if (!plan || !payload.semanticQualification) return createSingleSplit(payload, context);
+  let nativeAttempts = 0,
+    nativeFailures = 0;
+  const qualified = await qualifySemanticFinalists(
+    plan.planes,
+    async (plane) => {
+      context.reportProgress(0, 'Checking cut…');
+      nativeAttempts++;
+      try {
+        return await createSingleSplit(
+          { ...payload, request: { ...payload.request, plane } },
+          context,
+        );
+      } catch (error) {
+        if (
+          isAppError(error) &&
+          (error.code === AppErrorCode.InvalidState ||
+            error.code === AppErrorCode.GeometryValidationFailed)
+        )
+          nativeFailures++;
+        throw error;
+      }
+    },
+    {
+      checkpoint: (): void => {
+        context.throwIfCancelled();
+      },
+      charge: plan.charge,
+      isNativeInvalid: (error) =>
+        isAppError(error) &&
+        (error.code === AppErrorCode.InvalidState ||
+          error.code === AppErrorCode.GeometryValidationFailed),
+      discard: (result) => {
+        splitCandidates.discard(result.value.candidate);
+      },
+    },
+  );
+  if (!qualified)
+    throw invalidState('No safe split found.', {
+      code: 'SEMANTIC_NATIVE_FINALISTS_REFUSED',
+      attempts: nativeAttempts,
+      failures: nativeFailures,
+      finalists: plan.planes.length,
+    });
+  const { value, ...metrics } = qualified;
+  if (!recordSemanticNativeWinner(payload, qualified.plane)) {
+    splitCandidates.discard(value.value.candidate);
+    throw invalidState('Find parts again before checking this cut.');
+  }
+  return {
+    ...value,
+    value: {
+      ...value.value,
+      semanticQualification: {
+        ...payload.semanticQualification,
+        ...metrics,
+      },
+    },
+  };
 };
 
 export const splitCommitHandler: OperationHandler<'split/commit'> = (payload, context) => {

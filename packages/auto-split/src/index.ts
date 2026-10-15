@@ -18,3 +18,11 @@ export * from './vehicle-suggest';
 
 export * from './semantic';
 export type { SemanticRealization, SemanticCandidate } from './semantic-candidate';
+
+export {
+  qualifySemanticFinalists,
+  semanticNativePolicy,
+  sameSemanticPlane,
+  SEMANTIC_NATIVE_LIMITS,
+  type NativeFinalistResult,
+} from './semantic-native';
