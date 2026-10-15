@@ -19,27 +19,31 @@ const modifiers = new Set([
   'integrated',
 ]);
 function normalize(value: string): string[] {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) =>
-      word === 'feet'
-        ? 'foot'
-        : /(?:sses|ches|shes|xes|zes)$/.test(word)
-          ? word.slice(0, -2)
-          : word.endsWith('ies')
-            ? word.slice(0, -3) + 'y'
-            : word.endsWith('s') &&
-                !word.endsWith('ss') &&
-                !word.endsWith('us') &&
-                !word.endsWith('is')
-              ? word.slice(0, -1)
-              : word,
-    )
-    .filter((word) => !modifiers.has(word));
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((word) =>
+        word === 'feet'
+          ? 'foot'
+          : /(?:sses|ches|shes|xes|zes)$/.test(word)
+            ? word.slice(0, -2)
+            : word.endsWith('ies')
+              ? word.slice(0, -3) + 'y'
+              : word.endsWith('s') &&
+                  !word.endsWith('ss') &&
+                  !word.endsWith('us') &&
+                  !word.endsWith('is')
+                ? word.slice(0, -1)
+                : word,
+      )
+      // Orthographic equivalence only; physical synonyms remain concept-specific.
+      .map((word) => (word === 'disc' ? 'disk' : word))
+      .filter((word) => !modifiers.has(word))
+  );
 }
 export function compileSemanticConceptMatcher(
   definitions: readonly SemanticConceptDefinition[],

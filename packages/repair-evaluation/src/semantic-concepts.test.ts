@@ -232,3 +232,67 @@ describe('prospective synonyms and bounded relational descriptions', () => {
     ).toThrow();
   });
 });
+
+describe('prospective bounded morphology and structural compounds', () => {
+  const m = compileSemanticConceptMatcher([
+    { concept: 'circular', phrases: ['upper circular disc', 'disc'] },
+    { concept: 'tray', phrases: ['tray plate', 'plate'] },
+    { concept: 'base', phrases: ['base frame', 'lower support frame'] },
+    { concept: 'frame', phrases: ['frame'] },
+    { concept: 'post', phrases: ['post'] },
+  ]);
+  for (const label of [
+    'upper circular disk',
+    'upper circular disks',
+    'upper circular discs',
+    'DISCS',
+  ])
+    it(`normalizes orthographic noun form ${label}`, () => {
+      expect(m(label).concept).toBe('circular');
+    });
+  for (const label of [
+    'central rectangular plate',
+    'rectangular tray plates',
+    'separate tray-plate',
+  ])
+    it(`uses declared physical head phrases ${label}`, () => {
+      expect(m(label).concept).toBe('tray');
+    });
+  for (const label of [
+    'lower base frame',
+    'H-shaped base frame',
+    '  H—shaped   BASE FRAMES  ',
+    'stepped lower support frame',
+  ])
+    it(`prefers the declared structural compound ${label}`, () => {
+      expect(m(label).concept).toBe('base');
+    });
+  it('preserves physical head versus relational context', () => {
+    expect(m('upright post above base frame').concept).toBe('post');
+  });
+  it('does not infer tray from plate without a declared plate alias', () => {
+    expect(
+      compileSemanticConceptMatcher([{ concept: 'tray', phrases: ['tray'] }])('central plate')
+        .concept,
+    ).toBeNull();
+  });
+  it('does not infer a base role from an undeclared compound', () => {
+    expect(
+      compileSemanticConceptMatcher([{ concept: 'base', phrases: ['base'] }])('H-shaped base frame')
+        .concept,
+    ).toBeNull();
+  });
+  it('does not collapse different words containing disk/disc', () => {
+    expect(m('diskette').concept).toBeNull();
+    expect(m('discus').concept).toBeNull();
+    expect(m('disconnected object').concept).toBeNull();
+  });
+  it('rejects orthographic cross-concept ambiguity at compilation', () => {
+    expect(() =>
+      compileSemanticConceptMatcher([
+        { concept: 'a', phrases: ['disk'] },
+        { concept: 'b', phrases: ['disc'] },
+      ]),
+    ).toThrow('Ambiguous');
+  });
+});

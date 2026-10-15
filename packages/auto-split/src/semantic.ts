@@ -1,3 +1,4 @@
+import { directSemanticFamily, type DirectSemanticFamily } from './semantic-direct-family';
 import { buildSemanticReservations, type SemanticReservation } from './semantic-reservation';
 import { componentSemanticExtents, type SemanticExtent } from './semantic-extent';
 import {
@@ -370,6 +371,7 @@ export interface SemanticEvidence {
     readonly realizationConfidence: number;
   };
   readonly familyCompletion?: FamilyCompletion;
+  readonly directFamily?: DirectSemanticFamily;
   readonly viewEvidence?: readonly {
     readonly rank: number;
     readonly views: readonly {
@@ -506,6 +508,7 @@ export function decomposeSemantic(
   const { geometry, labelling, rasters, visibleTotals, facts } = prepared;
   const evidence: SemanticEvidence[] = [],
     suggestions: Suggestion[] = [];
+  const partialFamilies = new Map<string, readonly number[]>();
   const partById = new Map(answer.parts.map((p) => [p.id, p]));
   let work = 0,
     faceWork = 0;
@@ -711,22 +714,37 @@ export function decomposeSemantic(
       .map((score) => score.rank);
     if (part.instances > 1)
       ranks = ranks.filter((rank) => regionInstances.some((region) => region.ranks.includes(rank)));
-    const familyCompletion = completeSemanticFamily(
-      prepared,
+    const familyPolygons = regionInstances.map((r) => ({
+      view: VIEW_NAMES.indexOf(r.view),
+      ranks: r.ranks,
+      purity: r.purity,
+      pixels: r.pixels,
+      support: r.support,
+    }));
+    const directFamily = directSemanticFamily(
       part,
-      ranks,
-      scores,
-      regionInstances.map((r) => ({
-        view: VIEW_NAMES.indexOf(r.view),
-        ranks: r.ranks,
-        purity: r.purity,
-        pixels: r.pixels,
-        support: r.support,
-      })),
-      getSignatures,
+      scores.filter((score) => (facts[score.rank]?.areaShare ?? 1) < 0.995),
+      familyPolygons,
       checkpoint,
+      () => {
+        if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
+          throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+      },
     );
-    if (familyCompletion) ranks = [...familyCompletion.ranks];
+    const familyCompletion =
+      directFamily.state === 'COMPLETE'
+        ? undefined
+        : completeSemanticFamily(
+            prepared,
+            part,
+            ranks,
+            scores,
+            familyPolygons,
+            getSignatures,
+            checkpoint,
+          );
+    if (directFamily.state === 'COMPLETE') ranks = [...directFamily.ranks];
+    else if (familyCompletion) ranks = [...familyCompletion.ranks];
     // References are optional priors. Only local source evidence can admit a rank;
     // unavailable or contradictory provider IDs never enter the resulting group.
     const hitTotals = hits.map((h) => h.reduce((a, b) => a + b, 0));
@@ -824,7 +842,9 @@ export function decomposeSemantic(
               values = visible
                 .map((i) => score.viewCoverage[i] ?? -1)
                 .filter((v) =>
-                  familyCompletion?.ranks.length ? v >= SEMANTIC_WORK_LIMITS.coverage : v >= 0,
+                  familyCompletion?.ranks.length || directFamily.state === 'COMPLETE'
+                    ? v >= SEMANTIC_WORK_LIMITS.coverage
+                    : v >= 0,
                 );
             if (values.length) return values.reduce((a, b) => a + b, 0) / values.length;
             // A positive view can be analytically occluded at low resolution. A complete proven
@@ -838,6 +858,7 @@ export function decomposeSemantic(
       ranks.every(
         (rank) =>
           Boolean(familyCompletion?.ranks.length) ||
+          directFamily.state === 'COMPLETE' ||
           (visibility.find((v) => v.rank === rank)?.observableViews ?? []).every(
             (vi) =>
               (scores.find((s) => s.rank === rank)?.viewCoverage[vi] ?? 0) >=
@@ -860,9 +881,12 @@ export function decomposeSemantic(
       quality = 'READY';
       operation = SuggestionOperation.Component;
       geometryConfidence = componentConfidence;
-      reason = familyCompletion?.ranks.length
-        ? familyCompletion.reason
-        : 'Independent source components supported in multiple visible views';
+      reason =
+        directFamily.state === 'COMPLETE'
+          ? 'Independent semantic instance footprints define exact family source membership'
+          : familyCompletion?.ranks.length
+            ? familyCompletion.reason
+            : 'Independent source components supported in multiple visible views';
     } else if (
       planeSemanticConfidence >= SEMANTIC_WORK_LIMITS.semanticConfidence &&
       supportedPlane &&
@@ -883,7 +907,9 @@ export function decomposeSemantic(
     }
     const groups =
       operation === SuggestionOperation.Component && part.instances > 1
-        ? instanceGroups(ranks, part.instances, facts, checkpoint)
+        ? directFamily.state === 'COMPLETE'
+          ? ranks.map((rank) => [rank])
+          : instanceGroups(ranks, part.instances, facts, checkpoint)
         : undefined;
     if (operation === SuggestionOperation.Component && part.instances > 1 && !groups) {
       operation = SuggestionOperation.None;
@@ -971,6 +997,7 @@ export function decomposeSemantic(
             : Math.min(part.confidence, geometryConfidence),
       },
       ...(familyCompletion ? { familyCompletion } : {}),
+      ...(directFamily.evaluated ? { directFamily } : {}),
       viewEvidence: scores.map((score) => ({
         rank: score.rank,
         views: VIEW_NAMES.map((view, vi) => {
@@ -1000,6 +1027,44 @@ export function decomposeSemantic(
       planePurity: purity,
       reason,
     });
+    if (operation === SuggestionOperation.None && directFamily.state === 'PARTIAL') {
+      let depth = 1,
+        parent = part.parentId;
+      while (parent !== null) {
+        depth++;
+        parent = partById.get(parent)?.parentId ?? null;
+      }
+      if (depth < SEMANTIC_LIMITS.depth) {
+        partialFamilies.set(part.id, directFamily.ranks);
+        suggestions[suggestions.length - 1] = {
+          ...s,
+          label: `${s.label.slice(0, 50)} (${String(directFamily.ranks.length)} parts found)`,
+        };
+        for (const [i, rank] of directFamily.ranks.entries()) {
+          checkpoint();
+          const coverage =
+            scores
+              .find((score) => score.rank === rank)
+              ?.viewCoverage.filter((v) => v >= SEMANTIC_WORK_LIMITS.coverage) ?? [];
+          suggestions.push({
+            id: `${s.id}:instance-${String(i + 1)}`,
+            family: 'semantic',
+            label: `${s.label.slice(0, 60)} ${String(i + 1)}`,
+            parentId: s.id,
+            importance: 'detail',
+            operation: SuggestionOperation.Component,
+            status: SuggestionStatus.Suggested,
+            reason: SuggestionReason.Clear,
+            quality: 'READY',
+            plane: null,
+            components: [rank],
+            semanticConfidence,
+            geometryConfidence: coverage.reduce((n, v) => n + v, 0) / coverage.length,
+            instanceCount: 1,
+          });
+        }
+      }
+    }
     if (operation === SuggestionOperation.Component && part.instances > 1) {
       if (groups) {
         const instances = groups.map((group) => {
@@ -1087,10 +1152,16 @@ export function decomposeSemantic(
     checkpoint,
     chargeOwnership,
   );
+  const ownershipSuggestions = suggestions.map((s) => {
+    const components = partialFamilies.get(s.id);
+    return components
+      ? { ...s, operation: SuggestionOperation.Component, quality: 'READY' as const, components }
+      : s;
+  });
   const extents = componentSemanticExtents(
     prepared,
     answer,
-    suggestions,
+    ownershipSuggestions,
     ownershipSupport,
     checkpoint,
     chargeOwnership,
@@ -1317,6 +1388,21 @@ export function decomposeSemantic(
       refinementTriangleVisits: refinement.triangleVisits,
       regionPixels: work,
       scoredFaces: faceWork,
+      directFamilyMembersEvaluated: evidence.reduce(
+        (n, e) => n + (e.directFamily?.evaluated ?? 0),
+        0,
+      ),
+      directFamilyMembersProven: evidence.reduce(
+        (n, e) => n + (e.directFamily?.ranks.length ?? 0),
+        0,
+      ),
+      directFamilyWork: evidence.reduce((n, e) => n + (e.directFamily?.workUnits ?? 0), 0),
+      directFamilyComparisons: evidence.reduce((n, e) => n + (e.directFamily?.comparisons ?? 0), 0),
+      directFamilyTypedScratchBytes: 0,
+      directFamilyMilliseconds: evidence.reduce(
+        (n, e) => n + (e.directFamily?.milliseconds ?? 0),
+        0,
+      ),
       familyCandidatesConsidered: evidence.reduce(
         (n, e) => n + (e.familyCompletion?.candidatesConsidered ?? 0),
         0,
