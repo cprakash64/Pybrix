@@ -908,7 +908,8 @@ export function decomposeSemantic(
     const groups =
       operation === SuggestionOperation.Component && part.instances > 1
         ? directFamily.state === 'COMPLETE'
-          ? ranks.map((rank) => [rank])
+          ? (instanceGroups(ranks, part.instances, facts, checkpoint) ??
+            ranks.map((rank) => [rank]))
           : instanceGroups(ranks, part.instances, facts, checkpoint)
         : undefined;
     if (operation === SuggestionOperation.Component && part.instances > 1 && !groups) {
