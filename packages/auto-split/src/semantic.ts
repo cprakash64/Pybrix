@@ -1,3 +1,4 @@
+import { componentSemanticExtents, type SemanticExtent } from './semantic-extent';
 import {
   completeSemanticFamily,
   familySignatures,
@@ -345,6 +346,7 @@ export function pointInSemanticPolygon(x: number, y: number, p: readonly ImagePo
   return inside;
 }
 export interface SemanticEvidence {
+  readonly semanticExtent?: SemanticExtent;
   readonly id: string;
   readonly components: readonly {
     readonly rank: number;
@@ -513,6 +515,7 @@ export function decomposeSemantic(
     }
     return signatures;
   };
+  const ownershipSupport = rasters.map((r) => new Uint32Array(r.face.length));
   const localPlanes = new Map<string, LocalPlaneProposal>();
   for (const part of answer.parts) {
     checkpoint();
@@ -554,6 +557,7 @@ export function decomposeSemantic(
     }
     const part = refined ? { ...observedPart, cut: refined.cut } : observedPart;
     checkpoint();
+    const partBit = 1 << answer.parts.findIndex((p) => p.id === part.id);
     const mask = new Uint8Array(geometry.faceCount);
     const hits: Uint32Array[] = VIEW_NAMES.map(() => new Uint32Array(labelling.count));
     const mentioned = new Set(part.views.map((v) => v.view));
@@ -581,6 +585,9 @@ export function decomposeSemantic(
               continue;
             const rank = labelling.faceRank[f] ?? -1;
             required(hits[vi], 'hits[vi]')[rank] = (required(hits[vi], 'hits[vi]')[rank] ?? 0) + 1;
+            const pixel = y * size + x;
+            const owners = required(ownershipSupport[vi], 'ownership support');
+            owners[pixel] = (owners[pixel] ?? 0) | partBit;
             polygonHits[rank] = (polygonHits[rank] ?? 0) + 1;
             mask[f] = (mask[f] ?? 0) | (1 << vi);
           }
@@ -1017,7 +1024,26 @@ export function decomposeSemantic(
     }
     return false;
   };
-  const refused = new Set<string>();
+  let ownershipWork = 0;
+  const ownershipStart = Date.now();
+  const extents = componentSemanticExtents(
+    prepared,
+    answer,
+    suggestions,
+    ownershipSupport,
+    checkpoint,
+    () => {
+      ownershipWork++;
+      if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
+        throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+    },
+  );
+  const ownershipMilliseconds = Date.now() - ownershipStart;
+  const extentRefused = new Set([...extents].filter(([, e]) => !e.admitted).map(([id]) => id));
+  for (const s of suggestions)
+    if (!partById.has(s.id) && s.parentId && extentRefused.has(s.parentId)) extentRefused.add(s.id);
+  const ambiguousEvidence = new Set<string>();
+  const refused = new Set<string>(extentRefused);
   for (let i = 0; i < answer.parts.length; i++)
     for (let j = i + 1; j < answer.parts.length; j++) {
       const a = defined(answer.parts[i]),
@@ -1029,6 +1055,8 @@ export function decomposeSemantic(
       ) {
         refused.add(a.id);
         refused.add(b.id);
+        ambiguousEvidence.add(a.id);
+        ambiguousEvidence.add(b.id);
       }
     }
   for (let i = 0; i < suggestions.length; i++)
@@ -1038,6 +1066,8 @@ export function decomposeSemantic(
       if (
         a.operation === SuggestionOperation.Component &&
         b.operation === SuggestionOperation.Component &&
+        !extentRefused.has(a.id) &&
+        !extentRefused.has(b.id) &&
         !ancestor(a, b) &&
         !ancestor(b, a) &&
         a.components.some((r) => b.components.includes(r))
@@ -1111,7 +1141,12 @@ export function decomposeSemantic(
   for (const e of evidence)
     if (refused.has(e.id)) {
       const index = evidence.indexOf(e);
-      evidence[index] = { ...e, reason: 'Overlapping sibling source membership refused' };
+      evidence[index] = {
+        ...e,
+        reason: extentRefused.has(e.id)
+          ? 'Semantic part extent could not be isolated reliably'
+          : 'Overlapping sibling source membership refused',
+      };
     }
   const resolved = suggestions.map((s) =>
     refused.has(s.id)
@@ -1119,7 +1154,13 @@ export function decomposeSemantic(
           ...s,
           operation: SuggestionOperation.None,
           status: SuggestionStatus.Unavailable,
-          quality: 'UNSAFE' as const,
+          quality:
+            extentRefused.has(s.id) && !ambiguousEvidence.has(s.id)
+              ? ('RECOGNIZED_NOT_SEPARABLE' as const)
+              : ('UNSAFE' as const),
+          ...(extentRefused.has(s.id) && !ambiguousEvidence.has(s.id)
+            ? { diagnostic: 'MAPPING_UNCERTAIN' as const }
+            : {}),
           plane: null,
           components: [],
           geometryConfidence: 0,
@@ -1164,6 +1205,9 @@ export function decomposeSemantic(
       return e.confidence
         ? {
             ...e,
+            ...(extents.has(e.id)
+              ? { semanticExtent: required(extents.get(e.id), 'semantic extent') }
+              : {}),
             confidence: {
               ...e.confidence,
               realizationConfidence:
@@ -1195,6 +1239,16 @@ export function decomposeSemantic(
       ),
       familySignatureFaces: signatures?.facesVisited ?? 0,
       familySignatureBytes: signatures?.bytes ?? 0,
+      semanticOwnershipWork: ownershipWork,
+      semanticOwnershipMilliseconds: ownershipMilliseconds,
+      semanticOwnershipScratchUpperBoundBytes:
+        ownershipSupport.reduce((n, b) => n + b.byteLength, 0) +
+        rasters.length *
+          prepared.metadata.components.length *
+          (1 + answer.parts.length + (answer.parts.length * (answer.parts.length - 1)) / 2) *
+          4 +
+        rasters.length * answer.parts.length * 4 +
+        answer.parts.length,
       siblingMembershipFaces: planes.length > 0 ? geometry.faceCount : 0,
     },
   };
