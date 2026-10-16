@@ -1,3 +1,4 @@
+import { qualifyFamilyIdentity, familyIdentityTimings } from './semantic-family-identity';
 import {
   qualifyPartialFamilyMembership,
   type PartialFamilyMembership,
@@ -1139,11 +1140,25 @@ export function decomposeSemantic(
       }
     }
   }
+  // Collect the unchanged negative-ownership claims before membership scoping, so a
+  // candidate cannot use its own post-membership family reservation as corroboration.
+  const identityClaims =
+    partialFamilies.size > 0 && [...partialFamilies.values()].some((ranks) => ranks.length <= 2)
+      ? buildSemanticReservations(
+          prepared,
+          answer,
+          evidence,
+          getSignatures,
+          checkpoint,
+          planeContext.charge,
+          false,
+        )
+      : undefined;
   // Physical mapping is complete; qualify membership before creating any partial child.
   for (const [id, physicalRanks] of [...partialFamilies]) {
     checkpoint();
     const part = required(partById.get(id), 'partial family');
-    const membership = qualifyPartialFamilyMembership(
+    let membership = qualifyPartialFamilyMembership(
       prepared,
       part,
       physicalRanks,
@@ -1153,6 +1168,27 @@ export function decomposeSemantic(
       checkpoint,
       planeContext.charge,
     );
+    if (physicalRanks.length <= 2) {
+      const identity = qualifyFamilyIdentity(
+        prepared,
+        part,
+        required(
+          evidence.find((e) => e.id === id),
+          'identity evidence',
+        ),
+        membership,
+        identityClaims?.reservations ?? [],
+        getSignatures,
+        checkpoint,
+        planeContext.charge,
+      );
+      membership = {
+        ...membership,
+        identity,
+        qualifiedRanks: identity.qualifiedRanks,
+        rejectedRanks: physicalRanks.filter((rank) => !identity.qualifiedRanks.includes(rank)),
+      };
+    }
     const ei = evidence.findIndex((e) => e.id === id);
     evidence[ei] = {
       ...required(evidence[ei], 'partial evidence'),
@@ -1526,7 +1562,8 @@ export function decomposeSemantic(
       semanticPlaneOwnershipRankingComparisons: planeOwnership.rankingComparisons,
       semanticReservationParts: reservation.reservations.length,
       semanticReservedComponents: reservation.components,
-      semanticReservationWork: reservation.workUnits,
+      ...familyIdentityTimings(evidence, identityClaims),
+      semanticReservationWork: reservation.workUnits + (identityClaims?.workUnits ?? 0),
       semanticReservationTypedScratchBytes: reservation.scratchBytes,
       semanticReservationMilliseconds: reservation.milliseconds,
       semanticOwnershipWork: ownershipWork,

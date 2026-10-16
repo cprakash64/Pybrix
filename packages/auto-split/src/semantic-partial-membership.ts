@@ -1,3 +1,4 @@
+import type { FamilyIdentityEvidence } from './semantic-family-identity';
 import type { Vec3, SemanticPart } from '@cadfixer/auto-split-contract';
 import type { PreparedSemanticGeometry, SemanticEvidence } from './semantic';
 import type { FamilySignatures } from './semantic-family';
@@ -15,6 +16,7 @@ export const PARTIAL_MEMBERSHIP_LIMITS = Object.freeze({
   reflectionResidual: 0.03,
 });
 export interface PartialFamilyMembership {
+  readonly identity?: FamilyIdentityEvidence;
   readonly physicalRanks: readonly number[];
   readonly qualifiedRanks: readonly number[];
   readonly rejectedRanks: readonly number[];
@@ -249,7 +251,8 @@ export function qualifyPartialFamilyMembership(
     if (reflected && gap > 1e-6) return finish(ranks, 'REFLECTED_PARTIAL_PATTERN');
     return finish([], 'AMBIGUOUS_PARTIAL_MEMBERSHIP');
   }
-  if (!normal) return finish(ranks, 'UNCONTRADICTED_DIRECT_PHYSICAL_MEMBERS');
+  if (!normal)
+    return finish(ranks, 'UNCONTRADICTED_DIRECT_PHYSICAL_MEMBERS', reference?.rank ?? null);
   return finish([], 'CONTRADICTORY_SUPPORT_RELATION');
 }
 export function matchesPartialFamilySupport(
@@ -257,6 +260,7 @@ export function matchesPartialFamilySupport(
   membership: PartialFamilyMembership,
   rank: number,
 ): boolean {
+  if (membership.identity) return membership.identity.familyRanks.includes(rank);
   if (membership.support) {
     const s = membership.support,
       c = p.facts[rank]?.centroid;

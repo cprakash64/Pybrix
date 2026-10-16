@@ -21,6 +21,7 @@ export function buildSemanticReservations(
   signatures: () => FamilySignatures,
   checkpoint: Checkpoint,
   charge: () => void,
+  applyMembership = true,
 ): {
   readonly reservations: readonly SemanticReservation[];
   readonly components: number;
@@ -131,6 +132,7 @@ export function buildSemanticReservations(
       }
       reservations.push({
         id: part.id,
+        scope: scope === 'REPEATED_FAMILY' ? 'QUALIFIED_FAMILY' : 'PHYSICAL_PART',
         components,
         multiViewComponents: multiView,
         corroboratedComponents: corroborated,
@@ -174,40 +176,42 @@ export function buildSemanticReservations(
     })
     .filter((reservation) => reservation.components.length > 0);
   // Preserve physical negative ownership even when the repeated-family relationship fails.
-  const scoped = localized.flatMap((reservation): SemanticReservation[] => {
-    const membership = evidence.find((e) => e.id === reservation.id)?.partialFamilyMembership;
-    if (!membership) return [reservation];
-    const family = reservation.components.filter((rank) => {
-      work();
-      return matchesPartialFamilySupport(p, membership, rank);
-    });
-    const physical = reservation.components.filter((rank) => !family.includes(rank));
-    return [
-      ...(family.length
-        ? [
-            {
-              ...reservation,
-              scope: 'QUALIFIED_FAMILY' as const,
-              components: family,
-              multiViewComponents: reservation.multiViewComponents.filter((rank) =>
-                family.includes(rank),
-              ),
-              corroboratedComponents: reservation.corroboratedComponents.filter((rank) =>
-                family.includes(rank),
-              ),
-            },
-          ]
-        : []),
-      ...physical.map((rank) => ({
-        id: `${reservation.id}:physical-${String(rank)}`,
-        ownerId: reservation.id,
-        scope: 'PHYSICAL_PART' as const,
-        components: [rank],
-        multiViewComponents: reservation.multiViewComponents.includes(rank) ? [rank] : [],
-        corroboratedComponents: reservation.corroboratedComponents.includes(rank) ? [rank] : [],
-      })),
-    ];
-  });
+  const scoped = !applyMembership
+    ? localized
+    : localized.flatMap((reservation): SemanticReservation[] => {
+        const membership = evidence.find((e) => e.id === reservation.id)?.partialFamilyMembership;
+        if (!membership) return [reservation];
+        const family = reservation.components.filter((rank) => {
+          work();
+          return matchesPartialFamilySupport(p, membership, rank);
+        });
+        const physical = reservation.components.filter((rank) => !family.includes(rank));
+        return [
+          ...(family.length
+            ? [
+                {
+                  ...reservation,
+                  scope: 'QUALIFIED_FAMILY' as const,
+                  components: family,
+                  multiViewComponents: reservation.multiViewComponents.filter((rank) =>
+                    family.includes(rank),
+                  ),
+                  corroboratedComponents: reservation.corroboratedComponents.filter((rank) =>
+                    family.includes(rank),
+                  ),
+                },
+              ]
+            : []),
+          ...physical.map((rank) => ({
+            id: `${reservation.id}:physical-${String(rank)}`,
+            ownerId: reservation.id,
+            scope: 'PHYSICAL_PART' as const,
+            components: [rank],
+            multiViewComponents: reservation.multiViewComponents.includes(rank) ? [rank] : [],
+            corroboratedComponents: reservation.corroboratedComponents.includes(rank) ? [rank] : [],
+          })),
+        ];
+      });
   owned.fill(0);
   for (const reservation of scoped)
     for (const rank of reservation.components) {
