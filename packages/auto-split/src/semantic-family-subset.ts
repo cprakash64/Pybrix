@@ -43,7 +43,7 @@ export function resolveSemanticFamilySubset(
     part.instances < 3 ||
     part.confidence < FAMILY_SUBSET_LIMITS.confidence ||
     part.expectedGeometry.kind !== 'repeated_part' ||
-    anchors.length < 2 ||
+    anchors.length < FAMILY_SUBSET_LIMITS.minimumAnchors ||
     anchors.length >= part.instances
   )
     return undefined;
@@ -85,7 +85,7 @@ export function resolveSemanticFamilySubset(
   });
   if (
     members.length <= part.instances ||
-    members.length > part.instances + 2 ||
+    members.length > part.instances + FAMILY_SUBSET_LIMITS.maximumExcess ||
     !anchors.every((r) => members.some((s) => s.rank === r))
   )
     return refuse('No bounded oversized anchored class');
@@ -105,8 +105,12 @@ export function resolveSemanticFamilySubset(
           ? poly.purity
           : 0;
   if (
-    new Set(polygons.filter((poly) => purity(poly) >= 0.9).map((poly) => poly.view)).size < 2 ||
-    polygons.some((poly) => purity(poly) < 0.9)
+    new Set(
+      polygons
+        .filter((poly) => purity(poly) >= FAMILY_SUBSET_LIMITS.purity)
+        .map((poly) => poly.view),
+    ).size < 2 ||
+    polygons.some((poly) => purity(poly) < FAMILY_SUBSET_LIMITS.purity)
   )
     return refuse('Missing or body-overlapping family region');
   // Existing positive contradictory annotations and duplicate semantic instances remain refusals.
@@ -126,9 +130,27 @@ export function resolveSemanticFamilySubset(
     )
   )
     return refuse('Contradictory or duplicate semantic anchor');
+  // One-view isolated observations are weaker than direct executable anchors, but
+  // remain positive membership claims. Never discard one to improve spatial fit.
+  const mandatory = ranks.filter(
+    (rank) =>
+      anchors.includes(rank) ||
+      scores.some(
+        (score) =>
+          score.rank === rank &&
+          score.strongViews > 0 &&
+          polygons.some(
+            (poly) =>
+              poly.ranks.length === 1 &&
+              poly.ranks[0] === rank &&
+              poly.purity >= FAMILY_SUBSET_LIMITS.purity,
+          ),
+      ),
+  );
+  if (mandatory.length > part.instances) return refuse('More observed members than declared count');
   const choices: number[][] = [],
-    optional = ranks.filter((r) => !anchors.includes(r)),
-    need = part.instances - anchors.length;
+    optional = ranks.filter((r) => !mandatory.includes(r)),
+    need = part.instances - mandatory.length;
   let combinations = 1;
   for (let i = 1; i <= need; i++) {
     work();
@@ -139,7 +161,7 @@ export function resolveSemanticFamilySubset(
   const enumerate = (from: number, chosen: number[]): void => {
     work();
     if (chosen.length === need) {
-      choices.push([...anchors, ...chosen].sort((a, b) => a - b));
+      choices.push([...mandatory, ...chosen].sort((a, b) => a - b));
       return;
     }
     for (let i = from; i < optional.length; i++) {
@@ -223,12 +245,18 @@ export function resolveSemanticFamilySubset(
       const positiveExclusion = excluded.every(
         (m) =>
           planeDistance(required(p.facts[m.rank], 'outlier center').centroid) >
-          Math.max(gap * 0.15, m.diagonal * 0.25),
+          Math.max(
+            gap * FAMILY_SUBSET_LIMITS.outlierGapRatio,
+            m.diagonal * FAMILY_SUBSET_LIMITS.outlierDiagonalRatio,
+          ),
       );
       return {
         selected,
         loss: planar + symmetry,
-        valid: planar <= 0.03 && symmetry <= 0.03 && positiveExclusion,
+        valid:
+          planar <= FAMILY_SUBSET_LIMITS.spatialResidual &&
+          symmetry <= FAMILY_SUBSET_LIMITS.spatialResidual &&
+          positiveExclusion,
       };
     })
     .sort((a, b) => a.loss - b.loss);

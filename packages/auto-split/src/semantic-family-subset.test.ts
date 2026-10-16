@@ -170,3 +170,16 @@ it('refuses combinatorial classes before evaluating more than64 subsets', () => 
     reason: 'Subset enumeration ceiling',
   });
 });
+
+it('never drops a positive single-view semantic instance to improve the spatial pattern', () => {
+  const f = fixture();
+  f.polygons.push({
+    view: 2,
+    ranks: [4],
+    purity: 1,
+    pixels: 100,
+    support: [{ rank: 4, pixels: 100 }],
+  });
+  f.scores[4] = { rank: 4, strongViews: 1, viewCoverage: [-1, -1, 1, -1, -1, -1] };
+  expect(run(f)?.ranks).toEqual([]);
+});
