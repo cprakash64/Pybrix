@@ -1,3 +1,4 @@
+import { matchesPartialFamilySupport } from './semantic-partial-membership';
 import { VIEW_NAMES, type SemanticHierarchy } from '@cadfixer/auto-split-contract';
 import type { PreparedSemanticGeometry, SemanticEvidence } from './semantic';
 import { semanticRoleScope } from './semantic-extent';
@@ -7,6 +8,8 @@ import type { Checkpoint } from './checkpoint';
 /** Negative ownership only. These records never create source pieces or executable candidates. */
 export interface SemanticReservation {
   readonly id: string;
+  readonly ownerId?: string;
+  readonly scope?: 'PHYSICAL_PART' | 'QUALIFIED_FAMILY';
   readonly components: readonly number[];
   readonly multiViewComponents: readonly number[];
   readonly corroboratedComponents: readonly number[];
@@ -170,15 +173,50 @@ export function buildSemanticReservations(
       };
     })
     .filter((reservation) => reservation.components.length > 0);
+  // Preserve physical negative ownership even when the repeated-family relationship fails.
+  const scoped = localized.flatMap((reservation): SemanticReservation[] => {
+    const membership = evidence.find((e) => e.id === reservation.id)?.partialFamilyMembership;
+    if (!membership) return [reservation];
+    const family = reservation.components.filter((rank) => {
+      work();
+      return matchesPartialFamilySupport(p, membership, rank);
+    });
+    const physical = reservation.components.filter((rank) => !family.includes(rank));
+    return [
+      ...(family.length
+        ? [
+            {
+              ...reservation,
+              scope: 'QUALIFIED_FAMILY' as const,
+              components: family,
+              multiViewComponents: reservation.multiViewComponents.filter((rank) =>
+                family.includes(rank),
+              ),
+              corroboratedComponents: reservation.corroboratedComponents.filter((rank) =>
+                family.includes(rank),
+              ),
+            },
+          ]
+        : []),
+      ...physical.map((rank) => ({
+        id: `${reservation.id}:physical-${String(rank)}`,
+        ownerId: reservation.id,
+        scope: 'PHYSICAL_PART' as const,
+        components: [rank],
+        multiViewComponents: reservation.multiViewComponents.includes(rank) ? [rank] : [],
+        corroboratedComponents: reservation.corroboratedComponents.includes(rank) ? [rank] : [],
+      })),
+    ];
+  });
   owned.fill(0);
-  for (const reservation of localized)
+  for (const reservation of scoped)
     for (const rank of reservation.components) {
       work();
       owned[rank] = 1;
     }
   checkpoint();
   return {
-    reservations: localized,
+    reservations: scoped,
     components: owned.reduce((n, bit) => n + bit, 0),
     scratchBytes: owned.byteLength,
     workUnits,

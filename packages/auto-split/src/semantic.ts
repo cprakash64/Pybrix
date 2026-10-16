@@ -1,3 +1,7 @@
+import {
+  qualifyPartialFamilyMembership,
+  type PartialFamilyMembership,
+} from './semantic-partial-membership';
 import { resolveSemanticFamilySubset, type FamilySubset } from './semantic-family-subset';
 import { semanticDecompositionIntent, type SemanticDecompositionIntent } from './semantic-intent';
 import { directSemanticFamily, type DirectSemanticFamily } from './semantic-direct-family';
@@ -351,6 +355,7 @@ export function pointInSemanticPolygon(x: number, y: number, p: readonly ImagePo
   return inside;
 }
 export interface SemanticEvidence {
+  readonly partialFamilyMembership?: PartialFamilyMembership;
   readonly decompositionIntent?: SemanticDecompositionIntent;
   readonly semanticExtent?: SemanticExtent;
   readonly id: string;
@@ -1069,33 +1074,6 @@ export function decomposeSemantic(
       }
       if (depth < SEMANTIC_LIMITS.depth) {
         partialFamilies.set(part.id, directFamily.ranks);
-        suggestions[suggestions.length - 1] = {
-          ...s,
-          label: `${s.label.slice(0, 50)} (${String(directFamily.ranks.length)} parts found)`,
-        };
-        for (const [i, rank] of directFamily.ranks.entries()) {
-          checkpoint();
-          const coverage =
-            scores
-              .find((score) => score.rank === rank)
-              ?.viewCoverage.filter((v) => v >= SEMANTIC_WORK_LIMITS.coverage) ?? [];
-          suggestions.push({
-            id: `${s.id}:instance-${String(i + 1)}`,
-            family: 'semantic',
-            label: `${s.label.slice(0, 60)} ${String(i + 1)}`,
-            parentId: s.id,
-            importance: 'detail',
-            operation: SuggestionOperation.Component,
-            status: SuggestionStatus.Suggested,
-            reason: SuggestionReason.Clear,
-            quality: 'READY',
-            plane: null,
-            components: [rank],
-            semanticConfidence,
-            geometryConfidence: coverage.reduce((n, v) => n + v, 0) / coverage.length,
-            instanceCount: 1,
-          });
-        }
       }
     }
     if (operation === SuggestionOperation.Component && part.instances > 1) {
@@ -1159,6 +1137,59 @@ export function decomposeSemantic(
               instanceCount: 1,
             });
       }
+    }
+  }
+  // Physical mapping is complete; qualify membership before creating any partial child.
+  for (const [id, physicalRanks] of [...partialFamilies]) {
+    checkpoint();
+    const part = required(partById.get(id), 'partial family');
+    const membership = qualifyPartialFamilyMembership(
+      prepared,
+      part,
+      physicalRanks,
+      answer.parts,
+      evidence,
+      getSignatures,
+      checkpoint,
+      planeContext.charge,
+    );
+    const ei = evidence.findIndex((e) => e.id === id);
+    evidence[ei] = {
+      ...required(evidence[ei], 'partial evidence'),
+      partialFamilyMembership: membership,
+    };
+    const si = suggestions.findIndex((s) => s.id === id),
+      root = required(suggestions[si], 'partial root');
+    partialFamilies.delete(id);
+    if (!membership.qualifiedRanks.length) continue;
+    partialFamilies.set(id, membership.qualifiedRanks);
+    suggestions[si] = {
+      ...root,
+      label: `${root.label.slice(0, 50)} (${String(membership.qualifiedRanks.length)} parts found)`,
+    };
+    for (const rank of membership.qualifiedRanks) {
+      checkpoint();
+      const i = physicalRanks.indexOf(rank),
+        coverage =
+          required(evidence[ei], 'partial evidence')
+            .components.find((s) => s.rank === rank)
+            ?.viewCoverage.filter((v) => v >= SEMANTIC_WORK_LIMITS.coverage) ?? [];
+      suggestions.push({
+        id: `${id}:instance-${String(i + 1)}`,
+        family: 'semantic',
+        label: `${root.label.slice(0, 60)} ${String(i + 1)}`,
+        parentId: id,
+        importance: 'detail',
+        operation: SuggestionOperation.Component,
+        status: SuggestionStatus.Suggested,
+        reason: SuggestionReason.Clear,
+        quality: 'READY',
+        plane: null,
+        components: [rank],
+        semanticConfidence: part.confidence,
+        geometryConfidence: coverage.reduce((n, v) => n + v, 0) / coverage.length,
+        instanceCount: 1,
+      });
     }
   }
   const suggestionById = new Map(suggestions.map((s) => [s.id, s]));
@@ -1426,6 +1457,31 @@ export function decomposeSemantic(
       familySubsetWork: evidence.reduce((n, e) => n + (e.familySubset?.workUnits ?? 0), 0),
       familySubsetMilliseconds: evidence.reduce((n, e) => n + (e.familySubset?.workerMs ?? 0), 0),
       familySubsetTypedScratchBytes: 0,
+      partialMembershipDirectMembers: evidence.reduce(
+        (n, e) => n + (e.partialFamilyMembership?.physicalRanks.length ?? 0),
+        0,
+      ),
+      partialMembershipSubsets: evidence.reduce(
+        (n, e) => n + (e.partialFamilyMembership?.subsets ?? 0),
+        0,
+      ),
+      partialMembershipOutliers: evidence.reduce(
+        (n, e) => n + (e.partialFamilyMembership?.rejectedRanks.length ?? 0),
+        0,
+      ),
+      partialMembershipComparisons: evidence.reduce(
+        (n, e) => n + (e.partialFamilyMembership?.comparisons ?? 0),
+        0,
+      ),
+      partialMembershipWork: evidence.reduce(
+        (n, e) => n + (e.partialFamilyMembership?.workUnits ?? 0),
+        0,
+      ),
+      partialMembershipTypedScratchBytes: 0,
+      partialMembershipMilliseconds: evidence.reduce(
+        (n, e) => n + (e.partialFamilyMembership?.milliseconds ?? 0),
+        0,
+      ),
       semanticIntentWork: evidence.reduce((n, e) => n + (e.decompositionIntent?.workUnits ?? 0), 0),
       semanticIntentTypedScratchBytes: 0,
       directFamilyMembersEvaluated: evidence.reduce(

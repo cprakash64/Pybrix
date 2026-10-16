@@ -223,7 +223,9 @@ export function componentSemanticExtents(
     for (const reservation of reservations) {
       checkpoint();
       charge();
-      const owner = answer.parts.find((part) => part.id === reservation.id);
+      const owner = answer.parts.find(
+        (part) => part.id === (reservation.ownerId ?? reservation.id),
+      );
       if (!owner || owner.id === target.id || descendant(answer, owner.id, target)) continue;
       const reserved = reservation.components.filter((rank) => {
         charge();
