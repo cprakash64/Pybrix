@@ -1,3 +1,5 @@
+import { resolveSemanticFamilySubset, type FamilySubset } from './semantic-family-subset';
+import { semanticDecompositionIntent, type SemanticDecompositionIntent } from './semantic-intent';
 import { directSemanticFamily, type DirectSemanticFamily } from './semantic-direct-family';
 import { buildSemanticReservations, type SemanticReservation } from './semantic-reservation';
 import { componentSemanticExtents, type SemanticExtent } from './semantic-extent';
@@ -349,6 +351,7 @@ export function pointInSemanticPolygon(x: number, y: number, p: readonly ImagePo
   return inside;
 }
 export interface SemanticEvidence {
+  readonly decompositionIntent?: SemanticDecompositionIntent;
   readonly semanticExtent?: SemanticExtent;
   readonly id: string;
   readonly components: readonly {
@@ -372,6 +375,7 @@ export interface SemanticEvidence {
   };
   readonly familyCompletion?: FamilyCompletion;
   readonly directFamily?: DirectSemanticFamily;
+  readonly familySubset?: FamilySubset;
   readonly viewEvidence?: readonly {
     readonly rank: number;
     readonly views: readonly {
@@ -731,7 +735,7 @@ export function decomposeSemantic(
           throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
       },
     );
-    const familyCompletion =
+    const exactFamilyCompletion =
       directFamily.state === 'COMPLETE'
         ? undefined
         : completeSemanticFamily(
@@ -743,6 +747,20 @@ export function decomposeSemantic(
             getSignatures,
             checkpoint,
           );
+    const familySubset =
+      directFamily.state !== 'COMPLETE' && !exactFamilyCompletion?.ranks.length
+        ? resolveSemanticFamilySubset(
+            prepared,
+            part,
+            directFamily.ranks,
+            scores,
+            familyPolygons,
+            getSignatures,
+            checkpoint,
+            planeContext.charge,
+          )
+        : undefined;
+    const familyCompletion = familySubset?.ranks.length ? familySubset : exactFamilyCompletion;
     if (directFamily.state === 'COMPLETE') ranks = [...directFamily.ranks];
     else if (familyCompletion) ranks = [...familyCompletion.ranks];
     // References are optional priors. Only local source evidence can admit a rank;
@@ -778,6 +796,7 @@ export function decomposeSemantic(
     // Independent views validate a plane's visible selected halfspace. Occluded pixels never vote.
     // Different visible faces of a component can corroborate it; an axis-aligned face need not appear twice.
     const planeCoverage: number[] = [];
+    const targetSilhouetteShares: number[] = [];
     if (part.cut) {
       for (const region of part.views) {
         const vi = VIEW_NAMES.indexOf(region.view),
@@ -785,7 +804,8 @@ export function decomposeSemantic(
           camera = cameraFor(region.view),
           size = raster.size,
           scale = (size * FRAME_FILL) / (2 * geometry.radius);
-        let selectedPixels = 0,
+        let modelPixels = 0,
+          selectedPixels = 0,
           regionPixels = 0,
           agreed = 0;
         for (let i = 0; i < raster.face.length; i++) {
@@ -812,11 +832,13 @@ export function decomposeSemantic(
               p,
             ),
           );
+          modelPixels++;
           if (inside) regionPixels++;
           if (signed < 0) continue;
           selectedPixels++;
           if (inside) agreed++;
         }
+        if (modelPixels >= 8) targetSilhouetteShares.push(regionPixels / modelPixels);
         if (selectedPixels >= 8 && regionPixels >= 8)
           planeCoverage.push(Math.min(agreed / selectedPixels, agreed / regionPixels));
       }
@@ -867,7 +889,15 @@ export function decomposeSemantic(
       );
     // Geometric evidence is measured independently even when the semantic label is uncertain.
     const localPlane = localPlanes.get(part.id);
-    const supportedPlane = Boolean(localPlane);
+    const decompositionIntent = localPlane
+      ? semanticDecompositionIntent(
+          targetSilhouetteShares,
+          localPlane.capturedFraction,
+          localPlane.ownership.peers,
+          checkpoint,
+        )
+      : undefined;
+    const supportedPlane = Boolean(localPlane) && decompositionIntent?.admitted === true;
     let geometryConfidence =
       componentConfidence > 0 ? componentConfidence : (localPlane?.confidence ?? 0);
     if (semanticConfidence < SEMANTIC_WORK_LIMITS.semanticConfidence) {
@@ -988,6 +1018,7 @@ export function decomposeSemantic(
     suggestions.push(s);
     evidence.push({
       id: part.id,
+      ...(decompositionIntent ? { decompositionIntent } : {}),
       confidence: {
         objectConfidence: answer.object.confidence,
         partSemanticConfidence: part.confidence,
@@ -999,6 +1030,7 @@ export function decomposeSemantic(
       },
       ...(familyCompletion ? { familyCompletion } : {}),
       ...(directFamily.evaluated ? { directFamily } : {}),
+      ...(familySubset ? { familySubset } : {}),
       viewEvidence: scores.map((score) => ({
         rank: score.rank,
         views: VIEW_NAMES.map((view, vi) => {
@@ -1389,6 +1421,13 @@ export function decomposeSemantic(
       refinementTriangleVisits: refinement.triangleVisits,
       regionPixels: work,
       scoredFaces: faceWork,
+      familySubsetCount: evidence.reduce((n, e) => n + (e.familySubset?.subsets ?? 0), 0),
+      familySubsetComparisons: evidence.reduce((n, e) => n + (e.familySubset?.comparisons ?? 0), 0),
+      familySubsetWork: evidence.reduce((n, e) => n + (e.familySubset?.workUnits ?? 0), 0),
+      familySubsetMilliseconds: evidence.reduce((n, e) => n + (e.familySubset?.workerMs ?? 0), 0),
+      familySubsetTypedScratchBytes: 0,
+      semanticIntentWork: evidence.reduce((n, e) => n + (e.decompositionIntent?.workUnits ?? 0), 0),
+      semanticIntentTypedScratchBytes: 0,
       directFamilyMembersEvaluated: evidence.reduce(
         (n, e) => n + (e.directFamily?.evaluated ?? 0),
         0,

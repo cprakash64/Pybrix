@@ -643,3 +643,80 @@ it('automatic multi-part transactions export physical pairs and Undo restores th
   expect(after).toEqual(snapshots[2]);
   expect(splits.stats().candidateCount).toBe(0);
 });
+
+it('retains the exact wall/depth-proven automatic sites on an oblique cap', async () => {
+  const backend = await createManifoldBooleanBackend(binary),
+    source = cube(24);
+  for (let i = 0; i < source.positions.length; i += 3) {
+    const x = source.positions[i] ?? 0,
+      y = source.positions[i + 1] ?? 0;
+    source.positions[i] = x * Math.cos(0.23) - y * Math.sin(0.23);
+    source.positions[i + 1] = x * Math.sin(0.23) + y * Math.cos(0.23);
+    source.positions[i + 2] = (source.positions[i + 2] ?? 0) * 1.5;
+  }
+  const plane = { origin: [0, 0, -10] as const, normal: [0, 0, -1] as const };
+  const plain = await splitWithConnectors(
+    backend,
+    source,
+    { plane, connector: { kind: 'none' } },
+    uncancellable,
+  );
+  const { automaticPinPlan } =
+    await import('../../../../../packages/geometry-runtime/src/automatic-connectors');
+  const plan = automaticPinPlan(
+    plain.pieceA,
+    plain.pieceB,
+    plain.cutA,
+    plane.normal,
+    'millimeter',
+    1,
+    plain.metrics.tolerance,
+    uncancellable,
+  );
+  const result = await splitWithConnectors(
+    backend,
+    source,
+    { plane, connector: { kind: 'automatic', unit: 'millimeter' } },
+    uncancellable,
+  );
+  expect(plan).toBeDefined();
+  expect(result.automaticConnector).toBe('applied');
+  expect(result.placements).toEqual(plan?.centers);
+  expect(result.automaticConnectorDiagnostics).toMatchObject({
+    reason: 'AVAILABLE',
+    placementAttempts: 2,
+    scratchBytes: 0,
+  });
+  expect(result.automaticConnectorDiagnostics?.rayTriangleVisits).toBeLessThanOrEqual(8000000);
+});
+it('connector site search observes cancellation without returning a partial plan', async () => {
+  const backend = await createManifoldBooleanBackend(binary),
+    source = cube(30),
+    plane = { origin: [0, 0, 0] as const, normal: [0, 0, 1] as const };
+  const plain = await splitWithConnectors(
+    backend,
+    source,
+    { plane, connector: { kind: 'none' } },
+    uncancellable,
+  );
+  const { automaticPinPlan } =
+    await import('../../../../../packages/geometry-runtime/src/automatic-connectors');
+  let polls = 0;
+  expect(() =>
+    automaticPinPlan(
+      plain.pieceA,
+      plain.pieceB,
+      plain.cutA,
+      plane.normal,
+      'millimeter',
+      1,
+      plain.metrics.tolerance,
+      {
+        get isCancelled(): boolean {
+          return ++polls > 4;
+        },
+        onCancelled: (): (() => void) => (): void => undefined,
+      },
+    ),
+  ).toThrow();
+});

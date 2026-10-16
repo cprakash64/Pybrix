@@ -1,4 +1,4 @@
-import { automaticPinPlan } from './automatic-connectors';
+import { automaticPinPlan, type AutomaticConnectorDiagnostics } from './automatic-connectors';
 import { isLengthUnit } from '@cadfixer/shared';
 import {
   assertMeshStructure,
@@ -102,6 +102,7 @@ export interface SplitResult {
     readonly placements: readonly SplitVector[];
   };
   readonly automaticConnector?: 'applied' | 'unavailable';
+  readonly automaticConnectorDiagnostics?: Readonly<AutomaticConnectorDiagnostics>;
   readonly surfaceValidation?: {
     readonly sourceFaces: number;
     readonly untouchedFaces: number;
@@ -682,7 +683,9 @@ export async function splitWithConnectors(
   const capability = choosePlaneSplitStrategy(source, request.plane, cancellation);
   if (capability.strategy === 'unsupported') throw invalidState('This cut cannot be made safely.');
   if (request.connector.kind === 'automatic' && !isLengthUnit(request.connector.unit))
-    throw invalidState('A known unit is required for automatic connectors.');
+    throw invalidState('A known unit is required for automatic connectors.', {
+      code: 'UNKNOWN_UNITS',
+    });
   if (capability.strategy === 'open-surface') {
     if (request.connector.kind !== 'none' && request.connector.kind !== 'automatic')
       throw invalidState('Choose None for this split.', {
@@ -695,7 +698,17 @@ export async function splitWithConnectors(
       ...result,
       interface: { plane: request.plane, connectorEligible: false, placements: [] },
       ...(request.connector.kind === 'automatic'
-        ? { automaticConnector: 'unavailable' as const }
+        ? {
+            automaticConnector: 'unavailable' as const,
+            automaticConnectorDiagnostics: {
+              reason: 'UNSUPPORTED_INTERFACE' as const,
+              proposedSites: 0,
+              placementAttempts: 0,
+              rayTriangleVisits: 0,
+              milliseconds: 0,
+              scratchBytes: 0,
+            },
+          }
         : {}),
     };
   }
@@ -723,7 +736,17 @@ export async function splitWithConnectors(
     });
   const automatic = request.connector.kind === 'automatic';
   if (automatic && !isLengthUnit(request.connector.unit))
-    throw invalidState('A known unit is required for automatic connectors.');
+    throw invalidState('A known unit is required for automatic connectors.', {
+      code: 'UNKNOWN_UNITS',
+    });
+  const automaticDiagnostics: AutomaticConnectorDiagnostics = {
+    reason: 'NO_SAFE_SITE',
+    proposedSites: 0,
+    placementAttempts: 0,
+    rayTriangleVisits: 0,
+    milliseconds: 0,
+    scratchBytes: 0,
+  };
   const plan =
     request.connector.kind === 'automatic'
       ? automaticPinPlan(
@@ -735,6 +758,7 @@ export async function splitWithConnectors(
           physicalScale,
           tolerance,
           cancellation,
+          automaticDiagnostics,
         )
       : undefined;
   let c: SplitConnector =
@@ -751,12 +775,9 @@ export async function splitWithConnectors(
       dimension(c.depth, 'Pin depth');
       dimension(c.clearance, 'Pin clearance', true);
       const r = c.diameter / 2;
-      for (const center of connectorCenters(
-        cutA,
-        c.count,
-        r + c.clearance,
-        Math.max(tolerance * 8, r * 0.35),
-      )) {
+      for (const center of plan?.centers ??
+        connectorCenters(cutA, c.count, r + c.clearance, Math.max(tolerance * 8, r * 0.35))) {
+        if (automatic) automaticDiagnostics.placementAttempts++;
         throwIfCancelled(cancellation);
         if (plan) {
           const n = unit(request.plane.normal),
@@ -775,8 +796,10 @@ export async function splitWithConnectors(
             const inside = (
               await runValidatedBoolean(backend, 'intersection', piece, guard, cancellation)
             ).mesh;
-            if (meshVolume(inside) < meshVolume(guard) * (1 - 1e-4))
+            if (meshVolume(inside) < meshVolume(guard) * (1 - 1e-4)) {
+              automaticDiagnostics.reason = 'INSUFFICIENT_WALL';
               throw invalidState('Safe connector wall clearance could not be proven.');
+            }
           }
         }
         placements.push(center);
@@ -848,6 +871,7 @@ export async function splitWithConnectors(
   } catch (error) {
     throwIfCancelled(cancellation);
     if (!automatic) throw error;
+    if (automaticDiagnostics.reason === 'AVAILABLE') automaticDiagnostics.reason = 'NO_SAFE_SITE';
     pieceA = plainA;
     pieceB = plainB;
     c = { kind: 'none' };
@@ -871,7 +895,10 @@ export async function splitWithConnectors(
       bounds: defined(cutA.bounds),
     },
     ...(automatic
-      ? { automaticConnector: c.kind === 'none' ? ('unavailable' as const) : ('applied' as const) }
+      ? {
+          automaticConnector: c.kind === 'none' ? ('unavailable' as const) : ('applied' as const),
+          automaticConnectorDiagnostics: automaticDiagnostics,
+        }
       : {}),
     placements,
     metrics: {

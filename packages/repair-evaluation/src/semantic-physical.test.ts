@@ -32,7 +32,7 @@ describe('prospective attributed physical versus naming qualification', () => {
       semanticLabelMiss: true,
       physicalValid: true,
       namedValid: false,
-      attribution: 'UNIQUE_EXACT_SOURCE',
+      attribution: 'UNIQUE_PHYSICAL_SOURCE',
     });
   });
   it('an exact different physical scope is naming quality, not an invented CAD error', () => {
@@ -47,7 +47,7 @@ describe('prospective attributed physical versus naming qualification', () => {
       assessPhysicalOperations(roles, [op({ selected: [0, 1, 2] })])[0]?.physicalReadyError,
     ).toBe(true);
   });
-  it('does not rescue a small tabletop plus one large leg as the leg via approximate fallback', () => {
+  it('attributes high-overlap physical scope independently of a wrong semantic label', () => {
     const physical = [
       { concept: 'top', faces: [0, 1] },
       { concept: 'leg', faces: Array.from({ length: 20 }, (_, i) => i + 2) },
@@ -55,8 +55,8 @@ describe('prospective attributed physical versus naming qualification', () => {
     expect(
       assessPhysicalOperations(physical, [
         op({ semanticConcept: 'top', selected: Array.from({ length: 22 }, (_, i) => i) }),
-      ])[0]?.physicalReadyError,
-    ).toBe(true);
+      ])[0],
+    ).toMatchObject({ physicalReadyError: false, physicalConcept: 'leg', semanticLabelMiss: true });
   });
   it('native-invalid final plane READY has its own safety error', () => {
     expect(
@@ -212,5 +212,49 @@ it('flags duplicate raw singly named family members even with different semantic
     assessPhysicalOperations(roles, [a, { ...a, id: 'right' }]).every(
       (r) => r.familyMembershipError,
     ),
+  ).toBe(true);
+});
+
+it('two90/90 roles remain ambiguous even when wording matches one', () => {
+  const physical = [
+    { concept: 'A', faces: Array.from({ length: 100 }, (_, i) => i) },
+    { concept: 'B', faces: Array.from({ length: 100 }, (_, i) => i + 1) },
+  ];
+  expect(
+    assessPhysicalOperations(physical, [
+      op({ semanticConcept: 'A', selected: physical[0]?.faces ?? [] }),
+    ])[0],
+  ).toMatchObject({ attribution: 'AMBIGUOUS', physicalReadyError: true });
+});
+it('requires a three-point physical margin over a near-threshold runner-up', () => {
+  const a = Array.from({ length: 100 }, (_, i) => i),
+    b = Array.from({ length: 100 }, (_, i) => i + 2),
+    selected = Array.from({ length: 90 }, (_, i) => i);
+  expect(
+    assessPhysicalOperations(
+      [
+        { concept: 'A', faces: a },
+        { concept: 'B', faces: b },
+      ],
+      [op({ selected, semanticConcept: 'A' })],
+    )[0],
+  ).toMatchObject({ attribution: 'AMBIGUOUS', physicalReadyError: true });
+});
+it('a unique non-exact plane scope is physical even with no matching phrase', () => {
+  const faces = Array.from({ length: 100 }, (_, i) => i);
+  expect(
+    assessPhysicalOperations(
+      [{ concept: 'cap', faces }],
+      [op({ kind: 'plane', selected: faces.slice(0, 97), semanticConcept: null })],
+    )[0],
+  ).toMatchObject({ physicalValid: true, semanticLabelMiss: true, physicalConcept: 'cap' });
+});
+it('explicit frozen meaningful parts may exist in unfamiliar assemblies', () => {
+  expect(
+    assessPhysicalOperations(
+      [{ concept: 'plate', faces: [0, 1], executable: true }],
+      [op()],
+      true,
+    )[0]?.physicalValid,
   ).toBe(true);
 });

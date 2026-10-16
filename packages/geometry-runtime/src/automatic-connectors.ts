@@ -18,6 +18,21 @@ export const AUTOMATIC_CONNECTOR_LIMITS = Object.freeze({
   maximumDiameterMm: 6,
   clearanceMm: 0.2,
 });
+export type AutomaticConnectorReason =
+  | 'AVAILABLE'
+  | 'UNKNOWN_UNITS'
+  | 'INSUFFICIENT_CLEARANCE'
+  | 'INSUFFICIENT_WALL'
+  | 'UNSUPPORTED_INTERFACE'
+  | 'NO_SAFE_SITE';
+export interface AutomaticConnectorDiagnostics {
+  reason: AutomaticConnectorReason;
+  proposedSites: number;
+  placementAttempts: number;
+  rayTriangleVisits: number;
+  milliseconds: number;
+  scratchBytes: number;
+}
 type Pin = Extract<SplitConnector, { kind: 'pin' }>;
 function exitDistance(
   mesh: CanonicalMesh,
@@ -73,9 +88,30 @@ export function automaticPinPlan(
   scale: number,
   tolerance: number,
   cancellation: CancellationToken,
-): { connector: Pin; wall: number } | undefined {
-  if (!isLengthUnit(unit) || !Number.isFinite(scale) || scale <= 0 || cut.outlineTruncated)
+  diagnostics?: AutomaticConnectorDiagnostics,
+): { connector: Pin; wall: number; centers: readonly SplitVector[] } | undefined {
+  const started = Date.now(),
+    budget = { visits: 0 };
+  const record = (reason: AutomaticConnectorReason): void => {
+    if (diagnostics) {
+      diagnostics.reason = reason;
+      diagnostics.rayTriangleVisits = budget.visits;
+      diagnostics.milliseconds = Date.now() - started;
+    }
+  };
+  const refuse = (reason: AutomaticConnectorReason): undefined => {
+    record(reason);
     return undefined;
+  };
+  throwIfCancelled(cancellation);
+  if (!isLengthUnit(unit)) {
+    refuse('UNKNOWN_UNITS');
+    return;
+  }
+  if (!Number.isFinite(scale) || scale <= 0 || cut.outlineTruncated) {
+    refuse('UNSUPPORTED_INTERFACE');
+    return;
+  }
   const mm = millimetresPerUnit(unit) * scale,
     span = Math.min(cut.spanU, cut.spanV) * mm;
   const clearance = AUTOMATIC_CONNECTOR_LIMITS.clearanceMm / mm,
@@ -84,7 +120,10 @@ export function automaticPinPlan(
       span * 0.12,
       (cut.interiorCandidates[0]?.edgeDistance ?? cut.centerEdgeDistance) * mm * 0.8,
     );
-  if (diameterMm < AUTOMATIC_CONNECTOR_LIMITS.minimumDiameterMm) return undefined;
+  if (diameterMm < AUTOMATIC_CONNECTOR_LIMITS.minimumDiameterMm) {
+    refuse('INSUFFICIENT_CLEARANCE');
+    return;
+  }
   const diameter = diameterMm / mm,
     wall = Math.max(0.6 / mm, diameter * 0.3),
     count: 1 | 2 | 3 = span >= 45 ? 3 : span >= 20 ? 2 : 1;
@@ -97,8 +136,10 @@ export function automaticPinPlan(
       Math.max(tolerance * 8, diameter / 4),
     );
   } catch {
-    return undefined;
+    refuse('INSUFFICIENT_CLEARANCE');
+    return;
   }
+  if (diagnostics) diagnostics.proposedSites = points.length;
   const length = Math.hypot(...normal),
     n: SplitVector = [normal[0] / length, normal[1] / length, normal[2] / length],
     reference: SplitVector = Math.abs(n[0]) < 0.8 ? [1, 0, 0] : [0, 1, 0];
@@ -113,8 +154,7 @@ export function automaticPinPlan(
       n[1] * u[2] - n[2] * u[1],
       n[2] * u[0] - n[0] * u[2],
       n[0] * u[1] - n[1] * u[0],
-    ],
-    budget = { visits: 0 };
+    ];
   let depth = Math.min(6 / mm, diameter * 1.5);
   for (const center of points)
     for (let sample = 0; sample < 9; sample++) {
@@ -137,12 +177,23 @@ export function automaticPinPlan(
             point[2] + direction[2] * tolerance * 8,
           ],
           distance = exitDistance(mesh, origin, direction, budget, cancellation);
-        if (distance === undefined) return undefined;
+        if (distance === undefined) {
+          refuse('NO_SAFE_SITE');
+          return;
+        }
         depth = Math.min(depth, distance - wall);
       }
     }
-  if (depth < diameter) return undefined;
-  return { connector: { kind: 'pin', count, diameter, depth, clearance, maleSide: 'A' }, wall };
+  if (depth < diameter) {
+    refuse('INSUFFICIENT_WALL');
+    return;
+  }
+  record('AVAILABLE');
+  return {
+    centers: points,
+    connector: { kind: 'pin', count, diameter, depth, clearance, maleSide: 'A' },
+    wall,
+  };
 }
 
 function defined<T>(value: T | undefined): T {

@@ -5,6 +5,8 @@ export interface PhysicalRole {
   readonly faces: readonly number[];
   readonly instances?: readonly (readonly number[])[];
   readonly aggregate?: boolean;
+  /** Explicit meaningful operation in an otherwise strict-unknown benchmark. */
+  readonly executable?: boolean;
 }
 export interface PhysicalOperation {
   readonly id: string;
@@ -16,7 +18,23 @@ export interface PhysicalOperation {
   readonly declaredCount: number;
   readonly familyId?: string;
 }
+export const PHYSICAL_ATTRIBUTION_LIMITS = Object.freeze({
+  precision: 0.9,
+  recall: 0.9,
+  minimumMargin: 0.03,
+});
+export interface PhysicalScopeMatch {
+  readonly concept: string;
+  readonly instanceIndex: number | null;
+  readonly precision: number;
+  readonly recall: number;
+  readonly legal: boolean;
+}
 export interface PhysicalAssessment {
+  readonly scopeMatches: readonly PhysicalScopeMatch[];
+  readonly bestRole: PhysicalScopeMatch | null;
+  readonly secondBestRole: PhysicalScopeMatch | null;
+  readonly dominanceMargin: number;
   readonly id: string;
   readonly physicalConcept: string | null;
   readonly semanticConcept: string | null;
@@ -30,7 +48,7 @@ export interface PhysicalAssessment {
   readonly semanticLabelMiss: boolean;
   readonly physicalValid: boolean;
   readonly namedValid: boolean;
-  readonly attribution: 'FROZEN_LABEL_AND_SOURCE' | 'UNIQUE_EXACT_SOURCE' | 'UNRESOLVED';
+  readonly attribution: 'UNIQUE_PHYSICAL_SOURCE' | 'AMBIGUOUS' | 'UNRESOLVED';
 }
 function agreement(
   selected: ReadonlySet<number>,
@@ -44,8 +62,7 @@ function agreement(
     recall: target.size ? hit / target.size : 0,
   };
 }
-/** A wording fallback is permitted only for one EXACT frozen physical scope. Approximate
- * source matches cannot silently reassign a wrongly selected role to a different role. */
+/** Every legal physical scope competes independently of wording; ambiguity is never broken by labels. */
 export function assessPhysicalOperations(
   roles: readonly PhysicalRole[],
   operations: readonly PhysicalOperation[],
@@ -61,21 +78,43 @@ export function assessPhysicalOperations(
         ...agreement(selected, faces),
       }));
     });
-    const bound = candidates.filter(
-      (c) => c.role.concept === operation.semanticConcept && c.precision >= 0.9 && c.recall >= 0.9,
-    );
-    const exact = candidates.filter(
-      (c) => !c.role.aggregate && c.precision === 1 && c.recall === 1,
-    );
-    const chosen = bound.length === 1 ? bound[0] : exact.length === 1 ? exact[0] : undefined;
-    const attribution =
-      bound.length === 1
-        ? ('FROZEN_LABEL_AND_SOURCE' as const)
-        : exact.length === 1
-          ? ('UNIQUE_EXACT_SOURCE' as const)
-          : ('UNRESOLVED' as const);
+    const scopeMatches = candidates.map((c) => ({
+      concept: c.role.concept,
+      instanceIndex: c.index,
+      precision: c.precision,
+      recall: c.recall,
+      legal: c.role.executable !== false && (!strictUnknown || c.role.executable === true),
+    }));
+    const legal = candidates
+      .filter((c) => c.role.executable !== false && (!strictUnknown || c.role.executable === true))
+      .sort(
+        (a, b) =>
+          Math.min(b.precision, b.recall) - Math.min(a.precision, a.recall) ||
+          a.role.concept.localeCompare(b.role.concept) ||
+          (a.index ?? -1) - (b.index ?? -1),
+      );
+    const threshold = (c: (typeof candidates)[number]): boolean =>
+      c.precision >= PHYSICAL_ATTRIBUTION_LIMITS.precision &&
+      c.recall >= PHYSICAL_ATTRIBUTION_LIMITS.recall;
+    const qualifying = legal.filter(threshold),
+      best = legal[0],
+      second = legal[1];
+    const dominanceMargin = best
+      ? Math.min(best.precision, best.recall) -
+        (second ? Math.min(second.precision, second.recall) : 0)
+      : 0;
+    const chosen =
+      qualifying.length === 1 &&
+      dominanceMargin + 1e-12 >= PHYSICAL_ATTRIBUTION_LIMITS.minimumMargin
+        ? qualifying[0]
+        : undefined;
+    const attribution = chosen
+      ? ('UNIQUE_PHYSICAL_SOURCE' as const)
+      : qualifying.length > 0
+        ? ('AMBIGUOUS' as const)
+        : ('UNRESOLVED' as const);
     const physicalReadyError =
-      strictUnknown || !chosen || (operation.kind === 'component' && !operation.nativeValid);
+      !chosen || (operation.kind === 'component' && !operation.nativeValid);
     const nativeReadyError = operation.kind === 'plane' && !operation.nativeValid;
     const instances = chosen?.role.instances ?? [];
     const physicalTarget = new Set(chosen?.role.faces ?? []);
@@ -93,6 +132,18 @@ export function assessPhysicalOperations(
       !physicalReadyError && operation.semanticConcept !== chosen.role.concept;
     return {
       id: operation.id,
+      scopeMatches,
+      bestRole: best
+        ? (scopeMatches.find(
+            (m) => m.concept === best.role.concept && m.instanceIndex === best.index,
+          ) ?? null)
+        : null,
+      secondBestRole: second
+        ? (scopeMatches.find(
+            (m) => m.concept === second.role.concept && m.instanceIndex === second.index,
+          ) ?? null)
+        : null,
+      dominanceMargin,
       physicalConcept: chosen?.role.concept ?? null,
       semanticConcept: operation.semanticConcept,
       instanceIndex: chosen?.index ?? null,
