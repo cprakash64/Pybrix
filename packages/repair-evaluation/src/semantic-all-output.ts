@@ -1,3 +1,10 @@
+import {
+  isRepeatedFamily,
+  semanticGraph,
+  type FamilyContext,
+  type SemanticRecord,
+} from './semantic-family-context';
+export type { SemanticRecord } from './semantic-family-context';
 import { planeSourceFaces } from './semantic-source';
 import { requiredValue } from './semantic-invariant';
 /** Research-only scoring. English never participates in physical attribution. */
@@ -20,13 +27,7 @@ export interface FinalOutput {
     origin: readonly number[];
   } | null;
   instanceCount: number;
-}
-export interface SemanticRecord {
-  id: string;
-  label: string;
-  instances: number;
-  /** Source face sets derived from direct instance masks, never supplied truth-member IDs. */
-  instanceAnnotations: readonly (readonly number[])[];
+  sourceSemanticId?: string;
 }
 export interface NativeProof {
   id: string;
@@ -60,7 +61,8 @@ const legal = (r: RoleTruth): boolean =>
   !['FUSED_NONEXECUTABLE', 'UNKNOWN_NONEXECUTABLE'].includes(r.operation);
 export type AllOutputScore =
   | {
-      status: 'INVALID_FIXTURE';
+      status: 'INVALID_FIXTURE' | 'INVALID_SCORER_INPUT';
+      contextError?: string;
       validation: FixtureValidation;
       qualificationEligible: boolean;
       operations: never[];
@@ -74,6 +76,7 @@ export type AllOutputScore =
         id: string;
         parentId: string | null;
         generated: boolean;
+        familyContext: FamilyContext;
         selected: number[];
         operationType: string;
         scopeMatches: { precision: number; recall: number; id: string }[];
@@ -127,6 +130,49 @@ export function scoreAllOutputs(
       operations: [],
       metrics: null,
     };
+  let graph: ReturnType<typeof semanticGraph>;
+  const contexts = new Map<string, FamilyContext>();
+  const familyRecords = new Map<string, SemanticRecord>();
+  const expectedFamilyByRecord = new Map<string, string>();
+  try {
+    graph = semanticGraph(input.semanticRecords);
+    if (new Set(input.suggestions.map((s) => s.id)).size !== input.suggestions.length)
+      throw Error('DUPLICATE_OUTPUT_ID');
+    // Match ontology only AFTER a graph node has independently established repeated-root status.
+    for (const record of graph.recordById.values()) {
+      if (!isRepeatedFamily(record)) continue;
+      const candidates = f.families.filter((family) =>
+        nameMatches(requiredValue(f.roles.find((r) => r.id === family.id)), record.label),
+      );
+      if (candidates.length > 1) throw Error('AMBIGUOUS_FROZEN_FAMILY');
+      const family = candidates[0];
+      if (family) {
+        if (familyRecords.has(family.id)) throw Error('AMBIGUOUS_SEMANTIC_FAMILY');
+        familyRecords.set(family.id, record);
+        expectedFamilyByRecord.set(record.id, family.id);
+      }
+    }
+    for (const output of input.suggestions) {
+      const context = graph.context(output);
+      if (context.semanticFamilyRecordId) {
+        context.expectedFamilyId =
+          expectedFamilyByRecord.get(context.semanticFamilyRecordId) ?? null;
+      }
+      contexts.set(output.id, Object.freeze(context));
+    }
+  } catch (error) {
+    return {
+      status: 'INVALID_SCORER_INPUT',
+      contextError: String(error),
+      validation,
+      qualificationEligible: false,
+      operations: [],
+      metrics: null,
+    };
+  }
+  const sourceHash = input.suggestions.some((s) => s.quality === 'READY' && s.operation === 'PLANE')
+    ? meshDigest(f.mesh)
+    : null;
   if (
     input.faceRank.length !== f.mesh.indices.length / 3 ||
     input.faceRank.some((v) => !Number.isInteger(v) || v < 0)
@@ -192,7 +238,7 @@ export function scoreAllOutputs(
         input.native.find(
           (p) =>
             p.id === s.id &&
-            p.sourceHash === meshDigest(f.mesh) &&
+            p.sourceHash === sourceHash &&
             p.planeHash === digest(s.plane) &&
             p.valid,
         ),
@@ -209,19 +255,18 @@ export function scoreAllOutputs(
                 .recall !== 1,
           )),
       ) || Boolean(memberFamily && s.instanceCount !== 1);
+    const familyContext = requiredValue(contexts.get(s.id));
     const semantic =
-      input.semanticRecords.find((p) => p.id === s.id) ??
-      input.semanticRecords.find((p) => p.id === s.parentId);
-    const declaredFamily = input.semanticRecords.find((p) => p.id === s.parentId || p.id === s.id);
-    const claimedFamily = declaredFamily
-      ? f.families.find((v) =>
-          nameMatches(requiredValue(f.roles.find((r) => r.id === v.id)), declaredFamily.label),
-        )
-      : undefined;
+      graph.recordById.get(s.id) ?? graph.recordById.get(s.sourceSemanticId ?? s.parentId ?? '');
+    const claimedFamily = f.families.find((v) => v.id === familyContext.expectedFamilyId);
     if (s.instanceCount > 1 && !family) familyMembershipError = true;
+    if (family && familyContext.state !== 'FAMILY_ROOT') familyMembershipError = true;
     if (
-      claimedFamily &&
-      !(chosen?.id === claimedFamily.id || claimedFamily.members.includes(chosen?.id ?? ''))
+      familyContext.state !== 'NONE' &&
+      (!claimedFamily ||
+        (familyContext.state === 'FAMILY_ROOT'
+          ? chosen?.id !== claimedFamily.id
+          : !claimedFamily.members.includes(chosen?.id ?? '')))
     )
       familyMembershipError = true;
     const role = f.roles.find((r) => r.id === chosen?.id),
@@ -235,15 +280,12 @@ export function scoreAllOutputs(
     const physicalReadyError = Boolean(membershipError) || !chosen,
       nativeReadyError = s.operation === 'PLANE' && !nativeValid,
       strictUnknownExecutable = f.strictUnknown;
-    const physicalValid =
-      !physicalReadyError &&
-      !nativeReadyError &&
-      !familyMembershipError &&
-      !strictUnknownExecutable;
+    const physicalValid = !physicalReadyError && !nativeReadyError && !strictUnknownExecutable;
     return {
       id: s.id,
       parentId: s.parentId,
-      generated: !input.semanticRecords.some((p) => p.id === s.id),
+      generated: !graph.recordById.has(s.id),
+      familyContext,
       selected,
       operationType: s.operation,
       scopeMatches: scopes,
@@ -260,7 +302,7 @@ export function scoreAllOutputs(
       nativeReadyError,
       strictUnknownExecutable,
       physicalValid,
-      namedValid: physicalValid && semanticLabelResult,
+      namedValid: physicalValid && !familyMembershipError && semanticLabelResult,
     };
   });
   // Duplicate individual alternatives within the same family are ownership errors, while a complete
@@ -271,13 +313,17 @@ export function scoreAllOutputs(
       if (duplicate.length > 1)
         for (const row of duplicate) {
           row.familyMembershipError = true;
-          row.physicalValid = false;
           row.namedValid = false;
         }
     }
   const concepts = f.roles.filter((r) => legal(r) && r.scope !== 'DETAIL'),
     realized = concepts.filter((r) =>
-      operations.some((o) => o.physicalConcept === r.id && o.physicalValid),
+      operations.some(
+        (o) =>
+          o.physicalConcept === r.id &&
+          o.physicalValid &&
+          (!f.families.some((family) => family.id === r.id) || !o.familyMembershipError),
+      ),
     ),
     named = concepts.filter((r) =>
       operations.some((o) => o.physicalConcept === r.id && o.namedValid),
@@ -289,7 +335,7 @@ export function scoreAllOutputs(
   );
   const familyMetrics = f.families.map((family) => {
     const role = requiredValue(f.roles.find((r) => r.id === family.id)),
-      record = input.semanticRecords.find((p) => nameMatches(role, p.label));
+      record = familyRecords.get(family.id);
     const visible = new Set(role.observableMembers);
     const matches = (record?.instanceAnnotations ?? []).map((selected) => {
       const candidates = f.roles
@@ -318,7 +364,7 @@ export function scoreAllOutputs(
     status: 'SCORED' as const,
     qualificationEligible: true,
     validation,
-    operations,
+    operations: operations.sort((a, b) => a.id.localeCompare(b.id)),
     metrics: {
       PHYSICAL_READY_ERRORS: operations.filter((o) => o.physicalReadyError).length,
       NATIVE_READY_ERRORS: operations.filter((o) => o.nativeReadyError).length,

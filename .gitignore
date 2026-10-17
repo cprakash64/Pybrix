@@ -69,3 +69,6 @@ artifacts/semantic-evaluation-infra-13/
 
 # Private Stage15 evaluator certificate evidence.
 artifacts/semantic-evaluation-certificate-closure-15/
+
+# Private Stage17 evaluator evidence.
+artifacts/semantic-scorer-family-context-17/

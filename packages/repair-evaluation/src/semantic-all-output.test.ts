@@ -40,7 +40,13 @@ it('physical realization and exact source attribution are independent of labels 
     i = input(f);
   i.suggestions = [component('generated-left', [0]), component('authored-right', [1])];
   i.semanticRecords = [
-    { id: 'authored-right', label: 'novel neutral support', instances: 1, instanceAnnotations: [] },
+    {
+      id: 'authored-right',
+      parentId: null,
+      label: 'novel neutral support',
+      instances: 1,
+      instanceAnnotations: [],
+    },
   ];
   const r = scoreAllOutputs(f, evidence, i);
   expect(r.status).toBe('SCORED');
@@ -49,13 +55,13 @@ it('physical realization and exact source attribution are independent of labels 
   expect(r.metrics?.PHYSICAL_READY_ERRORS).toBe(0);
   expect(r.metrics?.PHYSICAL_REALIZATION_RATE).toMatchObject({ numerator: 2, denominator: 2 });
   expect(r.metrics?.SEMANTICALLY_NAMED_REALIZATION_RATE.numerator).toBe(0);
-  expect(r.operations[0]).toMatchObject({
+  expect(r.operations.find((o) => o.id === 'generated-left')).toMatchObject({
     bestPhysicalRole: { id: 'left', precision: 1, recall: 1 },
     secondBestRole: { id: 'right' },
     dominanceMargin: 1,
   });
   i.semanticRecords = [
-    { id: 'authored-right', label: 'right', instances: 1, instanceAnnotations: [] },
+    { id: 'authored-right', parentId: null, label: 'right', instances: 1, instanceAnnotations: [] },
   ];
   expect(
     scoreAllOutputs(f, evidence, i).metrics?.SEMANTICALLY_NAMED_REALIZATION_RATE.numerator,
@@ -73,6 +79,7 @@ it('every READY alternative competes; reservations and non-READY outputs do not 
   i.semanticRecords = [
     {
       id: 'family',
+      parentId: null,
       label: 'supports',
       instances: 2,
       instanceAnnotations: [requiredValue(f.roles.find((r) => r.id === 'left')).faces],
@@ -96,6 +103,9 @@ it('partial children never count as complete-family realization, duplicate sibli
   const f = familyControl(),
     i = input(f);
   i.suggestions = [component('a', [0], 'root')];
+  i.semanticRecords = [
+    { id: 'root', parentId: null, label: 'supports', instances: 2, instanceAnnotations: [] },
+  ];
   const r = scoreAllOutputs(f, evidence, i);
   expect(r.metrics?.PHYSICAL_REALIZATION_RATE.concepts).toEqual(['left']);
   i.suggestions = [...i.suggestions, component('b', [0], 'root')];
@@ -108,6 +118,7 @@ it('spares and foreign source cannot become family members through naming', () =
   i.semanticRecords = [
     {
       id: 'root',
+      parentId: null,
       label: 'supports',
       instances: 2,
       instanceAnnotations: [
@@ -139,7 +150,9 @@ it('count errors, native errors, physical errors, unknown execution remain disti
 it('recognition of refused fused visible regions survives no executable realization', () => {
   const f = fusedControl(),
     i = input(f);
-  i.semanticRecords = [{ id: 'u', label: 'middle', instances: 1, instanceAnnotations: [] }];
+  i.semanticRecords = [
+    { id: 'u', parentId: null, label: 'middle', instances: 1, instanceAnnotations: [] },
+  ];
   const r = scoreAllOutputs(f, evidence, i);
   expect(r.metrics?.SEMANTIC_RECOGNITION.numerator).toBe(1);
   expect(r.metrics?.PHYSICAL_REALIZATION_RATE).toMatchObject({ numerator: 0, denominator: 0 });
@@ -189,7 +202,13 @@ it('a plane with a novel name is physically valid; native proof binds actual pla
     },
   ];
   i.semanticRecords = [
-    { id: 'top', label: 'new neutral phrase', instances: 1, instanceAnnotations: [] },
+    {
+      id: 'top',
+      parentId: null,
+      label: 'new neutral phrase',
+      instances: 1,
+      instanceAnnotations: [],
+    },
   ];
   i.native = [{ id: 'top', sourceHash: meshDigest(f.mesh), planeHash: digest(plane), valid: true }];
   expect(scoreAllOutputs(f, e, i).metrics).toMatchObject({
@@ -239,7 +258,9 @@ it('ambiguous legal scopes remain ambiguous despite an exact semantic name', () 
       instanceCount: 1,
     },
   ];
-  i.semanticRecords = [{ id: 'top', label: 'upper', instances: 1, instanceAnnotations: [] }];
+  i.semanticRecords = [
+    { id: 'top', parentId: null, label: 'upper', instances: 1, instanceAnnotations: [] },
+  ];
   const r = scoreAllOutputs(f, { planes, connectors: [] }, i);
   expect(r.status).toBe('SCORED');
   expect(r.operations[0]?.attribution).toBe('AMBIGUOUS');
@@ -269,7 +290,9 @@ it('Feet and lower-limb assembly are not globally interchangeable', () => {
   };
   const i = input(f);
   i.suggestions = [component('a', [0])];
-  i.semanticRecords = [{ id: 'a', label: 'Feet', instances: 1, instanceAnnotations: [] }];
+  i.semanticRecords = [
+    { id: 'a', parentId: null, label: 'Feet', instances: 1, instanceAnnotations: [] },
+  ];
   const r = scoreAllOutputs(f, evidence, i);
   expect(r.metrics?.PHYSICAL_READY_ERRORS).toBe(0);
   expect(r.operations[0]?.namedValid).toBe(false);
