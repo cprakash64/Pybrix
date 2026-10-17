@@ -66,3 +66,6 @@ artifacts/semantic-auto-decompose-01/
 
 # Private offline semantic evaluator qualification evidence.
 artifacts/semantic-evaluation-infra-13/
+
+# Private Stage15 evaluator certificate evidence.
+artifacts/semantic-evaluation-certificate-closure-15/

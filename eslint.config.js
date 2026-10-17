@@ -56,6 +56,7 @@ export default tseslint.config(
       'artifacts/split-ux-simplification-01/**',
       'artifacts/semantic-auto-decompose-01/**',
       'artifacts/semantic-evaluation-infra-13/**',
+      'artifacts/semantic-evaluation-certificate-closure-15/**',
       // The end-to-end harness's own build output. Its SOURCE, under
       // apps/web/e2e-harness/, IS linted; only the emitted bundle is not.
       '**/dist-e2e-harness/**',

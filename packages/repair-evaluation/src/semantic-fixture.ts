@@ -88,7 +88,10 @@ export interface FusionTruth {
 export interface NonPlaneTruth {
   role: string;
   other: string;
-  /** Same convex combination of source vertices in both roles proves no strict linear separator. */
+  /** Offline shared-grid simple-plane obstruction only: strictly positive combinations of
+   * full-rank source vertices share an interior point in TARGET-DISJOINT role hulls.
+   * Not a claim about arbitrary curved surfaces. Overlapping scopes are unsupported;
+   * represent an assembly complement as an explicit independently grounded role. */
   witness: {
     roleFacesVertices: {
       face: number;
@@ -679,7 +682,91 @@ export function validateSemanticFixture(
     )
       fail(`FAMILY_EXECUTABILITY:${family.id}`);
   }
+  // A single role has one operation class, but aliases and native evidence can describe
+  // the same physical scope. Executable truth always contradicts non-executable truth.
+  const sameFaces = (a: readonly number[], b: readonly number[]): boolean =>
+    a.length === b.length && a.every((face) => b.includes(face));
+  for (const role of f.roles.filter((r) => r.operation === 'FUSED_NONEXECUTABLE')) {
+    const components = topology.components.filter((c) =>
+      c.faces.some((v) => role.faces.includes(v)),
+    );
+    if (
+      (role.faces.length < r.sourceFaceCount &&
+        sameFaces(
+          components.flatMap((c) => c.faces),
+          role.faces,
+        )) ||
+      f.roles.some(
+        (other) =>
+          ['EXACT_COMPONENT', 'EXACT_COMPONENT_GROUP', 'QUALIFIED_PLANE'].includes(
+            other.operation,
+          ) && sameFaces(other.faces, role.faces),
+      ) ||
+      f.planes.some((p) => p.role === role.id) ||
+      evidence.planes.some(
+        (e) =>
+          e.sourceHash === hash &&
+          e.nativeValid &&
+          e.closedOutputs &&
+          sameFaces(e.selected, role.faces),
+      )
+    )
+      fail(`EXECUTABLE_OPERATION_CONTRADICTION:${role.id}`);
+  }
+  // Native attestations must remain bound to this source and declared plane truth.
+  // Never ignore stale/extra attestations merely because a role is non-executable.
+  for (const e of evidence.planes) {
+    if (
+      e.sourceHash !== hash ||
+      !f.planes.some((p) => digest(p) === digest(e.plane)) ||
+      e.role !== e.plane.role
+    )
+      fail(`STALE_OR_UNBOUND_NATIVE_EVIDENCE:${e.role}`);
+    try {
+      if (
+        !e.nativeValid ||
+        !e.closedOutputs ||
+        !validFaces(e.selected) ||
+        !validFaces(e.complement) ||
+        !sameFaces(planeSourceFaces(f.mesh, e.plane), e.selected) ||
+        new Set([...e.selected, ...e.complement]).size !== r.sourceFaceCount ||
+        e.selected.some((face) => e.complement.includes(face))
+      )
+        fail(`NATIVE_EVIDENCE_MEMBERSHIP:${e.role}`);
+    } catch {
+      fail(`NATIVE_EVIDENCE_MEMBERSHIP:${e.role}`);
+    }
+  }
+  for (const e of evidence.connectors) {
+    if (
+      e.sourceHash !== hash ||
+      !f.planes.some((p) => p.connector && digest(p) === digest(e.plane)) ||
+      e.role !== e.plane.role
+    )
+      fail(`STALE_OR_UNBOUND_CONNECTOR_EVIDENCE:${e.role}`);
+  }
   for (const n of f.noPlane) {
+    const target = new Set(byId.get(n.role)?.faces ?? []),
+      opposing = byId.get(n.other)?.faces ?? [],
+      witnessExclusiveFaces = opposing.filter((face) => !target.has(face));
+    if (!target.size || !witnessExclusiveFaces.length) {
+      fail(`EMPTY_WITNESS_COMPLEMENT:${n.role}`);
+      continue;
+    }
+    if (opposing.some((face) => target.has(face))) {
+      // No automatic subtraction: the authored witness must identify its true physical scope.
+      fail(`TARGET_DISJOINT_COMPLEMENT_REQUIRED:${n.role}`);
+      continue;
+    }
+    const ac = roleComps(n.role),
+      bc = roleComps(n.other);
+    if (
+      ac.size !== 1 ||
+      bc.size !== 1 ||
+      [...ac][0] !== [...bc][0] ||
+      !f.fused.some((fusion) => fusion.roles.includes(n.role) && fusion.roles.includes(n.other))
+    )
+      fail(`NONPLANE_OPPOSING_FUSION_REQUIRED:${n.role}`);
     const point = (
       items: NonPlaneTruth['witness']['roleFacesVertices'],
       id: string,
