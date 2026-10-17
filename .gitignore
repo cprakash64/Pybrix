@@ -63,3 +63,6 @@ artifacts/open-mesh-split-01/
 artifacts/split-ux-simplification-01/
 
 artifacts/semantic-auto-decompose-01/
+
+# Private offline semantic evaluator qualification evidence.
+artifacts/semantic-evaluation-infra-13/

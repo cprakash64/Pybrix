@@ -98,9 +98,16 @@ export function wheel(
 }
 
 /**
- * A single closed shell from the UNION of axis-aligned boxes on an integer grid: every exposed unit
- * face becomes two triangles. Blocky, but one manifold surface, which is what a figure that fuses its
- * head, arms and legs into one body needs. Boxes must overlap by faces, never only along an edge.
+ * LEGACY FIXTURE HELPER: unit-cell surface extraction, NOT a general Boolean union.
+ * Bounds are in cell coordinates; `cell` scales OUTPUT coordinates only. Each box walks from
+ * its lo by +1 while < hi (noninteger extents therefore round outward). A Set deduplicates
+ * identical cell-origin strings; only exact +/-1 neighbor keys suppress a face. Different
+ * fractional grid phases do not fuse. Same-phase boxes fuse only across complete cell faces.
+ * Overlapping identical cells are idempotent; overlapping volumes on different phases are NOT
+ * resolved. The helper validates neither inputs, connectivity, manifoldness nor intersections.
+ * Exterior quads are outward-wound for positive cell, but edge/corner contacts can be nonmanifold.
+ * Stable triangle sorting is not geometric deduplication. Existing semantics are retained.
+ * New semantic qualification must use the audited research fixture contract instead.
  */
 export function voxelUnion(
   boxes: readonly {

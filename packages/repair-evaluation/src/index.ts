@@ -82,3 +82,36 @@ export {
   translate,
 } from './geometry';
 export type { Point, Triangle } from './geometry';
+
+// Offline semantic qualification. These contracts MUST remain unreachable from production.
+export {
+  buildGridSource,
+  buildSemanticFixture,
+  validateSemanticFixture,
+  freezeSemanticFixture,
+  auditFixtureTopology,
+  faceComponents,
+  meshDigest,
+} from './semantic-fixture';
+export type {
+  SemanticFixture,
+  FixtureEvidence,
+  RoleTruth,
+  FamilyTruth,
+  NamingTruth,
+  PlaneTruth,
+  PlaneEvidence,
+  ConnectorEvidence,
+} from './semantic-fixture';
+export {
+  scoreAllOutputs,
+  assertFixtureDispatchable,
+  selectedPlaneFaces,
+  nameMatches,
+} from './semantic-all-output';
+export type {
+  FinalOutput,
+  RealizationInput,
+  SemanticRecord,
+  NativeProof,
+} from './semantic-all-output';
