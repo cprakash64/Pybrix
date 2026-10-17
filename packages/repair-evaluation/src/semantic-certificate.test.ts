@@ -66,7 +66,7 @@ it('partial overlap cannot supply independent opposing evidence', () => {
   const f = nonPlaneControl(),
     a = value(f.roles[0]),
     b = value(f.roles[1]);
-  b.faces.push(value(a.faces[0]));
+  b.faces.push(...a.faces.slice(0, Math.floor(a.faces.length / 2)));
   reject(f, 'TARGET_DISJOINT_COMPLEMENT_REQUIRED');
 });
 it('fresh interleaved shared-grid role has meaningful disjoint fused complement', () => {
@@ -154,4 +154,12 @@ it('a genuinely contained child cannot oppose its containing target parent', () 
     },
   ];
   reject(f, 'EMPTY_WITNESS_COMPLEMENT');
+});
+
+it('near-identical scopes cannot manufacture meaningful independent geometry', () => {
+  const f = nonPlaneControl(),
+    a = value(f.roles[0]),
+    b = value(f.roles[1]);
+  b.faces = [...a.faces.slice(0, -1), value(b.faces[0])];
+  reject(f, 'TARGET_DISJOINT_COMPLEMENT_REQUIRED');
 });
