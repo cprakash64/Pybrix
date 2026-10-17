@@ -50,7 +50,7 @@ describe('audited construction and topology', () => {
     expect(() => buildGridSource([a, { ...a, role: 'b' }])).toThrow('OWNERSHIP');
   });
   it('records removed interfaces, never assigns their caps by centroid', () => {
-    const f = fusedControl();
+    const f = fusedControl(true);
     expect(f.interfaces).toHaveLength(4);
     expect(f.interfaces.reduce((s, x) => s + x.area, 0)).toBe(4);
     expect(f.provenance).toHaveLength(80);
@@ -201,4 +201,32 @@ it('plane truth cannot borrow membership from an unrelated plane despite a nativ
     connectors: [],
   };
   expect(validateSemanticFixture(f, e).errors).toContain('PLANE_UNQUALIFIED:upper');
+});
+
+it('a shared interface is not a nonseparability certificate', () => {
+  const f = fusedControl(true),
+    witness = (id: string): { face: number; corner: number; weight: number }[] => {
+      const vertices = new Map<string, { face: number; corner: number; weight: number }>();
+      for (const face of requiredValue(f.roles.find((r) => r.id === id)).faces)
+        for (let corner = 0; corner < 3; corner++) {
+          const i = requiredValue(f.mesh.indices[face * 3 + corner]) * 3;
+          if (f.mesh.positions[i + 2] === 2)
+            vertices.set(`${String(f.mesh.positions[i])},${String(f.mesh.positions[i + 1])}`, {
+              face,
+              corner,
+              weight: 0.25,
+            });
+        }
+      return [...vertices.values()];
+    };
+  requiredValue(f.roles.find((r) => r.id === 'upper')).operation = 'FUSED_NONEXECUTABLE';
+  f.planes = f.planes.filter((p) => p.role !== 'upper');
+  f.noPlane = [
+    {
+      role: 'upper',
+      other: 'lower',
+      witness: { roleFacesVertices: witness('upper'), otherFacesVertices: witness('lower') },
+    },
+  ];
+  expect(validateSemanticFixture(f).errors).toContain('NO_PLANE_WITNESS:upper');
 });

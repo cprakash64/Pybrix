@@ -594,6 +594,8 @@ export function validateSemanticFixture(
       !f.fused.some((v) => v.roles.includes(role.id))
     )
       fail(`MISSING_FUSION_EXPECTATION:${role.id}`);
+    if (role.operation === 'FUSED_NONEXECUTABLE' && !f.noPlane.some((p) => p.role === role.id))
+      fail(`MISSING_NONPLANE_PROOF:${role.id}`);
     if (
       role.operation === 'UNKNOWN_NONEXECUTABLE' &&
       !['NON_EXECUTABLE_UNKNOWN', 'WHOLE_OBJECT'].includes(role.scope)
@@ -683,8 +685,9 @@ export function validateSemanticFixture(
       id: string,
     ): number[] | null => {
       if (
-        !items.length ||
-        Math.abs(items.reduce((s, x) => s + x.weight, 0) - 1) > 1e-12 ||
+        items.length < 4 ||
+        items.length > 64 ||
+        items.reduce((s, x) => s + x.weight, 0) !== 1 ||
         items.some(
           (x) =>
             !Number.isFinite(x.weight) ||
@@ -694,6 +697,35 @@ export function validateSemanticFixture(
         )
       )
         return null;
+      // A shared interface point alone proves NOTHING: adjacent separable solids share one.
+      // Positive weights over a full-rank 3D set put the witness strictly inside both hulls.
+      const points = items.map((x) =>
+        [0, 1, 2].map((a) =>
+          requiredValue(
+            f.mesh.positions[requiredValue(f.mesh.indices[x.face * 3 + x.corner]) * 3 + a],
+          ),
+        ),
+      );
+      const anchor = requiredValue(points[0]),
+        vectors = points.slice(1).map((p) => p.map((v, a) => v - requiredValue(anchor[a])));
+      const scale = Math.max(...vectors.flat().map(Math.abs));
+      let fullRank = false;
+      for (const [i, u] of vectors.entries())
+        for (const [j, v] of vectors.entries())
+          for (const [k, w] of vectors.entries())
+            if (i < j && j < k) {
+              const [ux = NaN, uy = NaN, uz = NaN] = u,
+                [vx = NaN, vy = NaN, vz = NaN] = v,
+                [wx = NaN, wy = NaN, wz = NaN] = w;
+              if (
+                Math.abs(
+                  ux * (vy * wz - vz * wy) - uy * (vx * wz - vz * wx) + uz * (vx * wy - vy * wx),
+                ) >
+                scale ** 3 * 1e-12
+              )
+                fullRank = true;
+            }
+      if (!fullRank) return null;
       return [0, 1, 2].map((a) =>
         items.reduce(
           (s, x) =>
@@ -711,7 +743,7 @@ export function validateSemanticFixture(
     if (
       !a ||
       !b ||
-      a.some((v, i) => Math.abs(v - requiredValue(b[i])) > 1e-9) ||
+      a.some((v, i) => v !== requiredValue(b[i])) ||
       byId.get(n.role)?.operation !== 'FUSED_NONEXECUTABLE'
     )
       fail(`NO_PLANE_WITNESS:${n.role}`);

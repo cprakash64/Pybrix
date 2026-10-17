@@ -139,7 +139,7 @@ it('count errors, native errors, physical errors, unknown execution remain disti
 it('recognition of refused fused visible regions survives no executable realization', () => {
   const f = fusedControl(),
     i = input(f);
-  i.semanticRecords = [{ id: 'u', label: 'upper', instances: 1, instanceAnnotations: [] }];
+  i.semanticRecords = [{ id: 'u', label: 'middle', instances: 1, instanceAnnotations: [] }];
   const r = scoreAllOutputs(f, evidence, i);
   expect(r.metrics?.SEMANTIC_RECOGNITION.numerator).toBe(1);
   expect(r.metrics?.PHYSICAL_REALIZATION_RATE).toMatchObject({ numerator: 0, denominator: 0 });
@@ -165,6 +165,18 @@ it('a plane with a novel name is physically valid; native proof binds actual pla
       ],
       connectors: [],
     };
+  const lower = requiredValue(f.planes.find((p) => p.role === 'lower')),
+    lowerSelected = selectedPlaneFaces(f, lower);
+  e.planes.push({
+    role: 'lower',
+    selected: lowerSelected,
+    complement: i.faceRank.flatMap((_, n) => (lowerSelected.includes(n) ? [] : [n])),
+    plane: lower,
+    sourceHash: meshDigest(f.mesh),
+    nativeValid: true,
+    closedOutputs: true,
+    detail: { unitTestDouble: true },
+  });
   i.suggestions = [
     {
       id: 'top',
@@ -193,8 +205,7 @@ it('ambiguous legal scopes remain ambiguous despite an exact semantic name', () 
   const f = fusedControl(true),
     p = requiredValue(f.planes[0]),
     plane = { normal: p.normal, origin: p.origin },
-    i = input(f),
-    selected = selectedPlaneFaces(f, plane);
+    i = input(f);
   const upper = requiredValue(f.roles[1]);
   upper.parent = 'aggregate';
   f.roles.push({
@@ -209,8 +220,8 @@ it('ambiguous legal scopes remain ambiguous despite an exact semantic name', () 
   f.planes.push({ ...p, role: 'aggregate' });
   const planes = f.planes.map((p) => ({
     role: p.role,
-    selected,
-    complement: i.faceRank.flatMap((_, n) => (selected.includes(n) ? [] : [n])),
+    selected: selectedPlaneFaces(f, p),
+    complement: i.faceRank.flatMap((_, n) => (selectedPlaneFaces(f, p).includes(n) ? [] : [n])),
     plane: p,
     sourceHash: meshDigest(f.mesh),
     nativeValid: true,

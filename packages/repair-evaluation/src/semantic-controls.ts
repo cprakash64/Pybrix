@@ -122,16 +122,24 @@ export function familyControl(distractor = false): SemanticFixture {
   return raw;
 }
 export function fusedControl(plane = false, connector = false): SemanticFixture {
+  if (!plane) {
+    const f = nonPlaneControl();
+    f.id = 'fused-two-role';
+    f.construction.cell = 2;
+    requiredValue(f.fused[0]).minimumInterfaceArea = 32;
+    return buildSemanticFixture({ ...f, roles: f.roles });
+  }
+
   const f = controlFixture(
-    connector ? 'connector-safe' : plane ? 'native-plane' : 'fused-two-role',
+    connector ? 'connector-safe' : 'native-plane',
     [
       { role: 'lower', lo: [0, 0, 0], hi: [2, 2, 2] },
       { role: 'upper', lo: [0, 0, 2], hi: [2, 2, 4] },
     ],
     [
-      controlRole('lower', 'FUSED_NONEXECUTABLE'),
+      controlRole('lower', 'QUALIFIED_PLANE'),
       {
-        ...controlRole('upper', plane ? 'QUALIFIED_PLANE' : 'FUSED_NONEXECUTABLE'),
+        ...controlRole('upper', 'QUALIFIED_PLANE'),
         scope: 'FUSED_VISIBLE_REGION',
       },
     ],
@@ -139,13 +147,16 @@ export function fusedControl(plane = false, connector = false): SemanticFixture 
     1,
   );
   f.fused = [{ roles: ['lower', 'upper'], minimumInterfaceArea: 4 }];
-  if (plane) f.planes = [{ role: 'upper', normal: [0, 0, 1], origin: [0, 0, 2], connector }];
+  f.planes = [
+    { role: 'upper', normal: [0, 0, 1], origin: [0, 0, 2], connector },
+    { role: 'lower', normal: [0, 0, -1], origin: [0, 0, 2], connector: false },
+  ];
   if (connector) {
     f.construction.cell = 20;
     const rebuilt = buildSemanticFixture({ ...f, roles: f.roles });
     Object.assign(f, rebuilt);
     requiredValue(f.fused[0]).minimumInterfaceArea = 1600;
-    requiredValue(f.planes[0]).origin = [0, 0, 40];
+    for (const p of f.planes) p.origin = [0, 0, 40];
     f.units = 'millimeter';
   }
   return f;
@@ -166,16 +177,21 @@ export function nonPlaneControl(): SemanticFixture {
     1,
   );
   f.fused = [{ roles: ['middle', 'outer'], minimumInterfaceArea: 8 }];
-  const vertex = (id: string, z: number): { face: number; corner: number; weight: number } => {
+  const vertex = (
+    id: string,
+    x: number,
+    y: number,
+    z: number,
+  ): { face: number; corner: number; weight: number } => {
     for (const face of requiredValue(f.roles.find((r) => r.id === id)).faces)
       for (let corner = 0; corner < 3; corner++) {
         const i = requiredValue(f.mesh.indices[face * 3 + corner]) * 3;
         if (
-          f.mesh.positions[i] === 0 &&
-          f.mesh.positions[i + 1] === 0 &&
+          f.mesh.positions[i] === x &&
+          f.mesh.positions[i + 1] === y &&
           f.mesh.positions[i + 2] === z
         )
-          return { face, corner, weight: 0.5 };
+          return { face, corner, weight: 0.125 };
       }
     throw Error('NO_WITNESS_VERTEX');
   };
@@ -184,11 +200,24 @@ export function nonPlaneControl(): SemanticFixture {
       role: 'middle',
       other: 'outer',
       witness: {
-        roleFacesVertices: [vertex('middle', 1), vertex('middle', 2)],
-        otherFacesVertices: [vertex('outer', 0), vertex('outer', 3)],
+        roleFacesVertices: [0, 2].flatMap((x) =>
+          [0, 2].flatMap((y) => [1, 2].map((z) => vertex('middle', x, y, z))),
+        ),
+        otherFacesVertices: [0, 2].flatMap((x) =>
+          [0, 2].flatMap((y) => [0, 3].map((z) => vertex('outer', x, y, z))),
+        ),
       },
     },
   ];
+  const first = requiredValue(f.noPlane[0]);
+  f.noPlane.push({
+    role: 'outer',
+    other: 'middle',
+    witness: {
+      roleFacesVertices: first.witness.otherFacesVertices,
+      otherFacesVertices: first.witness.roleFacesVertices,
+    },
+  });
   return f;
 }
 export function unknownControl(): SemanticFixture {
