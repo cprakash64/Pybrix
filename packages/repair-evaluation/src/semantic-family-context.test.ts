@@ -67,7 +67,8 @@ it('all 120 record permutations, all 24 output permutations and all 2880 combine
   ];
   const expected = score(records, suggestions);
   expect(expected.status).toBe('SCORED');
-  expect(expected.metrics?.FAMILY_MEMBERSHIP_ERRORS).toBe(0);
+  if (expected.status !== 'SCORED') throw Error('Expected SCORED');
+  expect(expected.metrics.FAMILY_MEMBERSHIP_ERRORS).toBe(0);
   expect(expected.operations).toHaveLength(4);
   const recordOrders = permutations(records),
     outputOrders = permutations(suggestions);
@@ -102,11 +103,12 @@ it.each([
 ] as const)('%s is invariant for all record orders', (_name, suggestion, errors, physicalValid) => {
   const expected = score(records, [suggestion]);
   expect(expected.status).toBe('SCORED');
-  expect(expected.metrics?.FAMILY_MEMBERSHIP_ERRORS).toBe(errors);
+  if (expected.status !== 'SCORED') throw Error('Expected SCORED');
+  expect(expected.metrics.FAMILY_MEMBERSHIP_ERRORS).toBe(errors);
   expect(expected.operations[0]?.physicalValid).toBe(physicalValid);
   if (errors) {
     expect(expected.operations[0]?.namedValid).toBe(false);
-    expect(expected.metrics?.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('supports');
+    expect(expected.metrics.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('supports');
   }
   for (const rs of permutations(records)) expect(score(rs, [suggestion])).toEqual(expected);
 });
@@ -116,8 +118,9 @@ it('duplicate source members cannot satisfy ownership; source extraction stays p
     for (const order of permutations(os)) {
       const r = score(rs, order);
       expect(r.metrics?.FAMILY_MEMBERSHIP_ERRORS).toBe(2);
+      if (r.status !== 'SCORED') throw Error('Expected SCORED');
       expect(r.operations.every((o) => o.physicalValid && !o.namedValid)).toBe(true);
-      expect(r.metrics?.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('supports');
+      expect(r.metrics.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('supports');
     }
 });
 it('nearest family wins through intermediate assemblies and does not skip a nested family', () => {
@@ -130,6 +133,7 @@ it('nearest family wins through intermediate assemblies and does not skip a nest
   for (const order of permutations(rs)) {
     const r = score(order, [output('a', 'inner', ['left'])]);
     expect(r.metrics?.FAMILY_MEMBERSHIP_ERRORS).toBe(0);
+    if (r.status !== 'SCORED') throw Error('Expected SCORED');
     expect(r.operations[0]?.familyContext).toMatchObject({
       state: 'FAMILY_MEMBER',
       semanticFamilyRecordId: 'inner',
@@ -159,8 +163,9 @@ it('nonfamily ancestry and identical ordinary labels never create family ancestr
   const rs = records.map((r) => ({ ...r, label: r.id === 'host' ? 'supports' : r.label }));
   for (const order of permutations(rs)) {
     const r = score(order, [output('host', 'assembly', ['host'])]);
+    if (r.status !== 'SCORED') throw Error('Expected SCORED');
     expect(r.operations[0]?.familyContext.state).toBe('NONE');
-    expect(r.metrics?.FAMILY_MEMBERSHIP_ERRORS).toBe(0);
+    expect(r.metrics.FAMILY_MEMBERSHIP_ERRORS).toBe(0);
   }
   const rs2 = [
     record('one', null, 'identical', 2),
@@ -255,9 +260,10 @@ it('a generated complete group cannot invent repeated-root provenance from a sta
     { ...output('generated', 'ordinary', ['left', 'right'], 2), sourceSemanticId: 'ordinary' },
   ]);
   expect(result.metrics?.FAMILY_MEMBERSHIP_ERRORS).toBe(1);
+  if (result.status !== 'SCORED') throw Error('Expected SCORED');
   expect(result.operations[0]?.physicalValid).toBe(true);
   expect(result.operations[0]?.namedValid).toBe(false);
-  expect(result.metrics?.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('supports');
+  expect(result.metrics.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('supports');
 });
 it('the index exposes immutable record snapshots and production record/count bounds', () => {
   const root = record('family', null, 'supports', 2);

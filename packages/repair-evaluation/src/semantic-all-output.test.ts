@@ -50,11 +50,12 @@ it('physical realization and exact source attribution are independent of labels 
   ];
   const r = scoreAllOutputs(f, evidence, i);
   expect(r.status).toBe('SCORED');
+  if (r.status !== 'SCORED') throw Error('Expected SCORED');
   expect(r.operations).toHaveLength(2);
   expect(r.operations.filter((o) => o.generated)).toHaveLength(1);
-  expect(r.metrics?.PHYSICAL_READY_ERRORS).toBe(0);
-  expect(r.metrics?.PHYSICAL_REALIZATION_RATE).toMatchObject({ numerator: 2, denominator: 2 });
-  expect(r.metrics?.SEMANTICALLY_NAMED_REALIZATION_RATE.numerator).toBe(0);
+  expect(r.metrics.PHYSICAL_READY_ERRORS).toBe(0);
+  expect(r.metrics.PHYSICAL_REALIZATION_RATE).toMatchObject({ numerator: 2, denominator: 2 });
+  expect(r.metrics.SEMANTICALLY_NAMED_REALIZATION_RATE.numerator).toBe(0);
   expect(r.operations.find((o) => o.id === 'generated-left')).toMatchObject({
     bestPhysicalRole: { id: 'left', precision: 1, recall: 1 },
     secondBestRole: { id: 'right' },
@@ -86,13 +87,14 @@ it('every READY alternative competes; reservations and non-READY outputs do not 
     },
   ];
   const r = scoreAllOutputs(f, evidence, i);
+  if (r.status !== 'SCORED') throw Error('Expected SCORED');
   expect(r.operations).toHaveLength(3);
   expect(r.operations.filter((o) => o.generated)).toHaveLength(2);
-  expect(r.metrics?.PHYSICAL_READY_ERRORS).toBe(0);
-  expect(r.metrics?.FAMILY_MEMBERSHIP_ERRORS).toBe(0);
-  expect(r.metrics?.PHYSICAL_REALIZATION_RATE.concepts).toContain('supports');
-  expect(r.metrics?.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('spare');
-  expect(r.metrics?.families[0]).toMatchObject({
+  expect(r.metrics.PHYSICAL_READY_ERRORS).toBe(0);
+  expect(r.metrics.FAMILY_MEMBERSHIP_ERRORS).toBe(0);
+  expect(r.metrics.PHYSICAL_REALIZATION_RATE.concepts).toContain('supports');
+  expect(r.metrics.PHYSICAL_REALIZATION_RATE.concepts).not.toContain('spare');
+  expect(r.metrics.families[0]).toMatchObject({
     FAMILY_ROLE_RECOGNITION: true,
     FAMILY_COUNT_ACCURACY: true,
     FAMILY_MEMBERSHIP_SEMANTIC_ACCURACY: true,
@@ -263,6 +265,7 @@ it('ambiguous legal scopes remain ambiguous despite an exact semantic name', () 
   ];
   const r = scoreAllOutputs(f, { planes, connectors: [] }, i);
   expect(r.status).toBe('SCORED');
+  if (r.status !== 'SCORED') throw Error('Expected SCORED');
   expect(r.operations[0]?.attribution).toBe('AMBIGUOUS');
   expect(r.operations[0]?.dominanceMargin).toBe(0);
 });
@@ -295,6 +298,7 @@ it('Feet and lower-limb assembly are not globally interchangeable', () => {
   ];
   const r = scoreAllOutputs(f, evidence, i);
   expect(r.metrics?.PHYSICAL_READY_ERRORS).toBe(0);
+  if (r.status !== 'SCORED') throw Error('Expected SCORED');
   expect(r.operations[0]?.namedValid).toBe(false);
 });
 it('straddling source faces are refused rather than centroid-attributed', () => {

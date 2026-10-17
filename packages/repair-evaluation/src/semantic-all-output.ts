@@ -5,6 +5,11 @@ import {
   type SemanticRecord,
 } from './semantic-family-context';
 export type { SemanticRecord } from './semantic-family-context';
+import {
+  attributeSourcePlane,
+  fractionalSourceAgreement,
+  type SourcePlaneAttribution,
+} from './semantic-plane-attribution';
 import { planeSourceFaces } from './semantic-source';
 import { requiredValue } from './semantic-invariant';
 /** Research-only scoring. English never participates in physical attribution. */
@@ -41,6 +46,7 @@ export interface RealizationInput {
   native: readonly NativeProof[];
   /** IDs are actual local-output IDs; generated alternatives must not be discarded. */
   semanticRecords: readonly SemanticRecord[];
+  signal?: AbortSignal;
 }
 const normalize = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
 export function nameMatches(role: RoleTruth, label: string): boolean {
@@ -53,7 +59,7 @@ export function nameMatches(role: RoleTruth, label: string): boolean {
     ...(t.policy === 'FUNCTIONAL_OR_STRUCTURAL_ACCEPTABLE' ? t.structural : []),
   ].some((v) => normalize(v) === n);
 }
-/** Vertex-side source membership; straddling triangles require a future clipping-aware oracle. */
+/** Legacy exact-face fixture/certificate oracle. Final planes use attributeSourcePlane below. */
 export function selectedPlaneFaces(f: SemanticFixture, plane: FinalOutput['plane']): number[] {
   return planeSourceFaces(f.mesh, plane);
 }
@@ -69,14 +75,29 @@ export type AllOutputScore =
       metrics: null;
     }
   | {
+      status: 'ATTRIBUTION_UNSUPPORTED' | 'ATTRIBUTION_INVALID';
+      qualificationEligible: false;
+      validation: FixtureValidation;
+      operations: {
+        id: string;
+        attributionStatus: 'EXACT' | 'FRACTIONAL_CLIPPED' | 'UNSUPPORTED' | 'INVALID';
+        sourceAttribution?: SourcePlaneAttribution | undefined;
+        membershipError: string | null;
+      }[];
+      metrics: null;
+    }
+  | {
       status: 'SCORED';
       qualificationEligible: boolean;
       validation: FixtureValidation;
       operations: {
         id: string;
+        attributionStatus: 'EXACT' | 'FRACTIONAL_CLIPPED';
+        sourceAttribution?: SourcePlaneAttribution | undefined;
         parentId: string | null;
         generated: boolean;
         familyContext: FamilyContext;
+        /** Nonzero source-face support. Plane scoring always uses sourceAttribution.weights. */
         selected: number[];
         operationType: string;
         scopeMatches: { precision: number; recall: number; id: string }[];
@@ -89,6 +110,7 @@ export type AllOutputScore =
         nativeValid: boolean;
         familyMembershipError: boolean;
         semanticLabelResult: boolean;
+        physicalScopeMeasured: boolean;
         physicalReadyError: boolean;
         nativeReadyError: boolean;
         strictUnknownExecutable: boolean;
@@ -189,23 +211,65 @@ export function scoreAllOutputs(
   const final = input.suggestions.filter((s) => s.quality === 'READY');
   if (new Set(input.suggestions.map((s) => s.id)).size !== input.suggestions.length)
     throw Error('DUPLICATE_OUTPUT_ID');
-  const operations = final.map((s) => {
-    let selected: number[] = [],
-      membershipError: string | null = null;
-    try {
-      if (s.operation === 'COMPONENT') {
-        if (
-          !s.components.length ||
-          new Set(s.components).size !== s.components.length ||
-          s.components.some((r) => !ranks.has(r))
-        )
-          throw Error('INVALID_COMPONENT_REFERENCE');
-        selected = input.faceRank.flatMap((r, i) => (s.components.includes(r) ? [i] : []));
-      } else if (s.operation === 'PLANE') selected = selectedPlaneFaces(f, s.plane);
-      else throw Error('READY_WITHOUT_OPERATION');
-    } catch (e) {
-      membershipError = String(e);
+  const cache = new Map<string, SourcePlaneAttribution>();
+  const attributed = final.map((s) => {
+    if (s.operation === 'PLANE') {
+      const key = `${requiredValue(sourceHash)}:${digest(s.plane)}:POSITIVE`;
+      let proof = cache.get(key);
+      if (!proof) {
+        proof = attributeSourcePlane(f.mesh, s.plane, s.id, 'POSITIVE', input.signal);
+        cache.set(key, proof);
+      }
+      const sourceAttribution = { ...proof, operationId: s.id };
+      const attributionStatus =
+        proof.status === 'WHOLE_FACE_EXACT'
+          ? ('EXACT' as const)
+          : proof.status === 'FRACTIONAL_CLIPPED'
+            ? ('FRACTIONAL_CLIPPED' as const)
+            : proof.status === 'UNSUPPORTED_COPLANAR'
+              ? ('UNSUPPORTED' as const)
+              : ('INVALID' as const);
+      return {
+        id: s.id,
+        attributionStatus,
+        sourceAttribution,
+        membershipError: proof.reason ?? null,
+      };
     }
+    const valid =
+      s.operation === 'COMPONENT' &&
+      s.components.length > 0 &&
+      new Set(s.components).size === s.components.length &&
+      s.components.every((r) => ranks.has(r));
+    return {
+      id: s.id,
+      attributionStatus: valid ? ('EXACT' as const) : ('INVALID' as const),
+      membershipError: valid ? null : 'INVALID_COMPONENT_REFERENCE',
+    };
+  });
+  if (
+    attributed.some(
+      (a) => a.attributionStatus === 'UNSUPPORTED' || a.attributionStatus === 'INVALID',
+    )
+  )
+    return {
+      status: attributed.some((a) => a.attributionStatus === 'INVALID')
+        ? 'ATTRIBUTION_INVALID'
+        : 'ATTRIBUTION_UNSUPPORTED',
+      qualificationEligible: false,
+      validation,
+      operations: attributed,
+      metrics: null,
+    };
+  const operations = final.map((s, index) => {
+    const a = requiredValue(attributed[index]);
+    const weights = a.sourceAttribution?.weights;
+    const selected = weights
+      ? weights.flatMap((w, i) => (w > 0 ? [i] : []))
+      : input.faceRank.flatMap((r, i) => (s.components.includes(r) ? [i] : []));
+    const agreement = (target: readonly number[]): ReturnType<typeof sourceAgreement> =>
+      weights ? fractionalSourceAgreement(weights, target) : sourceAgreement(selected, target);
+    const membershipError = null;
     const scopes = f.roles
       .filter(
         (r) =>
@@ -214,7 +278,7 @@ export function scoreAllOutputs(
             ? r.operation === 'QUALIFIED_PLANE'
             : ['EXACT_COMPONENT', 'EXACT_COMPONENT_GROUP'].includes(r.operation)),
       )
-      .map((r) => ({ id: r.id, ...sourceAgreement(selected, r.faces) }))
+      .map((r) => ({ id: r.id, ...agreement(r.faces) }))
       .sort(
         (a, b) =>
           Math.min(b.precision, b.recall) - Math.min(a.precision, a.recall) ||
@@ -250,9 +314,7 @@ export function scoreAllOutputs(
         family &&
         (s.instanceCount !== family.count ||
           family.members.some(
-            (id) =>
-              sourceAgreement(selected, requiredValue(f.roles.find((r) => r.id === id)).faces)
-                .recall !== 1,
+            (id) => agreement(requiredValue(f.roles.find((r) => r.id === id)).faces).recall !== 1,
           )),
       ) || Boolean(memberFamily && s.instanceCount !== 1);
     const familyContext = requiredValue(contexts.get(s.id));
@@ -277,12 +339,17 @@ export function scoreAllOutputs(
       (nameMatches(role, semantic.label) ||
         (familyRole && nameMatches(familyRole, semantic.label))),
     );
-    const physicalReadyError = Boolean(membershipError) || !chosen,
+    // A plane without any legal comparison scope has no measured precision/recall.
+    // Preserve non-plane semantics; unknown execution remains a separate supported-source signal.
+    const physicalReadyError = !chosen && (s.operation !== 'PLANE' || scopes.length > 0),
       nativeReadyError = s.operation === 'PLANE' && !nativeValid,
       strictUnknownExecutable = f.strictUnknown;
-    const physicalValid = !physicalReadyError && !nativeReadyError && !strictUnknownExecutable;
+    const physicalValid =
+      Boolean(chosen) && !physicalReadyError && !nativeReadyError && !strictUnknownExecutable;
     return {
       id: s.id,
+      attributionStatus: a.attributionStatus as 'EXACT' | 'FRACTIONAL_CLIPPED',
+      sourceAttribution: a.sourceAttribution,
       parentId: s.parentId,
       generated: !graph.recordById.has(s.id),
       familyContext,
@@ -298,6 +365,7 @@ export function scoreAllOutputs(
       nativeValid,
       familyMembershipError,
       semanticLabelResult,
+      physicalScopeMeasured: scopes.length > 0,
       physicalReadyError,
       nativeReadyError,
       strictUnknownExecutable,
