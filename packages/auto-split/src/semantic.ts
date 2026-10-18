@@ -1,10 +1,16 @@
+import { structuralSeamEvidence, seamSupportsPlane } from './semantic-seam';
 import { qualifyFamilyIdentity, familyIdentityTimings } from './semantic-family-identity';
 import {
   qualifyPartialFamilyMembership,
   type PartialFamilyMembership,
 } from './semantic-partial-membership';
 import { resolveSemanticFamilySubset, type FamilySubset } from './semantic-family-subset';
-import { semanticDecompositionIntent, type SemanticDecompositionIntent } from './semantic-intent';
+import {
+  semanticDecompositionIntent,
+  SEMANTIC_INTENT_LIMITS,
+  independentPlanePeer,
+  type SemanticDecompositionIntent,
+} from './semantic-intent';
 import { directSemanticFamily, type DirectSemanticFamily } from './semantic-direct-family';
 import { buildSemanticReservations, type SemanticReservation } from './semantic-reservation';
 import { componentSemanticExtents, type SemanticExtent } from './semantic-extent';
@@ -895,12 +901,24 @@ export function decomposeSemantic(
       );
     // Geometric evidence is measured independently even when the semantic label is uncertain.
     const localPlane = localPlanes.get(part.id);
+    const seam = localPlane ? structuralSeamEvidence(refined, checkpoint) : undefined;
+    const independentAxes = localPlane
+      ? new Set(
+          localPlane.views
+            .filter((v) => v.recall >= 0.9 && v.agreement >= SEMANTIC_WORK_LIMITS.coverage)
+            .map((v) => Math.floor(v.view / 2)),
+        ).size
+      : 0;
     const decompositionIntent = localPlane
       ? semanticDecompositionIntent(
           targetSilhouetteShares,
           localPlane.capturedFraction,
-          localPlane.ownership.peers,
+          localPlane.ownership.peers.map((peer) => ({
+            ...peer,
+            independent: independentPlanePeer(part, peer.id, answer, peer, checkpoint),
+          })),
           checkpoint,
+          seam ? { seam, independentAxes } : undefined,
         )
       : undefined;
     const supportedPlane = Boolean(localPlane) && decompositionIntent?.admitted === true;
@@ -991,10 +1009,20 @@ export function decomposeSemantic(
         ? {
             semanticFinalists: [
               ...(plane ? [plane] : []),
-              ...(localPlane?.finalists ?? []).map((cut) => ({
-                normal: cut.normal,
-                origin: toSourcePoint(geometry, cut.origin),
-              })),
+              ...(localPlane?.finalists ?? [])
+                .filter(
+                  (cut) =>
+                    cut.independentComplement ||
+                    ((decompositionIntent?.rule === 'STRUCTURAL_SEAM' ||
+                      decompositionIntent?.rule === 'BOTH') &&
+                      cut.capturedFraction <=
+                        SEMANTIC_INTENT_LIMITS.maximumSelectedSourceSampleShare &&
+                      seamSupportsPlane(refined, cut, seam)),
+                )
+                .map((cut) => ({
+                  normal: cut.normal,
+                  origin: toSourcePoint(geometry, cut.origin),
+                })),
             ]
               .filter(
                 (cut, index, all) =>

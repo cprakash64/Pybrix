@@ -1,3 +1,4 @@
+import { independentPlanePeer, SEMANTIC_INTENT_LIMITS } from './semantic-intent';
 import {
   cameraFor,
   FRAME_FILL,
@@ -83,7 +84,14 @@ interface Score {
   clean: boolean;
   fraction: number;
   rawPurity: number;
-  peers: readonly { id: string; leakage: number; exactComponent: boolean; views: number }[];
+  peers: readonly {
+    id: string;
+    leakage: number;
+    exactComponent: boolean;
+    views: number;
+    independentAxes: number;
+    sameSourceComponent: boolean;
+  }[];
   views: readonly {
     view: number;
     recall: number;
@@ -94,7 +102,12 @@ interface Score {
   }[];
 }
 export interface LocalPlaneProposal {
-  readonly finalists?: readonly { readonly normal: Vec3; readonly origin: Vec3 }[];
+  readonly finalists?: readonly {
+    readonly normal: Vec3;
+    readonly origin: Vec3;
+    readonly independentComplement: boolean;
+    readonly capturedFraction: number;
+  }[];
   readonly cut: { readonly normal: Vec3; readonly origin: Vec3 };
   readonly confidence: number;
   readonly scope: 'part' | 'assembly';
@@ -454,15 +467,21 @@ function evaluate(
     if (context) context.telemetry.peerScoringPasses++;
     checkpoint();
     const leakage: number[] = [];
-    for (const row of counts) {
+    const axes = new Set<number>();
+    for (const [view, row] of counts.entries()) {
       charge();
-      if ((row.peer[i] ?? 0) >= 8) leakage.push((row.peerSelected[i] ?? 0) / defined(row.peer[i]));
+      if ((row.peer[i] ?? 0) >= 8) {
+        leakage.push((row.peerSelected[i] ?? 0) / defined(row.peer[i]));
+        axes.add(Math.floor(view / 2));
+      }
     }
     return {
       id: peer.part.id,
       leakage: robustHigh(leakage),
       exactComponent: peer.exactRanks.length > 0,
       views: leakage.length,
+      independentAxes: axes.size,
+      sameSourceComponent: peer.fused,
     };
   });
   for (const view of targetViews) {
@@ -970,6 +989,13 @@ export function synthesizeSemanticPlane(
         finalists: confirmed.map((c) => ({
           normal: c.normal,
           origin: vector(c.normal.map((n) => n * c.offset)),
+          independentComplement: c.score.peers.some(
+            (peer) =>
+              peer.views >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews &&
+              peer.leakage <= SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
+              independentPlanePeer(part, peer.id, answer, peer, checkpoint),
+          ),
+          capturedFraction: c.score.fraction,
         })),
       }
     : undefined;

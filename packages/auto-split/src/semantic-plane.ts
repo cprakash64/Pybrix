@@ -16,6 +16,8 @@ export interface SemanticPlaneRefinement {
   readonly proposedSectionLength: number;
   readonly chosenSectionLength: number;
   readonly samples: number;
+  readonly profileNormal: Vec3;
+  readonly sectionProfile: readonly { readonly offset: number; readonly length: number }[];
 }
 interface PlaneGroup {
   readonly normal: Vec3;
@@ -151,6 +153,11 @@ export function refineSemanticPlanes(
           proposedSectionLength: original,
           chosenSectionLength: group.lengths[best] ?? 0,
           samples: 9,
+          profileNormal: group.normal,
+          sectionProfile: Array.from(group.lengths, (length, i) => ({
+            offset: group.offset + ((i - 4) * SEMANTIC_PLANE_REFINEMENT_LIMITS.band) / 4,
+            length,
+          })),
         });
   }
   return { refinements, triangleVisits, milliseconds: Date.now() - started };
