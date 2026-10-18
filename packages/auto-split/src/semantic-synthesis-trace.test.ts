@@ -13,9 +13,7 @@ import type { SemanticPart, SemanticHierarchy } from '@cadfixer/auto-split-contr
 import type { PreparedSemanticGeometry } from './semantic';
 import { CancellationSource } from '@cadfixer/shared';
 
-async function terminal(
-  axis: 0 | 2,
-): Promise<{
+async function terminal(axis: 0 | 2): Promise<{
   mesh: CanonicalMesh;
   p: PreparedSemanticGeometry;
   part: SemanticPart;
