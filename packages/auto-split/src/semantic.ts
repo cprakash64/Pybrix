@@ -1,3 +1,4 @@
+import type { PlaneSynthesisTrace } from './semantic-synthesis-trace';
 import { structuralSeamEvidence, seamSupportsPlane } from './semantic-seam';
 import { qualifyFamilyIdentity, familyIdentityTimings } from './semantic-family-identity';
 import {
@@ -408,6 +409,7 @@ export interface SemanticEvidence {
   }[];
   readonly planePurity: number | null;
   readonly localPlane?: LocalPlaneProposal;
+  readonly synthesis?: PlaneSynthesisTrace;
   readonly visibility?: readonly {
     readonly rank: number;
     readonly observableViews: readonly number[];
@@ -544,6 +546,7 @@ export function decomposeSemantic(
   const planeOwnership = planeOwnershipTelemetry();
   let planeOwnershipMilliseconds = 0;
   const planeContext = {
+    synthesis: new Map<string, PlaneSynthesisTrace>(),
     telemetry: planeOwnership,
     charge: (): void => {
       if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
@@ -1052,6 +1055,7 @@ export function decomposeSemantic(
     suggestions.push(s);
     evidence.push({
       id: part.id,
+      synthesis: required(planeContext.synthesis.get(part.id), 'plane synthesis diagnostics'),
       ...(decompositionIntent ? { decompositionIntent } : {}),
       confidence: {
         objectConfidence: answer.object.confidence,

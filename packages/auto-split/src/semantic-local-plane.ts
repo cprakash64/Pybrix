@@ -1,3 +1,11 @@
+import {
+  planeSynthesisTrace,
+  PLANE_NORMAL_SOURCES,
+  type PlaneSynthesisTrace,
+  type PlaneNormalSource,
+  type PlaneOffsetSource,
+  type PlaneCandidateProvenance,
+} from './semantic-synthesis-trace';
 import { independentPlanePeer, SEMANTIC_INTENT_LIMITS } from './semantic-intent';
 import {
   cameraFor,
@@ -47,6 +55,7 @@ export const planeOwnershipTelemetry = (): PlaneOwnershipTelemetry => ({
 export interface PlaneOwnershipContext {
   readonly telemetry: PlaneOwnershipTelemetry;
   readonly charge: () => void;
+  readonly synthesis?: Map<string, PlaneSynthesisTrace>;
 }
 interface Observation {
   point: Vec3;
@@ -102,11 +111,13 @@ interface Score {
   }[];
 }
 export interface LocalPlaneProposal {
+  readonly provenance?: PlaneCandidateProvenance;
   readonly finalists?: readonly {
     readonly normal: Vec3;
     readonly origin: Vec3;
     readonly independentComplement: boolean;
     readonly capturedFraction: number;
+    readonly provenance?: PlaneCandidateProvenance;
   }[];
   readonly cut: { readonly normal: Vec3; readonly origin: Vec3 };
   readonly confidence: number;
@@ -296,11 +307,18 @@ function observations(
     }
   }
   const dominant = prepared.facts.findIndex((f) => f.areaShare >= 0.5);
+  // Opposite views on one axis can both be occluded by a terminal region. They
+  // cannot prove that region is the whole component and suppress plane synthesis.
+  // This stronger prefilter witness does not change any plane-admission gate.
   const rankGrounded = (rank: number, owner: (vi: number) => number): boolean =>
-    VIEW_NAMES.filter(
-      (_v, vi) =>
-        owner(vi) >= 8 && owner(vi) / Math.max(1, rankTotals[vi * ranks + rank] ?? 0) >= 0.82,
-    ).length >= 2;
+    new Set(
+      VIEW_NAMES.flatMap((_v, vi) => {
+        checkpoint();
+        return owner(vi) >= 8 && owner(vi) / Math.max(1, rankTotals[vi * ranks + rank] ?? 0) >= 0.82
+          ? [Math.floor(vi / 2)]
+          : [];
+      }),
+    ).size >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews;
   const targetOnDominant =
     VIEW_NAMES.filter((_v, vi) => {
       const n = target[vi] ?? 0;
@@ -431,6 +449,7 @@ function evaluate(
   counts: readonly Counts[],
   context?: PlaneOwnershipContext,
   checkpoint: Checkpoint = NO_CHECKPOINT,
+  trace?: PlaneSynthesisTrace,
 ): Score | undefined {
   const charge = (): void => {
     if (context) {
@@ -440,7 +459,10 @@ function evaluate(
   };
   const selected = counts.reduce((n, c) => n + c.selected, 0),
     fraction = selected / Math.max(1, evidence.points.length);
-  if (fraction <= 0.02 || fraction >= 0.98) return undefined;
+  if (fraction <= 0.02 || fraction >= 0.98) {
+    if (trace) trace.scoreRefusals.balance++;
+    return undefined;
+  }
   const targetViews = counts.flatMap((r, view) =>
     r.target >= 8 && r.selected >= 8
       ? [
@@ -455,14 +477,22 @@ function evaluate(
         ]
       : [],
   );
+  if (targetViews.length < 2) {
+    if (trace) trace.scoreRefusals.views++;
+    return undefined;
+  }
   if (
-    targetViews.length < 2 ||
     targetViews.filter((v) => v.recall >= 0.9).length < 2 ||
     targetViews.some((v) => v.recall < 0.65)
-  )
+  ) {
+    if (trace) trace.scoreRefusals.viewRecall++;
     return undefined;
+  }
   const recall = targetViews.reduce((n, v) => n + v.recall, 0) / targetViews.length;
-  if (recall < 0.9) return undefined;
+  if (recall < 0.9) {
+    if (trace) trace.scoreRefusals.meanRecall++;
+    return undefined;
+  }
   const peers = evidence.peers.map((peer, i) => {
     if (context) context.telemetry.peerScoringPasses++;
     checkpoint();
@@ -544,6 +574,8 @@ function directScore(
   return evaluate(evidence, rows, context, checkpoint);
 }
 interface Candidate {
+  normalSourceMask?: number;
+  offsetSource?: PlaneOffsetSource;
   normal: Vec3;
   offset: number;
   score: Score;
@@ -646,6 +678,17 @@ function proposal(
       (evidence.fusedTarget && !part.expectedGeometry.likelySeparable && score.rawPurity < 0.9);
   const anchor = Math.min(1, ...score.peers.filter((p) => p.views >= 2).map((p) => p.leakage));
   return {
+    ...(candidate.offsetSource
+      ? {
+          provenance: {
+            normalSources: PLANE_NORMAL_SOURCES.filter(
+              (_s, i) => (candidate.normalSourceMask ?? 0) & (1 << i),
+            ),
+            offsetSource: candidate.offsetSource,
+            refined: false,
+          },
+        }
+      : {}),
     cut: {
       normal: candidate.normal,
       origin: vector(candidate.normal.map((n) => n * candidate.offset)),
@@ -695,17 +738,43 @@ export function synthesizeSemanticPlane(
   context?: PlaneOwnershipContext,
 ): LocalPlaneProposal | undefined {
   context = boundedContext(context);
-  if (
-    part.importance !== 'major' ||
-    part.instances !== 1 ||
-    part.expectedGeometry.kind === 'surface_part' ||
-    part.views.length < 2 ||
-    Math.min(answer.object.confidence, part.confidence) < SEMANTIC_WORK_LIMITS.semanticConfidence
-  )
-    return undefined;
+  const trace = planeSynthesisTrace();
+  context.synthesis?.set(part.id, trace);
+  trace.inputRefusal =
+    part.importance !== 'major'
+      ? 'NOT_MAJOR'
+      : part.instances !== 1
+        ? 'MULTIPLE_INSTANCES'
+        : part.expectedGeometry.kind === 'surface_part'
+          ? 'SURFACE_ONLY'
+          : part.views.length < 2
+            ? 'INSUFFICIENT_VIEWS'
+            : Math.min(answer.object.confidence, part.confidence) <
+                SEMANTIC_WORK_LIMITS.semanticConfidence
+              ? 'SEMANTIC_CONFIDENCE'
+              : null;
+  if (trace.inputRefusal) return undefined;
   const evidence = observations(prepared, answer, part, checkpoint, context),
-    points = evidence.points,
-    target = points.filter((p) => p.target).map((p) => p.point);
+    points = evidence.points;
+  const target: Vec3[] = [];
+  trace.views = VIEW_NAMES.map((_v, view) => ({ view, foreground: 0, target: 0 }));
+  // Collect compact counts while extracting the existing target samples.
+  for (const [i, p] of points.entries()) {
+    if ((i & 1023) === 0) checkpoint();
+    const row = defined(trace.views[p.view]);
+    row.foreground++;
+    if (p.target) {
+      target.push(p.point);
+      row.target++;
+    }
+  }
+  trace.foregroundSamples = points.length;
+  trace.targetSamples = target.length;
+  trace.exactTarget = evidence.exactTarget;
+  trace.phase =
+    target.length < 32 || target.length / Math.max(1, points.length) >= 0.995
+      ? 'TARGET_SAMPLES_REFUSED'
+      : 'EXACT_COMPONENT_WITNESS';
   if (
     target.length < 32 ||
     target.length / Math.max(1, points.length) >= 0.995 ||
@@ -717,30 +786,45 @@ export function synthesizeSemanticPlane(
     context.charge();
   };
   const normals: Vec3[] = [];
-  const add = (raw: Vec3): void => {
+  const normalMasks: number[] = [];
+  const add = (raw: Vec3, source: PlaneNormalSource = 'CANONICAL_AXES_AND_DIAGONALS'): void => {
     const n = unit(raw);
-    if (
-      n &&
-      normals.length < LOCAL_PLANE_LIMITS.normals &&
-      !normals.some((x) => Math.abs(dot(x, n)) > 0.999)
-    )
+    trace.normalAttempts++;
+    if (!n) {
+      trace.normalRefusals.degenerate++;
+      return;
+    }
+    const mask = 1 << PLANE_NORMAL_SOURCES.indexOf(source);
+    const parallel = normals.findIndex((x) => Math.abs(dot(x, n)) > 0.999);
+    if (parallel >= 0) {
+      trace.normalRefusals.parallel++;
+      normalMasks[parallel] = (normalMasks[parallel] ?? 0) | mask;
+    } else if (normals.length >= LOCAL_PLANE_LIMITS.normals) trace.normalRefusals.cap++;
+    else {
       normals.push(n);
+      normalMasks.push(mask);
+    }
   };
   for (let x = -1; x <= 1; x++)
     for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) add([x, y, z]);
-  for (const n of principal(target)) add(n);
-  for (const n of principal(points.map((p) => p.point))) add(n);
+  for (const n of principal(target)) add(n, 'TARGET_PCA');
+  for (const n of principal(points.map((p) => p.point))) add(n, 'MODEL_PCA');
   const center = mean(target);
   for (let i = 0; i < evidence.peers.length; i++) {
     checkpoint();
     const peer = mean(points.filter((p) => p.peerMask & (1 << i)).map((p) => p.point));
-    add(vector(center.map((v, a) => v - defined(peer[a]))));
+    add(vector(center.map((v, a) => v - defined(peer[a]))), 'PEER_DIRECTION');
   }
-  if (part.cut) add(part.cut.normal);
+  if (part.cut) add(part.cut.normal, 'PROVIDER_HINT');
+  trace.normalCandidates = normals.map((normal, i) => ({
+    normal,
+    sources: PLANE_NORMAL_SOURCES.filter((_s, j) => (normalMasks[i] ?? 0) & (1 << j)),
+  }));
+  trace.phase = 'NO_ELIGIBLE_CANDIDATE';
   const candidates: Candidate[] = [],
     bins = LOCAL_PLANE_LIMITS.offsets,
     channels = 5 + evidence.peers.length;
-  for (const normal of normals) {
+  for (const [normalIndex, normal] of normals.entries()) {
     checkpoint();
     context.telemetry.normals++;
     const projected = new Float64Array(points.length),
@@ -810,32 +894,37 @@ export function synthesizeSemanticPlane(
           prefix[(v * channels + c) * (bins + 1) + bin + 1] = sum;
         }
       }
+    const offsetSources: PlaneOffsetSource[] = [];
     const offsets: number[] = [],
       epsilon = (hi - lo) * 1e-8;
-    const offset = (d: number): void => {
+    const offset = (d: number, source: PlaneOffsetSource = 'SEMANTIC_TRANSITION'): void => {
       if (
         Number.isFinite(d) &&
         offsets.length < bins &&
         !offsets.some((x) => Math.abs(x - d) < epsilon)
-      )
+      ) {
         offsets.push(d);
+        offsetSources.push(source);
+        trace.offsetCandidates++;
+        trace.offsetSources[source]++;
+      }
     };
     // Semantic starts/ends and nearest peer transitions precede any geometric preference.
-    offset(targetLo - epsilon);
-    offset(targetHi + epsilon);
+    offset(targetLo - epsilon, 'TARGET_MIN');
+    offset(targetHi + epsilon, 'TARGET_MAX');
     for (let j = 0; j < evidence.peers.length; j++) {
       checkpoint();
       const a = defined(peerLo[j]),
         b = defined(peerHi[j]);
-      if ((a + b) / 2 < (targetLo + targetHi) / 2) offset((targetLo + b) / 2);
-      else offset((targetHi + a) / 2);
+      if ((a + b) / 2 < (targetLo + targetHi) / 2) offset((targetLo + b) / 2, 'PEER_INTERVAL');
+      else offset((targetHi + a) / 2, 'PEER_INTERVAL');
     }
     if (
       part.cut &&
       Math.abs(dot(part.cut.normal, normal)) / Math.max(1e-9, Math.hypot(...part.cut.normal)) >
         0.999
     )
-      offset(dot(part.cut.origin, normal));
+      offset(dot(part.cut.origin, normal), 'PROVIDER_HINT');
     const aggregate = (channel: number, bin: number): number =>
       VIEW_NAMES.reduce((sum, _view, vi) => sum + (hist[slot(vi, channel, bin)] ?? 0), 0);
     for (let bin = 1; bin < bins; bin++) {
@@ -869,7 +958,7 @@ export function synthesizeSemanticPlane(
         6 * channels * Uint32Array.BYTES_PER_ELEMENT,
     );
 
-    for (const d of offsets) {
+    for (const [offsetIndex, d] of offsets.entries()) {
       checkpoint();
       const bin = Math.min(bins - 1, Math.max(0, Math.floor(((d - lo) / (hi - lo)) * bins))),
         below = new Uint32Array(6 * channels);
@@ -891,6 +980,7 @@ export function synthesizeSemanticPlane(
       }
       for (const side of [1, -1]) {
         context.telemetry.offsets++;
+        trace.orientedOffsets++;
         const rows = emptyCounts(evidence.peers.length);
         for (let v = 0; v < 6; v++) {
           const row = defined(rows[v]);
@@ -908,9 +998,11 @@ export function synthesizeSemanticPlane(
             row.peerSelected[j] = selected(5 + j);
           }
         }
-        const score = evaluate(evidence, rows, context, checkpoint);
+        const score = evaluate(evidence, rows, context, checkpoint, trace);
         if (score)
           candidates.push({
+            normalSourceMask: defined(normalMasks[normalIndex]),
+            offsetSource: defined(offsetSources[offsetIndex]),
             normal: vector(normal.map((n) => n * side)),
             offset: d * side,
             score,
@@ -930,6 +1022,9 @@ export function synthesizeSemanticPlane(
     checkpoint();
     return assemblyEligible(evidence, answer, part, c, candidates, checkpoint, charge);
   });
+  trace.scoredCandidates = candidates.length;
+  trace.ownershipEligible = eligible.length;
+  trace.phase = eligible.length ? 'NO_CONFIRMED_FINALIST' : 'NO_ELIGIBLE_CANDIDATE';
   const beam: Candidate[] = [];
   for (const c of eligible) {
     checkpoint();
@@ -937,6 +1032,7 @@ export function synthesizeSemanticPlane(
       beam.push(c);
     if (beam.length >= LOCAL_PLANE_LIMITS.finalists) break;
   }
+  trace.beam = beam.length;
   const stride = Math.max(
     1,
     Math.ceil(prepared.geometry.faceCount / LOCAL_PLANE_LIMITS.sectionFaces),
@@ -982,7 +1078,9 @@ export function synthesizeSemanticPlane(
     charge();
     return semanticOrder(a, b);
   });
+  trace.confirmed = confirmed.length;
   const winner = confirmed[0];
+  if (winner) trace.phase = 'PROPOSAL';
   return winner
     ? {
         ...proposal(winner, evidence, part, candidates, answer, checkpoint, charge),
@@ -996,6 +1094,13 @@ export function synthesizeSemanticPlane(
               independentPlanePeer(part, peer.id, answer, peer, checkpoint),
           ),
           capturedFraction: c.score.fraction,
+          provenance: {
+            normalSources: PLANE_NORMAL_SOURCES.filter(
+              (_s, i) => (c.normalSourceMask ?? 0) & (1 << i),
+            ),
+            offsetSource: c.offsetSource ?? 'SEMANTIC_TRANSITION',
+            refined: false,
+          },
         })),
       }
     : undefined;
@@ -1037,6 +1142,14 @@ export function confirmSemanticPlane(
   });
   return {
     ...result,
+    ...(previous.provenance
+      ? {
+          provenance: {
+            ...previous.provenance,
+            refined: Math.abs(dot(previous.cut.origin, normal) - offset) > 1e-8,
+          },
+        }
+      : {}),
     ...(previous.finalists ? { finalists: previous.finalists } : {}),
     candidates: previous.candidates,
     ownership: { ...result.ownership, frontierCandidates: previous.ownership.frontierCandidates },
