@@ -14,6 +14,7 @@ let current:
       mesh: WeakRef<CanonicalMesh>;
       preparationId: number;
       candidates: Map<string, NonNullable<Suggestion['semanticFinalists']>>;
+      groups: Map<string, { key: string; opposite: boolean }>;
       winners: Map<string, NonNullable<Suggestion['plane']>>;
       parts: Set<string>;
       attempts: number;
@@ -45,6 +46,12 @@ export function registerSemanticNativeFinalists(
           ),
         ]),
     ),
+    groups: new Map(
+      suggestions.map((s) => [
+        s.id,
+        { key: s.sharedBoundary?.key ?? s.id, opposite: s.sharedBoundary?.side === 'COMPLEMENT' },
+      ]),
+    ),
     winners: new Map(),
     parts: new Set(),
     attempts: 0,
@@ -74,20 +81,24 @@ export function semanticNativePlan(
     throw invalidState('Find parts again before checking this cut.');
   // A later explicit connector/unit Preview rechecks only the already-qualified plane.
   // No geometry is cached here, and no alternative search runs on that user-requested refresh.
-  const winner = c.winners.get(identity.candidateId);
-  if (winner && samePlane(winner, payload.request.plane))
+  const group = c.groups.get(identity.candidateId);
+  if (!group) throw invalidState('Find parts again before checking this cut.');
+  const canonicalWinner = c.winners.get(group.key);
+  const winner =
+    canonicalWinner && group.opposite ? oppositePlane(canonicalWinner) : canonicalWinner;
+  if (winner && (group.key !== identity.candidateId || samePlane(winner, payload.request.plane)))
     return {
       planes: [winner],
       charge: (): void => {
         /* Explicit refresh: no new fallback search budget. */
       },
     };
-  if (!c.parts.has(identity.candidateId) && c.parts.size >= c.policy.parts)
+  if (!c.parts.has(group.key) && c.parts.size >= c.policy.parts)
     throw invalidState('No safe split found.', { code: 'SEMANTIC_NATIVE_BUDGET_EXHAUSTED' });
   const remaining = Math.max(0, c.policy.attempts - c.attempts);
   if (!remaining)
     throw invalidState('No safe split found.', { code: 'SEMANTIC_NATIVE_BUDGET_EXHAUSTED' });
-  c.parts.add(identity.candidateId);
+  c.parts.add(group.key);
   const ordered = [...planes].sort(
     (a, b) =>
       Number(samePlane(b, payload.request.plane)) - Number(samePlane(a, payload.request.plane)),
@@ -113,6 +124,12 @@ export function recordSemanticNativeWinner(
     c.preparationId !== identity.preparationId
   )
     return false;
-  c.winners.set(identity.candidateId, plane);
+  const group = c.groups.get(identity.candidateId);
+  if (!group) return false;
+  c.winners.set(group.key, group.opposite ? oppositePlane(plane) : plane);
   return true;
+}
+
+function oppositePlane(p: NonNullable<Suggestion['plane']>): NonNullable<Suggestion['plane']> {
+  return { normal: [-p.normal[0], -p.normal[1], -p.normal[2]], origin: p.origin };
 }

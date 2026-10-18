@@ -81,6 +81,13 @@ export interface Suggestion {
   readonly diagnostic?: 'CONFIRMED_FUSED' | 'MAPPING_UNCERTAIN' | 'NO_REALIZATION_PROPOSAL';
   /** Semantically admitted alternatives, never native-validity claims. At most three. */
   readonly semanticFinalists?: readonly SuggestedPlane[];
+  /** Two identities for one physical partition and one shared native finalist pool. */
+  readonly sharedBoundary?: {
+    readonly key: string;
+    readonly primaryId: string;
+    readonly complementId: string;
+    readonly side: 'PRIMARY' | 'COMPLEMENT';
+  };
   readonly semanticPreparationId?: number;
   readonly instanceCount?: number;
 }

@@ -583,14 +583,30 @@ export class AutoSplitSession {
   public nativeQualified(proof: NonNullable<SplitCreateResult['semanticQualification']>): void {
     const result = this.snapshot.result;
     if (!result || this.snapshot.stale || this.snapshot.selectedId !== proof.candidateId) return;
+    const target = result.suggestions.find((s) => s.id === proof.candidateId);
     this.set({
       result: {
         ...result,
         suggestions: result.suggestions.map((s) =>
-          s.id === proof.candidateId &&
+          (s.id === proof.candidateId ||
+            (target?.sharedBoundary && s.sharedBoundary?.key === target.sharedBoundary.key)) &&
           s.semanticPreparationId === proof.preparationId &&
           s.operation === 'PLANE'
-            ? { ...s, quality: 'READY' as const, plane: proof.plane }
+            ? {
+                ...s,
+                quality: 'READY' as const,
+                plane:
+                  target?.sharedBoundary && s.sharedBoundary?.side !== target.sharedBoundary.side
+                    ? {
+                        normal: [
+                          -proof.plane.normal[0],
+                          -proof.plane.normal[1],
+                          -proof.plane.normal[2],
+                        ] as const,
+                        origin: proof.plane.origin,
+                      }
+                    : proof.plane,
+              }
             : s,
         ),
       },
@@ -599,11 +615,14 @@ export class AutoSplitSession {
   public nativeRefused(id: string): void {
     const result = this.snapshot.result;
     if (!result || this.snapshot.stale) return;
+    const target = result.suggestions.find((s) => s.id === id);
     this.set({
       result: {
         ...result,
         suggestions: result.suggestions.map((s) =>
-          s.id === id && s.quality === 'SUGGESTED'
+          (s.id === id ||
+            (target?.sharedBoundary && s.sharedBoundary?.key === target.sharedBoundary.key)) &&
+          s.quality === 'SUGGESTED'
             ? {
                 ...s,
                 quality: 'UNSAFE' as const,

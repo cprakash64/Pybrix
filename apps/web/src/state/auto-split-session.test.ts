@@ -714,7 +714,7 @@ describe('semantic preparation cleanup', () => {
 });
 
 describe('semantic final READY lifecycle', () => {
-  async function suggested(): Promise<Rig> {
+  async function suggested(pair = false): Promise<Rig> {
     const r = rig();
     ready(r);
     r.session.analyze(target());
@@ -724,7 +724,39 @@ describe('semantic final READY lifecycle', () => {
     await flush();
     r.suggest.resolve(
       suggestResult('human', [
-        { ...HEAD, family: 'semantic', quality: 'SUGGESTED', semanticPreparationId: 7 },
+        {
+          ...HEAD,
+          family: 'semantic',
+          quality: 'SUGGESTED',
+          semanticPreparationId: 7,
+          ...(pair
+            ? {
+                sharedBoundary: {
+                  key: 'shared',
+                  primaryId: 'head',
+                  complementId: 'peer',
+                  side: 'PRIMARY' as const,
+                },
+              }
+            : {}),
+        },
+        ...(pair
+          ? [
+              {
+                ...HEAD,
+                id: 'peer',
+                family: 'semantic' as const,
+                quality: 'SUGGESTED' as const,
+                semanticPreparationId: 7,
+                sharedBoundary: {
+                  key: 'shared',
+                  primaryId: 'head',
+                  complementId: 'peer',
+                  side: 'COMPLEMENT' as const,
+                },
+              },
+            ]
+          : []),
       ]),
     );
     await flush();
@@ -748,6 +780,33 @@ describe('semantic final READY lifecycle', () => {
     r.session.nativeQualified(proof);
     expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('READY');
     expect(r.session.getSnapshot().result?.suggestions[0]?.plane).toEqual(proof.plane);
+  });
+  it('one Preview promotes both shared identities and one refusal withdraws both', async () => {
+    const r = await suggested(true);
+    r.session.nativeQualified({ ...proof, preparationId: 6 });
+    expect(r.session.getSnapshot().result?.suggestions.map((s) => s.quality)).toEqual([
+      'SUGGESTED',
+      'SUGGESTED',
+    ]);
+    r.session.nativeQualified(proof);
+    const rows = r.session.getSnapshot().result?.suggestions ?? [];
+    expect(rows).toHaveLength(2);
+    expect(rows.map((s) => s.quality)).toEqual(['READY', 'READY']);
+    expect(rows[1]?.plane).toEqual({
+      origin: proof.plane.origin,
+      normal: proof.plane.normal.map((n) => -n),
+    });
+    const failed = await suggested(true);
+    failed.session.nativeRefused('head');
+    expect(failed.session.getSnapshot().result?.suggestions.map((s) => s.operation)).toEqual([
+      'NONE',
+      'NONE',
+    ]);
+    failed.session.nativeQualified(proof);
+    expect(failed.session.getSnapshot().result?.suggestions.map((s) => s.quality)).toEqual([
+      'UNSAFE',
+      'UNSAFE',
+    ]);
   });
   it('all native failures withdraw execution and cannot later be rescued by a stale completion', async () => {
     const r = await suggested();

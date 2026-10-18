@@ -1115,44 +1115,56 @@ export function confirmSemanticPlane(
   checkpoint: Checkpoint,
   context?: PlaneOwnershipContext,
 ): LocalPlaneProposal | undefined {
-  context = boundedContext(context);
+  return semanticPlaneScorer(prepared, answer, part, previous, checkpoint, context)(cut);
+}
+export function semanticPlaneScorer(
+  prepared: PreparedSemanticGeometry,
+  answer: SemanticHierarchy,
+  part: SemanticPart,
+  previous: LocalPlaneProposal,
+  checkpoint: Checkpoint,
+  context?: PlaneOwnershipContext,
+): (cut: NonNullable<SemanticPart['cut']>) => LocalPlaneProposal | undefined {
+  const bounded = boundedContext(context);
   // Local synthesis may set a derived separability flag. Aggregate intent must use the raw semantics.
   part = answer.parts.find((p) => p.id === part.id) ?? part;
-  const normal = unit(cut.normal);
-  if (!normal) return undefined;
-  const evidence = observations(prepared, answer, part, checkpoint, context),
-    offset = dot(cut.origin, normal),
-    score = directScore(evidence, normal, offset, checkpoint, context);
-  if (!score) return undefined;
-  const candidate = { normal, offset, score, section: previous.sectionSamples };
-  if (!score.clean) {
-    if (
-      previous.ownership.rule !== 'BEST_FEASIBLE_FUSED_ASSEMBLY' ||
-      !assemblyEligible(evidence, answer, part, candidate, []) ||
-      score.recall < previous.ownership.targetRecall - 1e-9 ||
-      score.purity < previous.ownership.semanticPurity - 1e-9 ||
-      score.worstLeakage > previous.ownership.worstPeerLeakage + 1e-9
-    )
-      return undefined;
-  }
-  checkpoint();
-  const result = proposal(candidate, evidence, part, [], answer, checkpoint, (): void => {
-    context.telemetry.workUnits++;
-    context.charge();
-  });
-  return {
-    ...result,
-    ...(previous.provenance
-      ? {
-          provenance: {
-            ...previous.provenance,
-            refined: Math.abs(dot(previous.cut.origin, normal) - offset) > 1e-8,
-          },
-        }
-      : {}),
-    ...(previous.finalists ? { finalists: previous.finalists } : {}),
-    candidates: previous.candidates,
-    ownership: { ...result.ownership, frontierCandidates: previous.ownership.frontierCandidates },
+  const evidence = observations(prepared, answer, part, checkpoint, bounded);
+  return (cut) => {
+    const normal = unit(cut.normal);
+    if (!normal) return undefined;
+    const offset = dot(cut.origin, normal),
+      score = directScore(evidence, normal, offset, checkpoint, bounded);
+    if (!score) return undefined;
+    const candidate = { normal, offset, score, section: previous.sectionSamples };
+    if (!score.clean) {
+      if (
+        previous.ownership.rule !== 'BEST_FEASIBLE_FUSED_ASSEMBLY' ||
+        !assemblyEligible(evidence, answer, part, candidate, []) ||
+        score.recall < previous.ownership.targetRecall - 1e-9 ||
+        score.purity < previous.ownership.semanticPurity - 1e-9 ||
+        score.worstLeakage > previous.ownership.worstPeerLeakage + 1e-9
+      )
+        return undefined;
+    }
+    checkpoint();
+    const result = proposal(candidate, evidence, part, [], answer, checkpoint, (): void => {
+      bounded.telemetry.workUnits++;
+      bounded.charge();
+    });
+    return {
+      ...result,
+      ...(previous.provenance
+        ? {
+            provenance: {
+              ...previous.provenance,
+              refined: Math.abs(dot(previous.cut.origin, normal) - offset) > 1e-8,
+            },
+          }
+        : {}),
+      ...(previous.finalists ? { finalists: previous.finalists } : {}),
+      candidates: previous.candidates,
+      ownership: { ...result.ownership, frontierCandidates: previous.ownership.frontierCandidates },
+    };
   };
 }
 function defined<T>(value: T | undefined): T {

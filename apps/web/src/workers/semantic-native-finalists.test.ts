@@ -126,6 +126,38 @@ describe('revision-scoped scalar native finalist plan', () => {
       refresh.charge();
     }).not.toThrow();
   });
+  it('one shared fallback winner binds both identities to opposite sides without a second search', () => {
+    const mesh = box([-1, -1, -1], [1, 1, 3]);
+    const opposite = (p: (typeof planes)[number]): NonNullable<Suggestion['plane']> => ({
+      origin: p.origin,
+      normal: [-p.normal[0], -p.normal[1], -p.normal[2]] as const,
+    });
+    const pair = suggestions.slice(0, 2).map((s, i) => ({
+      ...s,
+      sharedBoundary: {
+        key: 'pair',
+        primaryId: 'a',
+        complementId: 'b',
+        side: i === 0 ? ('PRIMARY' as const) : ('COMPLEMENT' as const),
+      },
+      plane: i === 0 ? required(planes[0]) : opposite(required(planes[0])),
+      semanticFinalists: i === 0 ? planes : planes.map(opposite),
+    }));
+    registerSemanticNativeFinalists(source, 'part', mesh, 7, pair);
+    const first = planFor(payload(), mesh);
+    first.charge();
+    first.charge();
+    expect(recordSemanticNativeWinner(payload(), required(planes[1]))).toBe(true);
+    const bPayload = {
+      ...payload('b'),
+      request: { plane: opposite(required(planes[0])), connector: { kind: 'none' as const } },
+    };
+    expect(planFor(bPayload, mesh).planes).toEqual([opposite(required(planes[1]))]);
+    expect(planFor(payload(), mesh).planes).toEqual([planes[1]]);
+    expect(() => {
+      planFor(bPayload, mesh).charge();
+    }).not.toThrow();
+  });
   it('retiring an analysis invalidates all of its candidate identities', () => {
     const mesh = box([-1, -1, -1], [1, 1, 1]);
     registerSemanticNativeFinalists(source, 'part', mesh, 7, suggestions);

@@ -1,3 +1,7 @@
+import {
+  reconcileComplementarySiblings,
+  type ComplementarySiblingPair,
+} from './semantic-complementary';
 import type { PlaneSynthesisTrace } from './semantic-synthesis-trace';
 import { structuralSeamEvidence, seamSupportsPlane } from './semantic-seam';
 import { qualifyFamilyIdentity, familyIdentityTimings } from './semantic-family-identity';
@@ -418,6 +422,9 @@ export interface SemanticEvidence {
   readonly reason: string;
 }
 export interface SemanticDecomposition extends SuggestionResult {
+  readonly complementaryPairs?: readonly ComplementarySiblingPair[];
+  readonly ambiguousComplementaryPairs?: readonly string[];
+  readonly complementaryPairingDiagnostic?: 'AMBIGUOUS_COMPLEMENTARY_PAIR';
   readonly reservations?: readonly SemanticReservation[];
   readonly candidates: readonly SemanticCandidate[];
   readonly objectLabel: string;
@@ -561,6 +568,14 @@ export function decomposeSemantic(
     planeOwnershipMilliseconds += Date.now() - planeStarted;
     if (proposal) localPlanes.set(part.id, proposal);
   }
+  const complementary = reconcileComplementarySiblings(
+    prepared,
+    answer,
+    localPlanes,
+    checkpoint,
+    planeContext,
+  );
+  const pairedIds = new Set(complementary.pairs.flatMap((p) => [p.primaryId, p.complementId]));
   const localParts = answer.parts.map((part) => {
     const proposal = localPlanes.get(part.id);
     return proposal
@@ -575,6 +590,7 @@ export function decomposeSemantic(
     geometry,
     localParts.filter(
       (p) =>
+        !pairedIds.has(p.id) &&
         Math.min(answer.object.confidence, p.confidence) >= SEMANTIC_WORK_LIMITS.semanticConfidence,
     ),
     checkpoint,
@@ -1337,67 +1353,133 @@ export function decomposeSemantic(
         refused.add(b.id);
       }
     }
-  // One bounded source-face pass rejects shared sibling ownership across component and plane paths.
-  // Plane boundaries may share preview caps intentionally, but no source face is claimed by two sibling interiors.
-  const planes = suggestions.filter((s) => s.operation === SuggestionOperation.Plane && s.plane);
-  if (planes.length > 0) {
-    const owners = new Map<number, Suggestion[]>();
-    for (const s of suggestions)
-      if (s.operation === SuggestionOperation.Component && !refused.has(s.id))
-        for (const rank of s.components) owners.set(rank, [...(owners.get(rank) ?? []), s]);
-    const claimed: Suggestion[] = [];
-    const coefficients = planes.map((s) => {
-      const p = required(s.plane, 's.plane');
-      return {
-        suggestion: s,
-        normal: p.normal,
-        offset: p.normal.reduce(
-          (sum, n, a) =>
-            sum + (n * ((p.origin[a] ?? 0) - (geometry.center[a] ?? 0))) / geometry.scale,
-          0,
-        ),
-      };
-    });
-    for (let f = 0; f < geometry.faceCount; f++) {
-      if (f % CHECKPOINT_STRIDE === 0) checkpoint();
-      if (!planes.some((s) => !refused.has(s.id))) break;
-      let x = 0,
-        y = 0,
-        z = 0;
-      for (let k = 0; k < 3; k++) {
-        const v = (geometry.indices[f * 3 + k] ?? 0) * 3;
-        x += (geometry.positions[v] ?? 0) / 3;
-        y += (geometry.positions[v + 1] ?? 0) / 3;
-        z += (geometry.positions[v + 2] ?? 0) / 3;
-      }
-      claimed.length = 0;
-      for (const p of coefficients)
-        if (
-          !refused.has(p.suggestion.id) &&
-          x * p.normal[0] + y * p.normal[1] + z * p.normal[2] - p.offset > 1e-7
-        )
-          claimed.push(p.suggestion);
-      const componentOwners = owners.get(labelling.faceRank[f] ?? -1);
-      if (componentOwners) for (const owner of componentOwners) claimed.push(owner);
-      for (let i = 0; i < claimed.length; i++)
-        for (let j = i + 1; j < claimed.length; j++) {
-          const a = required(claimed[i], 'claimed[i]'),
-            b = required(claimed[j], 'claimed[j]');
-          if (!ancestor(a, b) && !ancestor(b, a)) {
-            // Exact source groups take precedence. Conflicting synthesized cuts are alternatives,
-            // not simultaneously owned source faces: retain only the stronger supported proposal.
-            if (a.operation === SuggestionOperation.Component) refused.add(b.id);
-            else if (b.operation === SuggestionOperation.Component) refused.add(a.id);
-            else {
-              const order =
-                (a.semanticConfidence ?? 0) - (b.semanticConfidence ?? 0) ||
-                (a.geometryConfidence ?? 0) - (b.geometryConfidence ?? 0) ||
-                b.id.localeCompare(a.id);
-              refused.add(order >= 0 ? b.id : a.id);
+  const checkSiblingOwnership = (
+    choices: readonly Suggestion[],
+    initial: ReadonlySet<string>,
+  ): Set<string> => {
+    const suggestions = choices;
+    const refused = new Set(initial);
+    // One bounded source-face pass rejects shared sibling ownership across component and plane paths.
+    // Plane boundaries may share preview caps intentionally, but no source face is claimed by two sibling interiors.
+    const planes = suggestions.filter((s) => s.operation === SuggestionOperation.Plane && s.plane);
+    if (planes.length > 0) {
+      const owners = new Map<number, Suggestion[]>();
+      for (const s of suggestions)
+        if (s.operation === SuggestionOperation.Component && !refused.has(s.id))
+          for (const rank of s.components) owners.set(rank, [...(owners.get(rank) ?? []), s]);
+      const claimed: Suggestion[] = [];
+      const coefficients = planes.map((s) => {
+        const p = required(s.plane, 's.plane');
+        return {
+          suggestion: s,
+          normal: p.normal,
+          offset: p.normal.reduce(
+            (sum, n, a) =>
+              sum + (n * ((p.origin[a] ?? 0) - (geometry.center[a] ?? 0))) / geometry.scale,
+            0,
+          ),
+        };
+      });
+      for (let f = 0; f < geometry.faceCount; f++) {
+        if (f % CHECKPOINT_STRIDE === 0) checkpoint();
+        if (!planes.some((s) => !refused.has(s.id))) break;
+        let x = 0,
+          y = 0,
+          z = 0;
+        for (let k = 0; k < 3; k++) {
+          const v = (geometry.indices[f * 3 + k] ?? 0) * 3;
+          x += (geometry.positions[v] ?? 0) / 3;
+          y += (geometry.positions[v + 1] ?? 0) / 3;
+          z += (geometry.positions[v + 2] ?? 0) / 3;
+        }
+        claimed.length = 0;
+        for (const p of coefficients)
+          if (
+            !refused.has(p.suggestion.id) &&
+            x * p.normal[0] + y * p.normal[1] + z * p.normal[2] - p.offset > 1e-7
+          )
+            claimed.push(p.suggestion);
+        const componentOwners = owners.get(labelling.faceRank[f] ?? -1);
+        if (componentOwners) for (const owner of componentOwners) claimed.push(owner);
+        for (let i = 0; i < claimed.length; i++)
+          for (let j = i + 1; j < claimed.length; j++) {
+            const a = required(claimed[i], 'claimed[i]'),
+              b = required(claimed[j], 'claimed[j]');
+            if (!ancestor(a, b) && !ancestor(b, a)) {
+              // Exact source groups take precedence. Conflicting synthesized cuts are alternatives,
+              // not simultaneously owned source faces: retain only the stronger supported proposal.
+              if (a.operation === SuggestionOperation.Component) refused.add(b.id);
+              else if (b.operation === SuggestionOperation.Component) refused.add(a.id);
+              else {
+                const order =
+                  (a.semanticConfidence ?? 0) - (b.semanticConfidence ?? 0) ||
+                  (a.geometryConfidence ?? 0) - (b.geometryConfidence ?? 0) ||
+                  b.id.localeCompare(a.id);
+                refused.add(order >= 0 ? b.id : a.id);
+              }
             }
           }
-        }
+      }
     }
+    return refused;
+  };
+  const initialRefused = new Set(refused);
+  const planes = suggestions.filter((s) => s.operation === SuggestionOperation.Plane && s.plane);
+  for (const id of checkSiblingOwnership(suggestions, initialRefused)) refused.add(id);
+  const shared = new Map<string, NonNullable<Suggestion['sharedBoundary']>>();
+  const sharedPools = new Map<string, NonNullable<Suggestion['semanticFinalists']>>();
+  for (const pair of complementary.pairs) {
+    checkpoint();
+    const a = suggestions.find((s) => s.id === pair.primaryId),
+      b = suggestions.find((s) => s.id === pair.complementId);
+    if (
+      !a ||
+      !b ||
+      a.operation !== SuggestionOperation.Plane ||
+      b.operation !== SuggestionOperation.Plane ||
+      refused.has(a.id) ||
+      refused.has(b.id)
+    ) {
+      refused.add(pair.primaryId);
+      refused.add(pair.complementId);
+      continue;
+    }
+    const pool = (a.semanticFinalists ?? []).filter((cut, index) => {
+      if (index === 0) return true;
+      faceWork += geometry.faceCount;
+      if (faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
+        throw resourceLimitExceeded(
+          'The semantic correspondence exceeds the supported work limit.',
+        );
+      const complement = {
+        normal: cut.normal.map((n) => -n) as unknown as Vec3,
+        origin: cut.origin,
+      };
+      const checked = checkSiblingOwnership(
+        suggestions.map((s) =>
+          s.id === a.id ? { ...s, plane: cut } : s.id === b.id ? { ...s, plane: complement } : s,
+        ),
+        initialRefused,
+      );
+      return (
+        !checked.has(a.id) && !checked.has(b.id) && [...checked].every((id) => refused.has(id))
+      );
+    });
+    if (!pool.length) {
+      refused.add(a.id);
+      refused.add(b.id);
+      continue;
+    }
+    sharedPools.set(a.id, pool);
+    sharedPools.set(
+      b.id,
+      pool.map((cut) => ({
+        normal: [-cut.normal[0], -cut.normal[1], -cut.normal[2]],
+        origin: cut.origin,
+      })),
+    );
+    shared.set(a.id, { key: pair.key, primaryId: a.id, complementId: b.id, side: 'PRIMARY' });
+    shared.set(b.id, { key: pair.key, primaryId: a.id, complementId: b.id, side: 'COMPLEMENT' });
   }
   for (const e of evidence)
     if (refused.has(e.id)) {
@@ -1434,34 +1516,44 @@ export function decomposeSemantic(
       ? {
           ...s,
           quality: 'SUGGESTED' as const,
-          semanticFinalists: (s.semanticFinalists ?? []).filter((cut, index) => {
-            if (index === 0 || !s.plane) return true;
-            // A fallback cannot introduce ownership outside this already-admitted source selection.
-            const epsilon = geometry.scale * 1e-7;
-            for (let f = 0; f < geometry.faceCount; f++) {
-              if ((f & 255) === 0) checkpoint();
-              if (++faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
-                throw resourceLimitExceeded(
-                  'The semantic correspondence exceeds the supported work limit.',
-                );
-              let before = 0,
-                after = 0;
-              for (let a = 0; a < 3; a++) {
-                let x = 0;
-                for (let k = 0; k < 3; k++)
-                  x += (geometry.positions[(geometry.indices[f * 3 + k] ?? 0) * 3 + a] ?? 0) / 3;
-                x = x * geometry.scale + (geometry.center[a] ?? 0);
-                before += (x - (s.plane.origin[a] ?? 0)) * (s.plane.normal[a] ?? 0);
-                after += (x - (cut.origin[a] ?? 0)) * (cut.normal[a] ?? 0);
+          ...(shared.has(s.id)
+            ? { sharedBoundary: required(shared.get(s.id), 'shared boundary') }
+            : {}),
+          semanticFinalists:
+            sharedPools.get(s.id) ??
+            (s.semanticFinalists ?? []).filter((cut, index) => {
+              if (index === 0 || !s.plane) return true;
+              // A fallback cannot introduce ownership outside this already-admitted source selection.
+              const epsilon = geometry.scale * 1e-7;
+              for (let f = 0; f < geometry.faceCount; f++) {
+                if ((f & 255) === 0) checkpoint();
+                if (++faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
+                  throw resourceLimitExceeded(
+                    'The semantic correspondence exceeds the supported work limit.',
+                  );
+                let before = 0,
+                  after = 0;
+                for (let a = 0; a < 3; a++) {
+                  let x = 0;
+                  for (let k = 0; k < 3; k++)
+                    x += (geometry.positions[(geometry.indices[f * 3 + k] ?? 0) * 3 + a] ?? 0) / 3;
+                  x = x * geometry.scale + (geometry.center[a] ?? 0);
+                  before += (x - (s.plane.origin[a] ?? 0)) * (s.plane.normal[a] ?? 0);
+                  after += (x - (cut.origin[a] ?? 0)) * (cut.normal[a] ?? 0);
+                }
+                if (after > epsilon && before < -epsilon) return false;
               }
-              if (after > epsilon && before < -epsilon) return false;
-            }
-            return true;
-          }),
+              return true;
+            }),
         }
       : s,
   );
   return {
+    complementaryPairs: complementary.pairs.filter((p) => shared.has(p.primaryId)),
+    ambiguousComplementaryPairs: [...complementary.ambiguous].sort(),
+    ...(complementary.diagnostic
+      ? { complementaryPairingDiagnostic: complementary.diagnostic }
+      : {}),
     reservations: reservation.reservations,
     suggestions: published,
     candidates: published.map((s) => ({
@@ -1581,6 +1673,10 @@ export function decomposeSemantic(
       ),
       familySignatureFaces: signatures?.facesVisited ?? 0,
       familySignatureBytes: signatures?.bytes ?? 0,
+      complementaryDiscoveryMilliseconds: complementary.discoveryMilliseconds,
+      complementaryCrossScoreMilliseconds: complementary.crossScoreMilliseconds,
+      complementaryPairs: complementary.pairs.length,
+      complementaryMaxCandidates: Math.max(0, ...complementary.pairs.map((p) => p.candidates)),
       semanticPlaneOwnershipWork: planeOwnership.workUnits,
       semanticPlaneOwnershipMilliseconds: planeOwnershipMilliseconds,
       semanticPlaneOwnershipPeers: planeOwnership.peers,
