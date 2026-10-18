@@ -27,6 +27,7 @@ export const LOCAL_PLANE_LIMITS = Object.freeze({
   offsets: 64,
   sectionFaces: 8192,
   finalists: 3,
+  compatibilityReserve: 6,
 });
 export interface PlaneOwnershipTelemetry {
   workUnits: number;
@@ -39,6 +40,7 @@ export interface PlaneOwnershipTelemetry {
   finalists: number;
   peerScoringPasses: number;
   rankingComparisons: number;
+  compatibilityReserveChecks: number;
 }
 export const planeOwnershipTelemetry = (): PlaneOwnershipTelemetry => ({
   workUnits: 0,
@@ -51,6 +53,7 @@ export const planeOwnershipTelemetry = (): PlaneOwnershipTelemetry => ({
   finalists: 0,
   peerScoringPasses: 0,
   rankingComparisons: 0,
+  compatibilityReserveChecks: 0,
 });
 export interface PlaneOwnershipContext {
   readonly telemetry: PlaneOwnershipTelemetry;
@@ -112,12 +115,15 @@ interface Score {
 }
 export interface LocalPlaneProposal {
   readonly provenance?: PlaneCandidateProvenance;
+  /** Compact ordinary-supported normal diversity, used only by complementary reconciliation. */
+  readonly compatibilityReserve?: LocalPlaneProposal['finalists'];
   readonly finalists?: readonly {
     readonly normal: Vec3;
     readonly origin: Vec3;
     readonly independentComplement: boolean;
     readonly capturedFraction: number;
     readonly provenance?: PlaneCandidateProvenance;
+    readonly support?: number;
   }[];
   readonly cut: { readonly normal: Vec3; readonly origin: Vec3 };
   readonly confidence: number;
@@ -1081,9 +1087,73 @@ export function synthesizeSemanticPlane(
   trace.confirmed = confirmed.length;
   const winner = confirmed[0];
   if (winner) trace.phase = 'PROPOSAL';
+  const support = (c: Candidate): number =>
+    Math.min(c.score.confidence, c.score.recall, c.score.purity, 1 - c.score.worstLeakage);
+  const families: Candidate[] = [];
+  if (
+    winner?.score.clean &&
+    evidence.peers.some(
+      (peer) =>
+        peer.fused &&
+        peer.part.parentId === part.parentId &&
+        peer.part.importance === 'major' &&
+        peer.part.instances === 1 &&
+        peer.part.expectedGeometry.kind === 'solid_part',
+    )
+  )
+    for (const c of eligible) {
+      context.telemetry.compatibilityReserveChecks++;
+      checkpoint();
+      charge();
+      if (!c.score.clean) continue;
+      const index = families.findIndex(
+        (other) => dot(c.normal, other.normal) >= Math.cos(Math.PI / 720),
+      );
+      const previous = families[index];
+      if (!previous) families.push(c);
+      else if (
+        support(c) > support(previous) ||
+        (support(c) === support(previous) && semanticOrder(c, previous) < 0)
+      )
+        families[index] = c;
+    }
+  const reserve = families
+    .sort((a, b) => support(b) - support(a) || semanticOrder(a, b))
+    .slice(0, LOCAL_PLANE_LIMITS.compatibilityReserve)
+    .flatMap((c) => {
+      checkpoint();
+      const score = directScore(evidence, c.normal, c.offset, checkpoint, context);
+      if (
+        !score?.clean ||
+        !assemblyEligible(evidence, answer, part, { ...c, score }, candidates, checkpoint, charge)
+      )
+        return [];
+      return [
+        {
+          normal: c.normal,
+          origin: vector(c.normal.map((n) => n * c.offset)),
+          independentComplement: score.peers.some(
+            (peer) =>
+              peer.views >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews &&
+              peer.leakage <= SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
+              independentPlanePeer(part, peer.id, answer, peer, checkpoint),
+          ),
+          capturedFraction: score.fraction,
+          support: Math.min(score.confidence, score.recall, score.purity, 1 - score.worstLeakage),
+          provenance: {
+            normalSources: PLANE_NORMAL_SOURCES.filter(
+              (_s, i) => (c.normalSourceMask ?? 0) & (1 << i),
+            ),
+            offsetSource: c.offsetSource ?? 'SEMANTIC_TRANSITION',
+            refined: false,
+          },
+        },
+      ];
+    });
   return winner
     ? {
         ...proposal(winner, evidence, part, candidates, answer, checkpoint, charge),
+        compatibilityReserve: reserve,
         finalists: confirmed.map((c) => ({
           normal: c.normal,
           origin: vector(c.normal.map((n) => n * c.offset)),

@@ -14,7 +14,12 @@ import {
   type PreparedSemanticGeometry,
 } from './semantic';
 import { reconcileComplementarySiblings } from './semantic-complementary';
-import { planeOwnershipTelemetry, type LocalPlaneProposal } from './semantic-local-plane';
+import {
+  planeOwnershipTelemetry,
+  synthesizeSemanticPlane,
+  LOCAL_PLANE_LIMITS,
+  type LocalPlaneProposal,
+} from './semantic-local-plane';
 import { required } from './required';
 let prepared: PreparedSemanticGeometry, answer: SemanticHierarchy;
 let proposals: Map<string, LocalPlaneProposal>;
@@ -159,3 +164,74 @@ it.each(['discovery', 'cross-score'] as const)(
     expect(prepared.geometry.positions).toEqual(source);
   },
 );
+
+it.each(['supported', 'no-common-normal', 'no-common-offset', 'not-independent'] as const)(
+  'incompatible primaries require ordinary compatible reserve witnesses: %s',
+  (kind) => {
+    const copy = new Map(proposals);
+    const a = required(copy.get('a'), 'a'),
+      b = required(copy.get('b'), 'b');
+    const angle = Math.PI / 180;
+    const reserveA = required(a.finalists, 'a finalists').slice(0, 1);
+    const reserveB = required(b.finalists, 'b finalists')
+      .slice(0, 1)
+      .map((cut) => ({
+        ...cut,
+        ...(kind === 'no-common-normal'
+          ? { normal: [-Math.cos(angle), -Math.sin(angle), 0] as const }
+          : {}),
+        ...(kind === 'no-common-offset'
+          ? { origin: [cut.origin[0] + 0.03, cut.origin[1], cut.origin[2]] as const }
+          : {}),
+        ...(kind === 'not-independent' ? { independentComplement: false } : {}),
+      }));
+    copy.set('a', { ...a, compatibilityReserve: reserveA });
+    copy.set('b', {
+      ...b,
+      cut: { ...b.cut, normal: [-Math.cos(angle), -Math.sin(angle), 0] },
+      compatibilityReserve: reserveB,
+    });
+    const result = reconcileComplementarySiblings(prepared, answer, copy, () => undefined, {
+      telemetry: planeOwnershipTelemetry(),
+      charge: () => undefined,
+    });
+    expect(result.pairs).toHaveLength(kind === 'supported' ? 1 : 0);
+    if (kind === 'supported') {
+      const first = required(copy.get('a'), 'shared a'),
+        second = required(copy.get('b'), 'shared b');
+      expect(first.cut.normal.map((n) => -n)).toEqual(second.cut.normal);
+      expect(first.cut.origin).toEqual(second.cut.origin);
+      expect(required(first.finalists, 'shared finalists').length).toBeLessThanOrEqual(3);
+    }
+  },
+);
+
+it('bounds compact reserve diversity and cancels construction without publishing or mutating source', () => {
+  const part = required(answer.parts[0], 'part'),
+    context = { telemetry: planeOwnershipTelemetry(), charge: (): void => undefined };
+  const source = prepared.geometry.positions.slice();
+  expect(() =>
+    synthesizeSemanticPlane(
+      prepared,
+      answer,
+      part,
+      () => {
+        if (context.telemetry.compatibilityReserveChecks > 0) throw Error('cancelled reserve');
+      },
+      context,
+    ),
+  ).toThrow('cancelled reserve');
+  expect(prepared.geometry.positions).toEqual(source);
+  const local = required(
+    synthesizeSemanticPlane(prepared, answer, part, () => undefined),
+    'local',
+  );
+  expect(required(local.finalists, 'local finalists').length).toBeLessThanOrEqual(3);
+  expect(required(local.compatibilityReserve, 'reserve').length).toBeLessThanOrEqual(
+    LOCAL_PLANE_LIMITS.compatibilityReserve,
+  );
+  expect(required(local.compatibilityReserve, 'reserve').length).toBeGreaterThan(1);
+  expect(
+    required(local.compatibilityReserve, 'reserve').every((c) => c.independentComplement),
+  ).toBe(true);
+});

@@ -33,6 +33,8 @@ export interface ComplementarySiblingPair {
   readonly rank: number;
   readonly independentAxes: number;
   readonly candidates: number;
+  readonly compatibility: 'PRIMARY' | 'RESERVE';
+  readonly reserveCandidates: number;
 }
 const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const opposite = (p: LocalPlaneProposal['cut']): LocalPlaneProposal['cut'] => ({
@@ -41,6 +43,21 @@ const opposite = (p: LocalPlaneProposal['cut']): LocalPlaneProposal['cut'] => ({
 });
 const key = (p: LocalPlaneProposal['cut']): string =>
   [...p.normal, dot(p.normal, p.origin)].map((n) => n.toFixed(10)).join('/');
+const compatible = (a: LocalPlaneProposal['cut'], b: LocalPlaneProposal['cut']): boolean =>
+  dot(a.normal, b.normal) <= COMPLEMENTARY_LIMITS.normalDot &&
+  Math.abs(dot(a.normal, a.origin) + dot(b.normal, b.origin)) <=
+    COMPLEMENTARY_LIMITS.offsetDistance;
+const withinBoth = (
+  p: LocalPlaneProposal['cut'],
+  a: LocalPlaneProposal['cut'],
+  b: LocalPlaneProposal['cut'],
+): boolean =>
+  dot(p.normal, a.normal) >= -COMPLEMENTARY_LIMITS.normalDot &&
+  dot(p.normal, b.normal) <= COMPLEMENTARY_LIMITS.normalDot &&
+  Math.abs(dot(p.normal, p.origin) - dot(p.normal, a.origin)) <=
+    COMPLEMENTARY_LIMITS.offsetDistance &&
+  Math.abs(dot(p.normal, p.origin) - dot(p.normal, b.origin)) <=
+    COMPLEMENTARY_LIMITS.offsetDistance;
 const eligible = (p: SemanticPart): boolean =>
   p.importance === 'major' && p.instances === 1 && p.expectedGeometry.kind === 'solid_part';
 
@@ -90,9 +107,17 @@ export function reconcileComplementarySiblings(
       if (
         !peer(ap, b.id) ||
         !peer(bp, a.id) ||
-        dot(ap.cut.normal, bp.cut.normal) > COMPLEMENTARY_LIMITS.normalDot ||
-        Math.abs(dot(ap.cut.normal, ap.cut.origin) + dot(bp.cut.normal, bp.cut.origin)) >
-          COMPLEMENTARY_LIMITS.offsetDistance
+        (!compatible(ap.cut, bp.cut) &&
+          !(ap.compatibilityReserve ?? []).some((ac) => {
+            checkpoint();
+            return (
+              ac.independentComplement &&
+              (bp.compatibilityReserve ?? []).some((bc) => {
+                checkpoint();
+                return bc.independentComplement && compatible(ac, bc);
+              })
+            );
+          }))
       )
         continue;
       const totals = new Map<number, number>();
@@ -193,28 +218,47 @@ export function reconcileComplementarySiblings(
     if (e.third || ambiguous.has(e.a.id) || ambiguous.has(e.b.id)) continue;
     const ap = required(proposals.get(e.a.id), 'primary proposal'),
       bp = required(proposals.get(e.b.id), 'complement proposal');
+    const useReserve = !compatible(ap.cut, bp.cut);
     const candidates = (
       p: LocalPlaneProposal,
-    ): readonly (LocalPlaneProposal['cut'] & { provenance?: LocalPlaneProposal['provenance'] })[] =>
-      [{ ...p.cut, ...(p.provenance ? { provenance: p.provenance } : {}) }, ...(p.finalists ?? [])]
+    ): readonly (LocalPlaneProposal['cut'] & {
+      provenance?: LocalPlaneProposal['provenance'];
+      support?: number;
+    })[] =>
+      (useReserve
+        ? (p.compatibilityReserve ?? [])
+            .filter((candidate) => candidate.independentComplement)
+            .toSorted((a, b) => (b.support ?? 0) - (a.support ?? 0) || key(a).localeCompare(key(b)))
+        : [
+            { ...p.cut, ...(p.provenance ? { provenance: p.provenance } : {}) },
+            ...(p.finalists ?? []),
+          ]
+      )
         .filter((cut, i, all) => all.findIndex((q) => key(q) === key(cut)) === i)
-        .slice(0, LOCAL_PLANE_LIMITS.finalists);
+        .slice(
+          0,
+          useReserve ? LOCAL_PLANE_LIMITS.compatibilityReserve : LOCAL_PLANE_LIMITS.finalists,
+        );
+    const ac = candidates(ap),
+      bc = candidates(bp);
     const pool = [
-      ...candidates(ap),
-      ...candidates(bp).map((p) => ({
-        ...opposite(p),
-        ...(p.provenance ? { provenance: p.provenance } : {}),
-      })),
+      ...ac.filter((a) => !useReserve || bc.some((b) => compatible(a, b))),
+      ...bc
+        .filter((b) => !useReserve || ac.some((a) => compatible(a, b)))
+        .map((p) => ({
+          ...opposite(p),
+          ...(p.support !== undefined ? { support: p.support } : {}),
+          ...(p.provenance ? { provenance: p.provenance } : {}),
+        })),
     ]
       .filter((p, i, all) => all.findIndex((q) => key(q) === key(p)) === i)
-      .filter(
-        (p) =>
-          dot(p.normal, ap.cut.normal) >= -COMPLEMENTARY_LIMITS.normalDot &&
-          dot(p.normal, bp.cut.normal) <= COMPLEMENTARY_LIMITS.normalDot &&
-          Math.abs(dot(p.normal, p.origin) - dot(p.normal, ap.cut.origin)) <=
-            COMPLEMENTARY_LIMITS.offsetDistance &&
-          Math.abs(dot(p.normal, p.origin) - dot(p.normal, bp.cut.origin)) <=
-            COMPLEMENTARY_LIMITS.offsetDistance,
+      .filter((p) =>
+        useReserve
+          ? ac.some((a) => bc.some((b) => compatible(a, b) && withinBoth(p, a, b)))
+          : withinBoth(p, ap.cut, bp.cut),
+      )
+      .sort((a, b) =>
+        useReserve ? (b.support ?? 0) - (a.support ?? 0) || key(a).localeCompare(key(b)) : 0,
       )
       .slice(0, COMPLEMENTARY_LIMITS.candidates);
     const scoreA = semanticPlaneScorer(prepared, answer, e.a, ap, checkpoint, context),
@@ -270,6 +314,8 @@ export function reconcileComplementarySiblings(
       rank: e.rank,
       independentAxes: e.axes,
       candidates: pool.length,
+      compatibility: useReserve ? 'RESERVE' : 'PRIMARY',
+      reserveCandidates: useReserve ? ac.length + bc.length : 0,
     });
   }
   checkpoint();
