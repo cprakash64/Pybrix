@@ -29,7 +29,7 @@ async function terminal(axis: 0 | 2): Promise<{
       mesh.positions.set([y ?? 0, z ?? 0, x ?? 0], i);
     }
   const p = await prepareSemanticGeometry(mesh, fixtureDeflate);
-  const faceRank = Uint32Array.from({ length: mesh.indices.length / 3 }, (_, f) =>
+  const faceRank = Int32Array.from({ length: mesh.indices.length / 3 }, (_, f) =>
     [0, 1, 2].reduce(
       (n, k) => n + (mesh.positions[(mesh.indices[f * 3 + k] ?? 0) * 3 + axis] ?? 0) / 3,
       0,
