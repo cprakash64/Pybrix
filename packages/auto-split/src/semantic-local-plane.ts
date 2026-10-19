@@ -1248,10 +1248,12 @@ export interface MajorSiblingConsistency {
     readonly id: string;
     readonly splitAxes: number;
     readonly competingAxes: number;
+    readonly ownership: 'NON_COMPETING' | 'COMPETING' | 'INSUFFICIENT_EVIDENCE';
     readonly views: readonly {
       readonly total: number;
       readonly selected: number;
       readonly shared: number;
+      readonly targetSelected: number;
     }[];
   }[];
 }
@@ -1279,16 +1281,11 @@ export function majorSiblingConsistencyScorer(
         }
         if (point.peerMask & (1 << index)) axes.add(Math.floor(point.view / 2));
       }
-      return independentPlanePeer(
-        part,
-        peer.part.id,
-        answer,
-        {
-          sameSourceComponent: peer.fused,
-          independentAxes: axes.size,
-        },
-        checkpoint,
-      )
+      // Keep weakly observed siblings for an explicit insufficient-evidence result.
+      // Independence is required below for a competing conclusion, not for visibility.
+      return axes.size > 0 &&
+        !ancestor(answer, part.id, peer.part) &&
+        !ancestor(answer, peer.part.id, part)
         ? [{ peer, index }]
         : [];
     })
@@ -1303,15 +1300,22 @@ export function majorSiblingConsistencyScorer(
     const offset = dot(cut.normal, cut.origin);
     const siblings = relevant.map(({ peer, index }) => {
       checkpoint();
-      const views = Array.from({ length: 6 }, () => ({ total: 0, selected: 0, shared: 0 }));
+      const views = Array.from({ length: 6 }, () => ({
+        total: 0,
+        selected: 0,
+        shared: 0,
+        targetSelected: 0,
+      }));
       for (const [i, point] of evidence.points.entries()) {
         if ((i & 1023) === 0) checkpoint();
         if (context) {
           context.telemetry.workUnits++;
           context.charge();
         }
-        if (point.rank !== dominant || !(point.peerMask & (1 << index))) continue;
+        if (point.rank !== dominant) continue;
         const row = defined(views[point.view]);
+        if (point.target && dot(point.point, cut.normal) >= offset) row.targetSelected++;
+        if (!(point.peerMask & (1 << index))) continue;
         row.total++;
         if (dot(point.point, cut.normal) >= offset) {
           row.selected++;
@@ -1320,8 +1324,11 @@ export function majorSiblingConsistencyScorer(
       }
       const split = new Set<number>(),
         competing = new Set<number>();
+      let unresolvedOverlap = false;
       for (const [vi, row] of views.entries()) {
         checkpoint();
+        if (row.shared > 0 && row.shared / Math.max(1, row.targetSelected) > 0.1)
+          unresolvedOverlap = true;
         if (row.total < 8) continue;
         const fraction = row.selected / row.total;
         if (
@@ -1329,10 +1336,25 @@ export function majorSiblingConsistencyScorer(
           fraction < 1 - SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage
         )
           split.add(Math.floor(vi / 2));
-        if (row.shared / row.total > SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage)
+        // Candidate-relative ownership: a broad peer mask cannot dilute shared target support.
+        // Eight corroborating samples on each of two axes are required for a contradiction.
+        if (row.shared >= 8 && row.targetSelected >= 8 && row.shared / row.targetSelected > 0.1)
           competing.add(Math.floor(vi / 2));
       }
-      return { id: peer.part.id, splitAxes: split.size, competingAxes: competing.size, views };
+      const ownership =
+        competing.size >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews ||
+        split.size >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews
+          ? ('COMPETING' as const)
+          : unresolvedOverlap
+            ? ('INSUFFICIENT_EVIDENCE' as const)
+            : ('NON_COMPETING' as const);
+      return {
+        id: peer.part.id,
+        splitAxes: split.size,
+        competingAxes: competing.size,
+        ownership,
+        views,
+      };
     });
     const result: MajorSiblingConsistency = {
       outcome: siblings.some(
@@ -1341,9 +1363,11 @@ export function majorSiblingConsistencyScorer(
           s.competingAxes >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews,
       )
         ? 'CONTRADICTORY'
-        : siblings.length
-          ? 'CONSISTENT'
-          : 'IRRELEVANT',
+        : siblings.some((s) => s.ownership === 'INSUFFICIENT_EVIDENCE')
+          ? 'AMBIGUOUS'
+          : siblings.length
+            ? 'CONSISTENT'
+            : 'IRRELEVANT',
       siblings,
     };
     cache.set(key, result);

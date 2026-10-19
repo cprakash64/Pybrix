@@ -154,3 +154,34 @@ it('cancels during collection and candidate scoring without altering source', ()
   expect(() => score({ normal: [1, 0, 0], origin: [0, 0, 0] })).toThrow('cancel scoring');
   expect(prepared.geometry.positions).toEqual(before);
 });
+it('uses candidate-relative shared support when a broad sibling dilutes its own selected fraction', () => {
+  const a = member('target', 35, 100),
+    b = member('complement', -100, 35),
+    c = member('competitor', -100, 40),
+    answer: SemanticHierarchy = {
+      object: { label: 'Unfamiliar assembly', confidence: 0.99 },
+      parts: [a, b, c],
+    },
+    cut = {
+      normal: [1, 0, 0] as const,
+      origin: [(35 - prepared.geometry.center[0]) / prepared.geometry.scale, 0, 0] as const,
+    },
+    result = majorSiblingConsistencyScorer(prepared, answer, a, () => undefined)(cut),
+    competitor = required(
+      result.siblings.find((s) => s.id === c.id),
+      'competitor',
+    );
+  expect(result.outcome).toBe('CONTRADICTORY');
+  expect(competitor.ownership).toBe('COMPETING');
+  expect(competitor.competingAxes).toBeGreaterThanOrEqual(2);
+  expect(
+    competitor.views.filter((v) => v.total >= 8).every((v) => v.selected / v.total < 0.2),
+  ).toBe(true);
+  const weak: SemanticHierarchy = {
+    ...answer,
+    parts: [a, b, { ...c, views: c.views.filter((v) => v.view === 'front' || v.view === 'rear') }],
+  };
+  const uncertain = majorSiblingConsistencyScorer(prepared, weak, a, () => undefined)(cut);
+  expect(uncertain.outcome).toBe('AMBIGUOUS');
+  expect(uncertain.siblings.find((s) => s.id === c.id)?.ownership).toBe('INSUFFICIENT_EVIDENCE');
+});

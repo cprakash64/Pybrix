@@ -597,6 +597,26 @@ export function decomposeSemantic(
         Math.min(answer.object.confidence, p.confidence) >= SEMANTIC_WORK_LIMITS.semanticConfidence,
     ),
     checkpoint,
+    // Grounded complements define semantic ownership of the shoulder surface.
+    // Peerless structural-seam realization retains its established refinement policy.
+    new Set(
+      localParts
+        .filter((part) =>
+          localPlanes.get(part.id)?.ownership.peers.some((peer) =>
+            independentPlanePeer(
+              part,
+              peer.id,
+              answer,
+              {
+                sameSourceComponent: peer.sameSourceComponent,
+                independentAxes: peer.independentAxes,
+              },
+              checkpoint,
+            ),
+          ),
+        )
+        .map((part) => part.id),
+    ),
   );
   for (const observedPart of localParts) {
     let refined = refinement.refinements.get(observedPart.id);

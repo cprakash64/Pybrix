@@ -1,4 +1,10 @@
-import type { SemanticPart, Vec3 } from '@cadfixer/auto-split-contract';
+import {
+  cameraFor,
+  FRAME_FILL,
+  VIEW_NAMES,
+  type SemanticPart,
+  type Vec3,
+} from '@cadfixer/auto-split-contract';
 import type { NormalizedGeometry } from './geometry';
 import { CHECKPOINT_MASK, type Checkpoint } from './checkpoint';
 
@@ -8,6 +14,7 @@ export const SEMANTIC_PLANE_REFINEMENT_LIMITS = Object.freeze({
   band: 0.025,
   minimumImprovement: 0.1,
   groups: 8,
+  shoulderPlanes: 16,
 });
 export interface SemanticPlaneRefinement {
   readonly cut: NonNullable<SemanticPart['cut']>;
@@ -17,6 +24,11 @@ export interface SemanticPlaneRefinement {
   readonly chosenSectionLength: number;
   readonly samples: number;
   readonly profileNormal: Vec3;
+  readonly shoulderEvidence?: {
+    readonly surfaceOffset: number | null;
+    readonly featureOverflow: boolean;
+    readonly ownership: 'INCLUDED' | 'EXCLUDED' | 'AMBIGUOUS';
+  };
   readonly sectionProfile: readonly { readonly offset: number; readonly length: number }[];
 }
 interface PlaneGroup {
@@ -24,12 +36,15 @@ interface PlaneGroup {
   readonly offset: number;
   readonly parts: SemanticPart[];
   readonly lengths: Float64Array;
+  readonly shoulders: Map<number, { offset: number; area: number }>;
+  featureOverflow: boolean;
 }
 /** Shared complementary planes refine together, so sibling assembly suggestions remain complementary. */
 export function refineSemanticPlanes(
   geometry: NormalizedGeometry,
   parts: readonly SemanticPart[],
   checkpoint: Checkpoint,
+  preserveUnbracketed?: ReadonlySet<string>,
 ): {
   refinements: ReadonlyMap<string, SemanticPlaneRefinement>;
   triangleVisits: number;
@@ -53,7 +68,15 @@ export function refineSemanticPlanes(
       key = [...normal, offset].map((n) => n.toFixed(8)).join('/');
     const group = groups.get(key);
     if (group) group.parts.push(part);
-    else groups.set(key, { normal, offset, parts: [part], lengths: new Float64Array(9) });
+    else
+      groups.set(key, {
+        normal,
+        offset,
+        parts: [part],
+        lengths: new Float64Array(9),
+        shoulders: new Map(),
+        featureOverflow: false,
+      });
   }
   // Schema bounds major parts at eight; no unbounded face × proposed-plane work.
   if (groups.size > SEMANTIC_PLANE_REFINEMENT_LIMITS.groups)
@@ -84,6 +107,27 @@ export function refineSemanticPlanes(
         maximum < -SEMANTIC_PLANE_REFINEMENT_LIMITS.band
       )
         continue;
+      // Parallel source faces identify a shoulder crossed by the coarse proposal.
+      // Collect in the existing bounded face pass; no per-finalist or sibling face scan.
+      if (maximum - minimum <= 1e-7) {
+        const v0 = vertices[0] ?? 0,
+          v1 = vertices[1] ?? 0,
+          v2 = vertices[2] ?? 0,
+          ax = (positions[v1] ?? 0) - (positions[v0] ?? 0),
+          ay = (positions[v1 + 1] ?? 0) - (positions[v0 + 1] ?? 0),
+          az = (positions[v1 + 2] ?? 0) - (positions[v0 + 2] ?? 0),
+          bx = (positions[v2] ?? 0) - (positions[v0] ?? 0),
+          by = (positions[v2 + 1] ?? 0) - (positions[v0 + 1] ?? 0),
+          bz = (positions[v2 + 2] ?? 0) - (positions[v0 + 2] ?? 0),
+          area = Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx) / 2,
+          offset = group.offset + minimum,
+          key = Math.round(offset * 1e7),
+          previous = group.shoulders.get(key);
+        if (previous) previous.area += area;
+        else if (group.shoulders.size < SEMANTIC_PLANE_REFINEMENT_LIMITS.shoulderPlanes)
+          group.shoulders.set(key, { offset, area });
+        else group.featureOverflow = true;
+      }
       for (let sample = 0; sample < 9; sample++) {
         const delta = ((sample - 4) * SEMANTIC_PLANE_REFINEMENT_LIMITS.band) / 4;
         if (minimum >= delta || maximum <= delta) continue;
@@ -119,6 +163,7 @@ export function refineSemanticPlanes(
   }
   const refinements = new Map<string, SemanticPlaneRefinement>();
   for (const group of groups.values()) {
+    checkpoint();
     let best = 4;
     const original = group.lengths[4] ?? 0;
     for (let i = 0; i < 9; i++) {
@@ -138,9 +183,38 @@ export function refineSemanticPlanes(
         original * (1 - SEMANTIC_PLANE_REFINEMENT_LIMITS.minimumImprovement)
     )
       best = 4;
-    const delta = ((best - 4) * SEMANTIC_PLANE_REFINEMENT_LIMITS.band) / 4;
-    for (const part of group.parts)
-      if (part.cut)
+    // A minimum plateau reaching the search boundary is not a localized neck.
+    // Grounded semantic ownership must retain its seed in that ambiguous band.
+    // Structural-seam-only callers can retain their established refinement policy.
+    const minimum = group.lengths[best] ?? 0,
+      plateauTolerance = Math.max(1e-8, original * 1e-6),
+      unbracketed =
+        Math.abs((group.lengths[0] ?? 0) - minimum) <= plateauTolerance ||
+        Math.abs((group.lengths[8] ?? 0) - minimum) <= plateauTolerance;
+    const proposedMinimum = group.offset + ((best - 4) * SEMANTIC_PLANE_REFINEMENT_LIMITS.band) / 4,
+      crossed = [...group.shoulders.values()]
+        .filter(
+          (surface) =>
+            surface.offset > Math.min(group.offset, proposedMinimum) + 1e-7 &&
+            surface.offset < Math.max(group.offset, proposedMinimum) - 1e-7,
+        )
+        .sort((a, b) => b.area - a.area || a.offset - b.offset)[0];
+    for (const part of group.parts) {
+      checkpoint();
+      if (part.cut) {
+        const grounded = preserveUnbracketed?.has(part.id) ?? true,
+          ownership =
+            crossed && !group.featureOverflow
+              ? semanticShoulderOwnership(geometry, part, group.normal, crossed.offset, checkpoint)
+              : 'AMBIGUOUS',
+          selectedAfterMove =
+            crossed &&
+            group.normal.reduce((sum, n, a) => sum + n * (part.cut?.normal[a] ?? 0), 0) *
+              (crossed.offset - proposedMinimum) >=
+              0,
+          moveSupported = crossed && ownership === (selectedAfterMove ? 'INCLUDED' : 'EXCLUDED'),
+          chosen = unbracketed && grounded && !moveSupported ? 4 : best,
+          delta = ((chosen - 4) * SEMANTIC_PLANE_REFINEMENT_LIMITS.band) / 4;
         refinements.set(part.id, {
           cut: {
             normal: part.cut.normal,
@@ -151,14 +225,70 @@ export function refineSemanticPlanes(
           proposedOffset: group.offset,
           chosenOffset: group.offset + delta,
           proposedSectionLength: original,
-          chosenSectionLength: group.lengths[best] ?? 0,
+          chosenSectionLength: group.lengths[chosen] ?? 0,
           samples: 9,
+          ...(unbracketed && best !== 4 && grounded
+            ? {
+                shoulderEvidence: {
+                  surfaceOffset: crossed?.offset ?? null,
+                  featureOverflow: group.featureOverflow,
+                  ownership,
+                },
+              }
+            : {}),
           profileNormal: group.normal,
           sectionProfile: Array.from(group.lengths, (length, i) => ({
             offset: group.offset + ((i - 4) * SEMANTIC_PLANE_REFINEMENT_LIMITS.band) / 4,
             length,
           })),
         });
+      }
+    }
   }
   return { refinements, triangleVisits, milliseconds: Date.now() - started };
+}
+
+/** Independent raw polygon extents resolve which side owns a planar shoulder.
+ * Only views whose image plane contains the cut normal provide a depth-free bound.
+ * Missing, oblique or contradictory projections remain ambiguous. */
+export function semanticShoulderOwnership(
+  geometry: NormalizedGeometry,
+  part: SemanticPart,
+  normal: Vec3,
+  offset: number,
+  checkpoint: Checkpoint,
+): 'INCLUDED' | 'EXCLUDED' | 'AMBIGUOUS' {
+  if (!part.cut) return 'AMBIGUOUS';
+  const sign = normal.reduce((sum, n, a) => sum + n * (part.cut?.normal[a] ?? 0), 0) < 0 ? -1 : 1,
+    oriented = normal.map((n) => n * sign),
+    included = new Set<number>(),
+    excluded = new Set<number>();
+  for (const region of part.views) {
+    checkpoint();
+    const camera = cameraFor(region.view);
+    if (Math.abs(oriented.reduce((sum, n, a) => sum + n * (camera.forward[a] ?? 0), 0)) > 1e-6)
+      continue;
+    let lower = Infinity;
+    for (const polygon of region.polygons)
+      for (const [x, y] of polygon) {
+        const projected = oriented.reduce(
+          (sum, n, a) =>
+            sum +
+            n *
+              (((camera.right[a] ?? 0) * (x - 0.5) * 2 * geometry.radius) / FRAME_FILL -
+                ((camera.up[a] ?? 0) * (y - 0.5) * 2 * geometry.radius) / FRAME_FILL),
+          0,
+        );
+        lower = Math.min(lower, projected);
+      }
+    if (!Number.isFinite(lower)) continue;
+    const axis = Math.floor(VIEW_NAMES.indexOf(region.view) / 2);
+    if (lower <= offset * sign + 1e-6) included.add(axis);
+    else excluded.add(axis);
+  }
+  return included.size >= 2 && excluded.size < 2
+    ? 'INCLUDED'
+    : excluded.size >= 2 && included.size < 2
+      ? 'EXCLUDED'
+      : 'AMBIGUOUS';
 }
