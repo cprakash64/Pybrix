@@ -185,3 +185,37 @@ it('uses candidate-relative shared support when a broad sibling dilutes its own 
   expect(uncertain.outcome).toBe('AMBIGUOUS');
   expect(uncertain.siblings.find((s) => s.id === c.id)?.ownership).toBe('INSUFFICIENT_EVIDENCE');
 });
+
+it('resolves a single occluded silhouette only with two independently observed non-competing axes', () => {
+  const a = member('target', 35, 100),
+    b = member('complement', -100, 35),
+    c = {
+      ...b,
+      id: 'occluded-peer',
+      views: [
+        ...b.views.filter((v) => v.view !== 'right'),
+        ...a.views.filter((v) => v.view === 'right'),
+      ],
+    },
+    answer: SemanticHierarchy = {
+      object: { label: 'Assembly', confidence: 0.99 },
+      parts: [a, b, c],
+    },
+    score = majorSiblingConsistencyScorer(
+      prepared,
+      answer,
+      a,
+      () => undefined,
+    )({
+      normal: [1, 0, 0],
+      origin: [(35 - prepared.geometry.center[0]) / prepared.geometry.scale, 0, 0],
+    }),
+    peer = required(
+      score.siblings.find((s) => s.id === c.id),
+      'peer',
+    );
+  expect(score.outcome).toBe('CONSISTENT');
+  expect(peer.competingAxes).toBe(1);
+  expect(peer.nonCompetingAxes).toBe(2);
+  expect(peer.ownership).toBe('NON_COMPETING');
+});

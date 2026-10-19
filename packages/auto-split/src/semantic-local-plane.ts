@@ -1248,6 +1248,7 @@ export interface MajorSiblingConsistency {
     readonly id: string;
     readonly splitAxes: number;
     readonly competingAxes: number;
+    readonly nonCompetingAxes: number;
     readonly ownership: 'NON_COMPETING' | 'COMPETING' | 'INSUFFICIENT_EVIDENCE';
     readonly views: readonly {
       readonly total: number;
@@ -1323,13 +1324,19 @@ export function majorSiblingConsistencyScorer(
         }
       }
       const split = new Set<number>(),
-        competing = new Set<number>();
+        competing = new Set<number>(),
+        nonCompeting = new Set<number>(),
+        unresolvedAxes = new Set<number>();
       let unresolvedOverlap = false;
       for (const [vi, row] of views.entries()) {
         checkpoint();
-        if (row.shared > 0 && row.shared / Math.max(1, row.targetSelected) > 0.1)
+        if (row.shared > 0 && row.shared / Math.max(1, row.targetSelected) > 0.1) {
           unresolvedOverlap = true;
+          unresolvedAxes.add(Math.floor(vi / 2));
+        }
         if (row.total < 8) continue;
+        if (row.targetSelected >= 8 && row.shared / row.targetSelected <= 0.1)
+          nonCompeting.add(Math.floor(vi / 2));
         const fraction = row.selected / row.total;
         if (
           fraction > SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
@@ -1341,17 +1348,22 @@ export function majorSiblingConsistencyScorer(
         if (row.shared >= 8 && row.targetSelected >= 8 && row.shared / row.targetSelected > 0.1)
           competing.add(Math.floor(vi / 2));
       }
+      // One occluded projection can contain another part's silhouette. It is
+      // resolved only by two independently observed non-competing axes; missing
+      // or weak views never count as evidence of separation.
+      for (const axis of unresolvedAxes) nonCompeting.delete(axis);
       const ownership =
         competing.size >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews ||
         split.size >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews
           ? ('COMPETING' as const)
-          : unresolvedOverlap
+          : unresolvedOverlap && nonCompeting.size < SEMANTIC_INTENT_LIMITS.minimumIndependentViews
             ? ('INSUFFICIENT_EVIDENCE' as const)
             : ('NON_COMPETING' as const);
       return {
         id: peer.part.id,
         splitAxes: split.size,
         competingAxes: competing.size,
+        nonCompetingAxes: nonCompeting.size,
         ownership,
         views,
       };
