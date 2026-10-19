@@ -1,3 +1,4 @@
+import type { PeerlessScopeEvidence } from './semantic-peerless-scope';
 import type { Vec3 } from '@cadfixer/auto-split-contract';
 
 export const PLANE_NORMAL_SOURCES = [
@@ -9,7 +10,14 @@ export const PLANE_NORMAL_SOURCES = [
 ] as const;
 export type PlaneNormalSource = (typeof PLANE_NORMAL_SOURCES)[number];
 export type PlaneOffsetSource =
-  'TARGET_MIN' | 'TARGET_MAX' | 'PEER_INTERVAL' | 'PROVIDER_HINT' | 'SEMANTIC_TRANSITION';
+  | 'TARGET_MIN'
+  | 'TARGET_MAX'
+  | 'TARGET_QUANTILE'
+  | 'TARGET_FRONTIER_BRACKET'
+  | 'VISIBLE_SECTION_TRANSITION'
+  | 'PEER_INTERVAL'
+  | 'PROVIDER_HINT'
+  | 'SEMANTIC_TRANSITION';
 export interface PlaneCandidateProvenance {
   readonly normalSources: readonly PlaneNormalSource[];
   readonly offsetSource: PlaneOffsetSource;
@@ -48,6 +56,45 @@ export interface PlaneSynthesisTrace {
   beam: number;
   confirmed: number;
   seamDerivedCandidates: number;
+  peerless?: {
+    phase?:
+      | 'COLLECT_SCOPE'
+      | 'BUILD_FRONTIER'
+      | 'STRUCTURAL_RANKING'
+      | 'REFINEMENT'
+      | 'CONFIRMATION'
+      | 'COMPLETE';
+    scratchBytes?: number;
+    probeProjectionVisits?: number;
+    targetEnvelope?: readonly { normal: Vec3; low: number; high: number }[];
+    finalists?: {
+      rank: number;
+      normal: Vec3;
+      proposedOffset: number;
+      refinedOffset: number | null;
+      structuralReason: string;
+      structurallyAdmitted: boolean;
+      scopeState?: string;
+      confirmed: boolean;
+    }[];
+    scopeMilliseconds: number;
+    structuralMilliseconds: number;
+    refinementMilliseconds: number;
+    supported: number;
+    ambiguous: number;
+    overbroad: number;
+    refinements: number;
+    triangleVisits: number;
+    probeTriangleVisits?: number;
+    frontier: {
+      normal: Vec3;
+      offset: number;
+      scope: PeerlessScopeEvidence;
+      structuralHint: number;
+      localization?: number;
+      offsetSource?: PlaneOffsetSource;
+    }[];
+  };
 }
 export const planeSynthesisTrace = (): PlaneSynthesisTrace => ({
   phase: 'INPUT_REFUSED',
@@ -63,6 +110,9 @@ export const planeSynthesisTrace = (): PlaneSynthesisTrace => ({
   offsetSources: {
     TARGET_MIN: 0,
     TARGET_MAX: 0,
+    TARGET_QUANTILE: 0,
+    TARGET_FRONTIER_BRACKET: 0,
+    VISIBLE_SECTION_TRANSITION: 0,
     PEER_INTERVAL: 0,
     PROVIDER_HINT: 0,
     SEMANTIC_TRANSITION: 0,

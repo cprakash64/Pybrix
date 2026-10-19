@@ -594,6 +594,7 @@ export function decomposeSemantic(
     localParts.filter(
       (p) =>
         !pairedIds.has(p.id) &&
+        !localPlanes.get(p.id)?.peerlessRefinement &&
         Math.min(answer.object.confidence, p.confidence) >= SEMANTIC_WORK_LIMITS.semanticConfidence,
     ),
     checkpoint,
@@ -619,8 +620,9 @@ export function decomposeSemantic(
     ),
   );
   for (const observedPart of localParts) {
-    let refined = refinement.refinements.get(observedPart.id);
     const originalProposal = localPlanes.get(observedPart.id);
+    let refined =
+      originalProposal?.peerlessRefinement ?? refinement.refinements.get(observedPart.id);
     if (refined && originalProposal) {
       const planeStarted = Date.now();
       const confirmed = confirmSemanticPlane(
@@ -1589,6 +1591,13 @@ export function decomposeSemantic(
         }
       : s,
   );
+  const peerlessRefinement = [...planeContext.synthesis.values()].reduce(
+    (sum, trace) => ({
+      milliseconds: sum.milliseconds + (trace.peerless?.refinementMilliseconds ?? 0),
+      triangleVisits: sum.triangleVisits + (trace.peerless?.triangleVisits ?? 0),
+    }),
+    { milliseconds: 0, triangleVisits: 0 },
+  );
   return {
     complementaryPairs: complementary.pairs.filter((p) => shared.has(p.primaryId)),
     ambiguousComplementaryPairs: [...complementary.ambiguous].sort(),
@@ -1648,9 +1657,9 @@ export function decomposeSemantic(
     }),
     timings: {
       ...prepared.timings,
-      correspondence: elapsed(start) - refinement.milliseconds,
-      refinement: refinement.milliseconds,
-      refinementTriangleVisits: refinement.triangleVisits,
+      correspondence: elapsed(start) - refinement.milliseconds - peerlessRefinement.milliseconds,
+      refinement: refinement.milliseconds + peerlessRefinement.milliseconds,
+      refinementTriangleVisits: refinement.triangleVisits + peerlessRefinement.triangleVisits,
       regionPixels: work,
       scoredFaces: faceWork,
       familySubsetCount: evidence.reduce((n, e) => n + (e.familySubset?.subsets ?? 0), 0),
