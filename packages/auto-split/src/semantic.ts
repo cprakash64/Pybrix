@@ -26,6 +26,8 @@ import {
   type FamilySignatures,
 } from './semantic-family';
 import {
+  majorSiblingConsistencyScorer,
+  type MajorSiblingConsistency,
   synthesizeSemanticPlane,
   planeOwnershipTelemetry,
   confirmSemanticPlane,
@@ -412,6 +414,7 @@ export interface SemanticEvidence {
     mirroredAxes: readonly number[];
   }[];
   readonly planePurity: number | null;
+  readonly majorSiblingConsistency?: MajorSiblingConsistency;
   readonly localPlane?: LocalPlaneProposal;
   readonly synthesis?: PlaneSynthesisTrace;
   readonly visibility?: readonly {
@@ -940,7 +943,23 @@ export function decomposeSemantic(
           seam ? { seam, independentAxes } : undefined,
         )
       : undefined;
-    const supportedPlane = Boolean(localPlane) && decompositionIntent?.admitted === true;
+    const consistencyScorer =
+      localPlane &&
+      !pairedIds.has(part.id) &&
+      (decompositionIntent?.rule === 'GROUNDED_COMPLEMENT' || decompositionIntent?.rule === 'BOTH')
+        ? majorSiblingConsistencyScorer(prepared, answer, part, checkpoint, planeContext)
+        : undefined;
+    const majorSiblingConsistency = localPlane && consistencyScorer?.(localPlane.cut);
+    const consistent = (cut: LocalPlaneProposal['cut']): boolean => {
+      const result = consistencyScorer?.(cut);
+      return !result || result.outcome === 'CONSISTENT' || result.outcome === 'IRRELEVANT';
+    };
+    const supportedPlane =
+      Boolean(localPlane) &&
+      decompositionIntent?.admitted === true &&
+      (!majorSiblingConsistency ||
+        majorSiblingConsistency.outcome === 'CONSISTENT' ||
+        majorSiblingConsistency.outcome === 'IRRELEVANT');
     let geometryConfidence =
       componentConfidence > 0 ? componentConfidence : (localPlane?.confidence ?? 0);
     if (semanticConfidence < SEMANTIC_WORK_LIMITS.semanticConfidence) {
@@ -1031,12 +1050,13 @@ export function decomposeSemantic(
               ...(localPlane?.finalists ?? [])
                 .filter(
                   (cut) =>
-                    cut.independentComplement ||
-                    ((decompositionIntent?.rule === 'STRUCTURAL_SEAM' ||
-                      decompositionIntent?.rule === 'BOTH') &&
-                      cut.capturedFraction <=
-                        SEMANTIC_INTENT_LIMITS.maximumSelectedSourceSampleShare &&
-                      seamSupportsPlane(refined, cut, seam)),
+                    consistent(cut) &&
+                    (cut.independentComplement ||
+                      ((decompositionIntent?.rule === 'STRUCTURAL_SEAM' ||
+                        decompositionIntent?.rule === 'BOTH') &&
+                        cut.capturedFraction <=
+                          SEMANTIC_INTENT_LIMITS.maximumSelectedSourceSampleShare &&
+                        seamSupportsPlane(refined, cut, seam))),
                 )
                 .map((cut) => ({
                   normal: cut.normal,
@@ -1106,6 +1126,7 @@ export function decomposeSemantic(
       })),
       visibility,
       regionInstances,
+      ...(majorSiblingConsistency ? { majorSiblingConsistency } : {}),
       ...(localPlane ? { localPlane } : {}),
       ...(refined ? { refinement: refined } : {}),
       components: scores,

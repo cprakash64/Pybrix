@@ -1241,3 +1241,112 @@ function defined<T>(value: T | undefined): T {
   if (value === undefined) throw Error('Required bounded geometry evidence is missing.');
   return value;
 }
+
+export interface MajorSiblingConsistency {
+  readonly outcome: 'CONSISTENT' | 'IRRELEVANT' | 'CONTRADICTORY' | 'AMBIGUOUS';
+  readonly siblings: readonly {
+    readonly id: string;
+    readonly splitAxes: number;
+    readonly competingAxes: number;
+    readonly views: readonly {
+      readonly total: number;
+      readonly selected: number;
+      readonly shared: number;
+    }[];
+  }[];
+}
+
+/** Reuses bounded raster samples, never source faces. A single occluded view cannot veto an assembly. */
+export function majorSiblingConsistencyScorer(
+  prepared: PreparedSemanticGeometry,
+  answer: SemanticHierarchy,
+  part: SemanticPart,
+  checkpoint: Checkpoint,
+  context?: PlaneOwnershipContext,
+): (cut: LocalPlaneProposal['cut']) => MajorSiblingConsistency {
+  const evidence = observations(prepared, answer, part, checkpoint, context);
+  const relevant = evidence.peers
+    .flatMap((peer, index) => {
+      checkpoint();
+      if (peer.part.parentId !== part.parentId || peer.part.importance !== 'major' || !peer.fused)
+        return [];
+      const axes = new Set<number>();
+      for (const [i, point] of evidence.points.entries()) {
+        if ((i & 1023) === 0) checkpoint();
+        if (context) {
+          context.telemetry.workUnits++;
+          context.charge();
+        }
+        if (point.peerMask & (1 << index)) axes.add(Math.floor(point.view / 2));
+      }
+      return independentPlanePeer(
+        part,
+        peer.part.id,
+        answer,
+        {
+          sameSourceComponent: peer.fused,
+          independentAxes: axes.size,
+        },
+        checkpoint,
+      )
+        ? [{ peer, index }]
+        : [];
+    })
+    .sort((a, b) => a.peer.part.id.localeCompare(b.peer.part.id));
+  const cache = new Map<string, MajorSiblingConsistency>();
+  const dominant = prepared.facts.findIndex((f) => f.areaShare >= 0.5);
+  return (cut) => {
+    checkpoint();
+    const key = JSON.stringify([cut.normal, cut.origin]);
+    const cached = cache.get(key);
+    if (cached) return cached;
+    const offset = dot(cut.normal, cut.origin);
+    const siblings = relevant.map(({ peer, index }) => {
+      checkpoint();
+      const views = Array.from({ length: 6 }, () => ({ total: 0, selected: 0, shared: 0 }));
+      for (const [i, point] of evidence.points.entries()) {
+        if ((i & 1023) === 0) checkpoint();
+        if (context) {
+          context.telemetry.workUnits++;
+          context.charge();
+        }
+        if (point.rank !== dominant || !(point.peerMask & (1 << index))) continue;
+        const row = defined(views[point.view]);
+        row.total++;
+        if (dot(point.point, cut.normal) >= offset) {
+          row.selected++;
+          if (point.target) row.shared++;
+        }
+      }
+      const split = new Set<number>(),
+        competing = new Set<number>();
+      for (const [vi, row] of views.entries()) {
+        checkpoint();
+        if (row.total < 8) continue;
+        const fraction = row.selected / row.total;
+        if (
+          fraction > SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
+          fraction < 1 - SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage
+        )
+          split.add(Math.floor(vi / 2));
+        if (row.shared / row.total > SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage)
+          competing.add(Math.floor(vi / 2));
+      }
+      return { id: peer.part.id, splitAxes: split.size, competingAxes: competing.size, views };
+    });
+    const result: MajorSiblingConsistency = {
+      outcome: siblings.some(
+        (s) =>
+          s.splitAxes >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews ||
+          s.competingAxes >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews,
+      )
+        ? 'CONTRADICTORY'
+        : siblings.length
+          ? 'CONSISTENT'
+          : 'IRRELEVANT',
+      siblings,
+    };
+    cache.set(key, result);
+    return result;
+  };
+}
