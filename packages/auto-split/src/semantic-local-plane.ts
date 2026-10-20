@@ -30,6 +30,19 @@ import {
 import { refineSemanticPlanes, type SemanticPlaneRefinement } from './semantic-plane';
 import { structuralSeamEvidence } from './semantic-seam';
 import { probePeerlessSections } from './semantic-peerless-frontier';
+import {
+  collectGroundedBoundaryWitnesses,
+  groundedBoundaryForNormal,
+  GROUNDED_BOUNDARY_LIMITS,
+} from './semantic-grounded-boundary';
+import {
+  complementaryCoveragePartners,
+  collectGroundedScopeEnvelope,
+  groundedScopeProjection,
+  groundedScopeForCut,
+  groundedSourceFrame,
+  type GroundedTargetScopeEvidence,
+} from './semantic-grounded-scope';
 export const LOCAL_PLANE_LIMITS = Object.freeze({
   sampleStride: 16,
   normals: 32,
@@ -124,6 +137,7 @@ interface Score {
   }[];
 }
 export interface LocalPlaneProposal {
+  readonly groundedTargetScope?: GroundedTargetScopeEvidence;
   readonly targetScope?: PeerlessScopeEvidence;
   readonly peerlessRefinement?: SemanticPlaneRefinement;
   readonly provenance?: PlaneCandidateProvenance;
@@ -595,6 +609,7 @@ function directScore(
   return evaluate(evidence, rows, context, checkpoint);
 }
 interface Candidate {
+  groundedScope?: GroundedTargetScopeEvidence;
   targetScope?: PeerlessScopeEvidence;
   structuralHint?: number;
   localization?: number;
@@ -607,6 +622,7 @@ interface Candidate {
 }
 function semanticOrder(a: Candidate, b: Candidate): number {
   return (
+    (a.groundedScope && b.groundedScope ? (b.localization ?? 0) - (a.localization ?? 0) : 0) ||
     Number(!a.score.clean) - Number(!b.score.clean) ||
     (!a.score.clean && !b.score.clean ? a.score.worstLeakage - b.score.worstLeakage : 0) ||
     b.score.recall - a.score.recall ||
@@ -627,6 +643,8 @@ function assemblyBaseEligible(
   part: SemanticPart,
   candidate: Candidate,
 ): boolean {
+  if (candidate.groundedScope && candidate.groundedScope.state !== 'TARGET_SCOPE_SUPPORTED')
+    return false;
   const s = candidate.score;
   if (s.clean) return true;
   if (
@@ -701,6 +719,7 @@ function proposal(
       (evidence.fusedTarget && !part.expectedGeometry.likelySeparable && score.rawPurity < 0.9);
   const anchor = Math.min(1, ...score.peers.filter((p) => p.views >= 2).map((p) => p.leakage));
   return {
+    ...(candidate.groundedScope ? { groundedTargetScope: candidate.groundedScope } : {}),
     ...(candidate.targetScope ? { targetScope: candidate.targetScope } : {}),
     ...(candidate.offsetSource
       ? {
@@ -829,9 +848,46 @@ export function synthesizeSemanticPlane(
       normalMasks.push(mask);
     }
   };
+  const modelAxes = principal(points.map((p) => p.point));
+  const coveragePartners = evidence.peers.length
+    ? complementaryCoveragePartners(points, evidence.peers, part, checkpoint, charge)
+    : [];
+  if (coveragePartners.length > 1) {
+    trace.phase = 'NO_ELIGIBLE_CANDIDATE';
+    return undefined;
+  }
+  const groundedScope = evidence.peers.length > 0 && coveragePartners.length === 0;
+  const groundedUncertainty = groundedScope
+    ? collectGroundedScopeEnvelope(
+        points,
+        modelAxes,
+        prepared.geometry.radius,
+        prepared.rasters[0]?.size ?? 512,
+        checkpoint,
+        charge,
+      )
+    : 0;
+  const sourceFrame = groundedScope
+    ? groundedSourceFrame(
+        prepared.geometry,
+        modelAxes,
+        LOCAL_PLANE_LIMITS.sectionFaces,
+        checkpoint,
+        charge,
+      )
+    : [];
+  const boundaryWitnesses = groundedScope
+    ? collectGroundedBoundaryWitnesses(
+        prepared,
+        part,
+        sourceFrame.length ? sourceFrame : modelAxes,
+        checkpoint,
+        charge,
+      )
+    : [];
+  for (const normal of sourceFrame) add(normal, 'SOURCE_SECTION_FRAME');
   for (let x = -1; x <= 1; x++)
     for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) add([x, y, z]);
-  const modelAxes = principal(points.map((p) => p.point));
   for (const n of principal(target)) add(n, 'TARGET_PCA');
   for (const n of modelAxes) add(n, 'MODEL_PCA');
   if (evidence.peers.length === 0) {
@@ -867,7 +923,7 @@ export function synthesizeSemanticPlane(
   trace.phase = 'NO_ELIGIBLE_CANDIDATE';
   const candidates: Candidate[] = [],
     bins = LOCAL_PLANE_LIMITS.offsets,
-    channels = 5 + evidence.peers.length + (evidence.peers.length === 0 ? 1 : 0);
+    channels = 5 + evidence.peers.length + (evidence.peers.length === 0 || groundedScope ? 1 : 0);
   for (const [normalIndex, normal] of normals.entries()) {
     checkpoint();
     context.telemetry.normals++;
@@ -928,6 +984,7 @@ export function synthesizeSemanticPlane(
       }
       if (!p.target && !p.peerMask) action(4);
       if (evidence.peers.length === 0 && p.scopeOverhangWitness) action(5);
+      if (groundedScope && p.scopeOverhangWitness) action(5 + evidence.peers.length);
       for (let j = 0; j < evidence.peers.length; j++)
         if (p.peerMask & (1 << j)) {
           charge();
@@ -956,6 +1013,15 @@ export function synthesizeSemanticPlane(
         }
       }
     const scopeStarted = Date.now();
+    const groundedProjection = groundedScope
+      ? groundedScopeProjection(
+          points,
+          projected,
+          checkpoint,
+          charge,
+          groundedBoundaryForNormal(boundaryWitnesses, normal),
+        )
+      : undefined;
     const scopeProjection =
       evidence.peers.length === 0
         ? peerlessScopeProjection(points, projected, checkpoint, charge)
@@ -1016,6 +1082,15 @@ export function synthesizeSemanticPlane(
         // extremum and its robust frontier; it cannot bypass scope or structure.
         offset((robust + (q < 0.5 ? targetLo : targetHi)) / 2, 'TARGET_FRONTIER_BRACKET');
       }
+    }
+    if (groundedProjection) {
+      for (const d of [
+        groundedProjection.low - groundedUncertainty,
+        groundedProjection.low,
+        groundedProjection.high,
+        groundedProjection.high + groundedUncertainty,
+      ])
+        offset(d, 'TARGET_FRONTIER_BRACKET');
     }
     if (
       part.cut &&
@@ -1080,6 +1155,11 @@ export function synthesizeSemanticPlane(
         peerLo.byteLength +
         peerHi.byteLength +
         evidence.typedBytes +
+        (groundedScope
+          ? Math.max(0, ...prepared.rasters.map((r) => r.face.length)) +
+            points.length * Float64Array.BYTES_PER_ELEMENT +
+            GROUNDED_BOUNDARY_LIMITS.samplesPerView * 8
+          : 0) +
         6 * channels * Uint32Array.BYTES_PER_ELEMENT,
     );
     for (const [offsetIndex, d] of offsets.entries()) {
@@ -1124,6 +1204,24 @@ export function synthesizeSemanticPlane(
         }
         const score = evaluate(evidence, rows, context, checkpoint, trace);
         if (score) {
+          const groundedEvidence = groundedProjection
+            ? groundedScopeForCut(
+                groundedProjection,
+                rows,
+                rows.map((_r, v) => below[v * channels + 4] ?? 0),
+                rows.map((_r, v) => {
+                  const c = 5 + evidence.peers.length;
+                  return side === 1
+                    ? (prefix[(v * channels + c) * (bins + 1) + bins] ?? 0) -
+                        (below[v * channels + c] ?? 0)
+                    : (below[v * channels + c] ?? 0);
+                }),
+                d,
+                side,
+                groundedUncertainty,
+                checkpoint,
+              )
+            : undefined;
           const scopeStart = Date.now();
           const targetScope = scopeProjection
             ? peerlessScopeForCut(
@@ -1162,6 +1260,7 @@ export function synthesizeSemanticPlane(
           }
           if (trace.peerless) trace.peerless.structuralMilliseconds += Date.now() - structuralStart;
           candidates.push({
+            ...(groundedEvidence ? { groundedScope: groundedEvidence, localization } : {}),
             ...(targetScope ? { targetScope, structuralHint, localization } : {}),
             normalSourceMask: defined(normalMasks[normalIndex]),
             offsetSource: defined(offsetSources[offsetIndex]),
@@ -1546,12 +1645,63 @@ export function semanticPlaneScorer(
   // Local synthesis may set a derived separability flag. Aggregate intent must use the raw semantics.
   part = answer.parts.find((p) => p.id === part.id) ?? part;
   const evidence = observations(prepared, answer, part, checkpoint, bounded);
+  const charge = (): void => {
+    bounded.telemetry.workUnits++;
+    bounded.charge();
+  };
+  const groundedUncertainty = previous.groundedTargetScope
+    ? collectGroundedScopeEnvelope(
+        evidence.points,
+        principal(evidence.points.map((p) => p.point)),
+        prepared.geometry.radius,
+        prepared.rasters[0]?.size ?? 512,
+        checkpoint,
+        charge,
+      )
+    : undefined;
   return (cut) => {
     const normal = unit(cut.normal);
     if (!normal) return undefined;
     const offset = dot(cut.origin, normal),
       score = directScore(evidence, normal, offset, checkpoint, bounded);
     if (!score) return undefined;
+    let groundedScope: GroundedTargetScopeEvidence | undefined;
+    if (groundedUncertainty !== undefined) {
+      const projected = Float64Array.from(evidence.points, (p) => dot(p.point, normal));
+      const witness = previous.groundedTargetScope?.boundaryWitness;
+      const projection = groundedScopeProjection(
+        evidence.points,
+        projected,
+        checkpoint,
+        charge,
+        witness ? groundedBoundaryForNormal([witness], normal) : undefined,
+      );
+      const rows = emptyCounts(evidence.peers.length),
+        below = new Array<number>(6).fill(0),
+        outside = new Array<number>(6).fill(0);
+      for (const [i, p] of evidence.points.entries()) {
+        if ((i & 1023) === 0) checkpoint();
+        charge();
+        const row = defined(rows[p.view]);
+        if (p.target) row.target++;
+        if (defined(projected[i]) >= offset) {
+          row.selected++;
+          if (p.target) row.hit++;
+          if (p.scopeOverhangWitness) outside[p.view] = (outside[p.view] ?? 0) + 1;
+        } else if (!p.target) below[p.view] = (below[p.view] ?? 0) + 1;
+      }
+      groundedScope = groundedScopeForCut(
+        projection,
+        rows,
+        below,
+        outside,
+        offset,
+        1,
+        groundedUncertainty,
+        checkpoint,
+      );
+      if (groundedScope.state !== 'TARGET_SCOPE_SUPPORTED') return undefined;
+    }
     let targetScope: PeerlessScopeEvidence | undefined;
     if (previous.targetScope && evidence.peers.length === 0) {
       const scopeStart = Date.now();
@@ -1601,6 +1751,7 @@ export function semanticPlaneScorer(
       score,
       section: previous.sectionSamples,
       ...(targetScope ? { targetScope } : {}),
+      ...(groundedScope ? { groundedScope } : {}),
     };
     if (!score.clean) {
       if (

@@ -98,11 +98,7 @@ export function reconcileComplementarySiblings(
         continue;
       const peer = (p: LocalPlaneProposal, id: string): boolean =>
         p.ownership.peers.some(
-          (x) =>
-            x.id === id &&
-            x.sameSourceComponent &&
-            x.independentAxes >= 2 &&
-            x.leakage <= COMPLEMENTARY_LIMITS.overlap,
+          (x) => x.id === id && x.sameSourceComponent && x.independentAxes >= 2,
         );
       if (
         !peer(ap, b.id) ||
@@ -267,6 +263,9 @@ export function reconcileComplementarySiblings(
       checkpoint();
       const a = scoreA(cut),
         b = scoreB(opposite(cut));
+      // Both sides must pass the existing ownership scorer at this exact cut.
+      // The graph's silhouette-overlap bound is not an additional per-view
+      // leakage threshold for independently rasterized boundary observations.
       return a && b
         ? [
             {

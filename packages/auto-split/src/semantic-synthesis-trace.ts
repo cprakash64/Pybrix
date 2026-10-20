@@ -7,6 +7,7 @@ export const PLANE_NORMAL_SOURCES = [
   'MODEL_PCA',
   'PEER_DIRECTION',
   'PROVIDER_HINT',
+  'SOURCE_SECTION_FRAME',
 ] as const;
 export type PlaneNormalSource = (typeof PLANE_NORMAL_SOURCES)[number];
 export type PlaneOffsetSource =

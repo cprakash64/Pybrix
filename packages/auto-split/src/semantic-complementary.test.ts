@@ -235,3 +235,32 @@ it('bounds compact reserve diversity and cancels construction without publishing
     required(local.compatibilityReserve, 'reserve').every((c) => c.independentComplement),
   ).toBe(true);
 });
+
+it('proves peer exclusion at the shared reserve cut rather than unrelated independent winners', () => {
+  const copy = new Map(proposals);
+  const angle = Math.PI / 180;
+  for (const id of ['a', 'b']) {
+    const p = required(copy.get(id), 'independent proposal');
+    copy.set(id, {
+      ...p,
+      cut: {
+        ...p.cut,
+        normal: id === 'a' ? [Math.cos(angle), Math.sin(angle), 0] : [-1, 0, 0],
+      },
+      ownership: {
+        ...p.ownership,
+        worstPeerLeakage: 0.08,
+        peers: p.ownership.peers.map((peer) => ({ ...peer, leakage: 0.08 })),
+      },
+      compatibilityReserve: required(p.finalists, 'supported reserve').slice(0, 1),
+    });
+  }
+  const result = reconcileComplementarySiblings(prepared, answer, copy, () => undefined, {
+    telemetry: planeOwnershipTelemetry(),
+    charge: () => undefined,
+  });
+  expect(result.pairs).toHaveLength(1);
+  expect(result.pairs[0]?.compatibility).toBe('RESERVE');
+  for (const p of copy.values())
+    expect(p.ownership.peers.every((peer) => peer.leakage <= 0.02)).toBe(true);
+});
