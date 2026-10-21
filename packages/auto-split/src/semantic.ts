@@ -1062,6 +1062,19 @@ export function decomposeSemantic(
           ? `${part.label.slice(0, 55)} assembly`
           : part.label,
       operation,
+      ...(operation === SuggestionOperation.Plane &&
+      localPlane?.boundaryAmbiguity &&
+      !pairedIds.has(part.id)
+        ? {
+            boundaryAmbiguity: {
+              ...localPlane.boundaryAmbiguity,
+              hypotheses: localPlane.boundaryAmbiguity.hypotheses.map((h) => ({
+                ...h,
+                plane: { normal: h.plane.normal, origin: toSourcePoint(geometry, h.plane.origin) },
+              })),
+            },
+          }
+        : {}),
       status: quality === 'READY' ? SuggestionStatus.Suggested : SuggestionStatus.Unavailable,
       reason: quality === 'READY' ? SuggestionReason.Clear : SuggestionReason.FusedIntoBody,
       plane,
@@ -1524,6 +1537,28 @@ export function decomposeSemantic(
     shared.set(a.id, { key: pair.key, primaryId: a.id, complementId: b.id, side: 'PRIMARY' });
     shared.set(b.id, { key: pair.key, primaryId: a.id, complementId: b.id, side: 'COMPLEMENT' });
   }
+  // A confirmation cannot introduce sibling ownership that its automatic representative lacked.
+  for (const s of suggestions) {
+    if (!s.boundaryAmbiguity || refused.has(s.id) || shared.has(s.id)) continue;
+    for (const hypothesis of s.boundaryAmbiguity.hypotheses) {
+      checkpoint();
+      faceWork += geometry.faceCount;
+      if (faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
+        throw resourceLimitExceeded(
+          'The semantic correspondence exceeds the supported work limit.',
+        );
+      const checked = checkSiblingOwnership(
+        suggestions.map((other) =>
+          other.id === s.id ? { ...other, plane: hypothesis.plane } : other,
+        ),
+        initialRefused,
+      );
+      if (checked.has(s.id) || [...checked].some((id) => !refused.has(id))) {
+        refused.add(s.id);
+        break;
+      }
+    }
+  }
   for (const e of evidence)
     if (refused.has(e.id)) {
       const index = evidence.indexOf(e);
@@ -1534,8 +1569,11 @@ export function decomposeSemantic(
           : 'Overlapping sibling source membership refused',
       };
     }
-  const resolved = suggestions.map((s) =>
-    refused.has(s.id)
+  const resolved = suggestions.map<Suggestion>((suggestion) => {
+    const { boundaryAmbiguity, ...withoutAmbiguity } = suggestion;
+    const s = refused.has(suggestion.id) ? withoutAmbiguity : suggestion;
+    void boundaryAmbiguity;
+    return refused.has(s.id)
       ? {
           ...s,
           operation: SuggestionOperation.None,
@@ -1551,45 +1589,55 @@ export function decomposeSemantic(
           components: [],
           geometryConfidence: 0,
         }
-      : s,
-  );
+      : s;
+  });
   // READY for exact component partitions; planes need authoritative Preview first.
   const published = resolved.map((s) =>
-    s.operation === SuggestionOperation.Plane && s.quality === 'READY'
+    s.operation === SuggestionOperation.Plane && s.quality === 'READY' && s.boundaryAmbiguity
       ? {
           ...s,
-          quality: 'SUGGESTED' as const,
-          ...(shared.has(s.id)
-            ? { sharedBoundary: required(shared.get(s.id), 'shared boundary') }
-            : {}),
-          semanticFinalists:
-            sharedPools.get(s.id) ??
-            (s.semanticFinalists ?? []).filter((cut, index) => {
-              if (index === 0 || !s.plane) return true;
-              // A fallback cannot introduce ownership outside this already-admitted source selection.
-              const epsilon = geometry.scale * 1e-7;
-              for (let f = 0; f < geometry.faceCount; f++) {
-                if ((f & 255) === 0) checkpoint();
-                if (++faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
-                  throw resourceLimitExceeded(
-                    'The semantic correspondence exceeds the supported work limit.',
-                  );
-                let before = 0,
-                  after = 0;
-                for (let a = 0; a < 3; a++) {
-                  let x = 0;
-                  for (let k = 0; k < 3; k++)
-                    x += (geometry.positions[(geometry.indices[f * 3 + k] ?? 0) * 3 + a] ?? 0) / 3;
-                  x = x * geometry.scale + (geometry.center[a] ?? 0);
-                  before += (x - (s.plane.origin[a] ?? 0)) * (s.plane.normal[a] ?? 0);
-                  after += (x - (cut.origin[a] ?? 0)) * (cut.normal[a] ?? 0);
-                }
-                if (after > epsilon && before < -epsilon) return false;
-              }
-              return true;
-            }),
+          operation: SuggestionOperation.None,
+          plane: null,
+          semanticFinalists: [],
+          quality: 'RECOGNIZED_NOT_SEPARABLE' as const,
+          status: SuggestionStatus.Unavailable,
         }
-      : s,
+      : s.operation === SuggestionOperation.Plane && s.quality === 'READY'
+        ? {
+            ...s,
+            quality: 'SUGGESTED' as const,
+            ...(shared.has(s.id)
+              ? { sharedBoundary: required(shared.get(s.id), 'shared boundary') }
+              : {}),
+            semanticFinalists:
+              sharedPools.get(s.id) ??
+              (s.semanticFinalists ?? []).filter((cut, index) => {
+                if (index === 0 || !s.plane) return true;
+                // A fallback cannot introduce ownership outside this already-admitted source selection.
+                const epsilon = geometry.scale * 1e-7;
+                for (let f = 0; f < geometry.faceCount; f++) {
+                  if ((f & 255) === 0) checkpoint();
+                  if (++faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
+                    throw resourceLimitExceeded(
+                      'The semantic correspondence exceeds the supported work limit.',
+                    );
+                  let before = 0,
+                    after = 0;
+                  for (let a = 0; a < 3; a++) {
+                    let x = 0;
+                    for (let k = 0; k < 3; k++)
+                      x +=
+                        (geometry.positions[(geometry.indices[f * 3 + k] ?? 0) * 3 + a] ?? 0) / 3;
+                    x = x * geometry.scale + (geometry.center[a] ?? 0);
+                    before += (x - (s.plane.origin[a] ?? 0)) * (s.plane.normal[a] ?? 0);
+                    after += (x - (cut.origin[a] ?? 0)) * (cut.normal[a] ?? 0);
+                  }
+                  if (after > epsilon && before < -epsilon) return false;
+                }
+                return true;
+              }),
+          }
+        : s,
   );
   const peerlessRefinement = [...planeContext.synthesis.values()].reduce(
     (sum, trace) => ({
@@ -1728,6 +1776,10 @@ export function decomposeSemantic(
       complementaryPairs: complementary.pairs.length,
       complementaryMaxCandidates: Math.max(0, ...complementary.pairs.map((p) => p.candidates)),
       semanticPlaneOwnershipWork: planeOwnership.workUnits,
+      semanticBoundaryAlternativesInspected: planeOwnership.boundaryAlternativesInspected,
+      semanticBoundaryOwnershipFaceVisits: planeOwnership.boundaryOwnershipFaceVisits,
+      semanticBoundaryOwnershipPixelVisits: planeOwnership.boundaryOwnershipPixelVisits,
+      semanticBoundaryOwnershipScratchBytes: planeOwnership.boundaryOwnershipScratchBytes,
       semanticPlaneOwnershipMilliseconds: planeOwnershipMilliseconds,
       semanticPlaneOwnershipPeers: planeOwnership.peers,
       semanticPlaneOwnershipNormals: planeOwnership.normals,

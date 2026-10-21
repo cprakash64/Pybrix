@@ -24,6 +24,7 @@ import {
   type AutoSplitTarget,
 } from './auto-split-session';
 import { type NotClosedCopy } from './split-readiness-presentation';
+import { planeSettingsFor } from './auto-split-plane';
 import { splitSizeNoticeFor, type SplitSizeNotice } from './split-size-presentation';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { SplitPhase, SplitSource, type SplitControls } from './use-split-workflow';
@@ -117,6 +118,8 @@ export interface AutoSplitControls {
   readonly toggleShown: (id: string) => void;
   /** Loads the suggestion into Manual Split's controls and asks for its preview. */
   readonly preview: (id: string) => void;
+  readonly previewBoundary?: (id: string, alternativeId: string, confirm?: boolean) => void;
+  readonly boundaryPreview?: { readonly candidateId: string; readonly alternativeId: string };
   /** Loads the suggestion into Manual Split's controls for editing; no preview is made. */
   readonly edit: (id: string) => void;
   /** A selected suggestion's component set changed: preview it again. */
@@ -323,6 +326,12 @@ export function useAutoSplit(
     (id: string, thenPreview: boolean): void => {
       const row = rows.find((candidate) => candidate.id === id);
       if (!row?.executable) return;
+      const boundaryAlternative = row.suggestion.boundaryConfirmation?.alternatives.find(
+        (alternative) =>
+          row.suggestion.plane !== null &&
+          sameSemanticPlane(alternative.plane, row.suggestion.plane),
+      );
+      if (row.suggestion.boundaryConfirmation && !boundaryAlternative) return;
       if (
         thenPreview &&
         row.selected &&
@@ -349,7 +358,16 @@ export function useAutoSplit(
             row.label,
             row.suggestion.semanticPreparationId === undefined
               ? undefined
-              : { preparationId: row.suggestion.semanticPreparationId, candidateId: row.id },
+              : {
+                  preparationId: row.suggestion.semanticPreparationId,
+                  candidateId: row.id,
+                  ...(boundaryAlternative
+                    ? {
+                        boundaryChoice: 'CONFIRM' as const,
+                        boundaryAlternativeId: boundaryAlternative.id,
+                      }
+                    : {}),
+                },
           );
           setApproximate(loaded?.exact === false);
         } else {
@@ -368,6 +386,66 @@ export function useAutoSplit(
       preparePreview,
       splitPhase,
       split.preview,
+    ],
+  );
+  const previewBoundary = useCallback(
+    (id: string, alternativeId: string, confirm = false): void => {
+      if (
+        stale ||
+        snap.run === 'preparing' ||
+        snap.run === 'analyzing' ||
+        !part ||
+        splitPhase === SplitPhase.Preparing ||
+        splitPhase === SplitPhase.Computing ||
+        splitPhase === SplitPhase.Applying ||
+        splitPhase === SplitPhase.Undoing
+      )
+        return;
+      const row = rows.find((candidate) => candidate.id === id);
+      const alternative = row?.suggestion.boundaryConfirmation?.alternatives.find(
+        (candidate) => candidate.id === alternativeId,
+      );
+      const preparationId = row?.suggestion.semanticPreparationId;
+      if (
+        !row ||
+        !alternative ||
+        preparationId === undefined ||
+        !planeSettingsFor(alternative.plane, part.bounds).exact
+      )
+        return;
+      const proof = split.preview?.semanticQualification;
+      if (
+        confirm &&
+        (proof?.boundaryChoice !== 'PREVIEW' ||
+          proof.candidateId !== id ||
+          proof.preparationId !== preparationId ||
+          proof.boundaryAlternativeId !== alternativeId ||
+          !sameSemanticPlane(proof.plane, alternative.plane))
+      )
+        return;
+      preparePreview(() => {
+        if (confirm) session.select(id);
+        else session.previewBoundary(id, alternativeId);
+        setApproximate(false);
+        const loaded = loadSuggestedPlane(alternative.plane, row.label, {
+          preparationId,
+          candidateId: id,
+          boundaryAlternativeId: alternativeId,
+          boundaryChoice: confirm ? 'CONFIRM' : 'PREVIEW',
+        });
+        if (loaded?.exact) setPreviewTick((tick) => tick + 1);
+      });
+    },
+    [
+      stale,
+      snap.run,
+      part,
+      splitPhase,
+      rows,
+      split.preview,
+      preparePreview,
+      session,
+      loadSuggestedPlane,
     ],
   );
   const preview = useCallback(
@@ -588,11 +666,22 @@ export function useAutoSplit(
     toggleComponent,
     toggleShown,
     preview,
+    previewBoundary,
+    ...(split.preview?.semanticQualification?.boundaryChoice === 'PREVIEW' &&
+    split.preview.semanticQualification.boundaryAlternativeId !== undefined
+      ? {
+          boundaryPreview: {
+            candidateId: split.preview.semanticQualification.candidateId,
+            alternativeId: split.preview.semanticQualification.boundaryAlternativeId,
+          },
+        }
+      : {}),
     edit,
     previewSelection,
     planeApproximate: approximate && selected?.operation === SuggestionOperation.Plane,
     checkingCut:
-      selected?.operation === SuggestionOperation.Plane &&
+      (selected?.operation === SuggestionOperation.Plane ||
+        selected?.suggestion.boundaryConfirmation !== undefined) &&
       (splitPhase === SplitPhase.Preparing || splitPhase === SplitPhase.Computing),
     unsafeCut:
       tab === 'auto' &&
@@ -605,7 +694,10 @@ export function useAutoSplit(
       splitError !== undefined &&
       split.errorIsResourceLimit,
     footerBlock,
-    planeVisible: tab === 'manual' || selected?.operation === SuggestionOperation.Plane,
+    planeVisible:
+      tab === 'manual' ||
+      selected?.operation === SuggestionOperation.Plane ||
+      selected?.suggestion.boundaryConfirmation !== undefined,
     highlight,
   };
 }

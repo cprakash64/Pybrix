@@ -582,26 +582,30 @@ function Row({
             ? "Can't split this area safely"
             : row.selected && auto.checkingCut
               ? 'Checking cut…'
-              : row.suggestion.family === 'semantic' && row.suggestion.quality === 'READY'
-                ? 'Ready'
-                : row.executable || row.suggestion.quality === 'SUGGESTED'
-                  ? 'Suggested cut'
-                  : row.suggestion.family === 'semantic' &&
-                      (row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE' ||
-                        row.suggestion.quality === 'LOW_CONFIDENCE')
-                    ? describeSemanticUnavailable(row.suggestion.diagnostic)
-                    : row.suggestion.quality === 'LOW_CONFIDENCE'
-                      ? 'Needs a closer look'
-                      : row.suggestion.quality === 'UNSAFE'
-                        ? "Can't separate this safely"
-                        : 'No separate part found'}
+              : row.suggestion.quality === 'NEEDS_BOUNDARY_CONFIRMATION'
+                ? 'Choose a boundary'
+                : row.suggestion.family === 'semantic' && row.suggestion.quality === 'READY'
+                  ? 'Ready'
+                  : row.executable || row.suggestion.quality === 'SUGGESTED'
+                    ? 'Suggested cut'
+                    : row.suggestion.family === 'semantic' &&
+                        (row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE' ||
+                          row.suggestion.quality === 'LOW_CONFIDENCE')
+                      ? describeSemanticUnavailable(row.suggestion.diagnostic)
+                      : row.suggestion.quality === 'LOW_CONFIDENCE'
+                        ? 'Needs a closer look'
+                        : row.suggestion.quality === 'UNSAFE'
+                          ? "Can't separate this safely"
+                          : 'No separate part found'}
       </p>
       {children}
       <PanelSection title="Details" defaultOpen={false}>
         <p className="auto-row__reason" id={reasonId}>
-          {row.suggestion.family === 'semantic' && !row.executable
-            ? describeSemanticUnavailable(row.suggestion.diagnostic)
-            : describeReason(row.suggestion.reason, auto.sourceReady)}
+          {row.suggestion.quality === 'NEEDS_BOUNDARY_CONFIRMATION'
+            ? 'Review the two boundary options, then choose the geometry you want to keep.'
+            : row.suggestion.family === 'semantic' && !row.executable
+              ? describeSemanticUnavailable(row.suggestion.diagnostic)
+              : describeReason(row.suggestion.reason, auto.sourceReady)}
         </p>
         <p>
           {row.operationLabel} · {row.status.label}
@@ -634,18 +638,53 @@ function Row({
         </button>
       </PanelSection>
       <div className="auto-row__actions">
-        <button
-          type="button"
-          className={`${auto.selected?.operation !== SuggestionOperation.Component && row.id === auto.rows.find((candidate) => candidate.executable && !(candidate.selected && auto.unsafeCut))?.id ? 'primary-action' : 'secondary-action'} auto-row__button`}
-          disabled={!row.executable || (row.selected && auto.unsafeCut)}
-          aria-describedby={reasonId}
-          onClick={() => {
-            auto.preview(row.id);
-          }}
-          data-testid={`auto-preview-${row.id}`}
-        >
-          {AUTO_SPLIT_COPY.preview}
-        </button>
+        {row.suggestion.boundaryConfirmation ? (
+          <>
+            {row.suggestion.boundaryConfirmation.alternatives.map((alternative, index) => (
+              <button
+                key={alternative.id}
+                type="button"
+                className="secondary-action auto-row__button"
+                disabled={
+                  auto.stale || auto.busy || (auto.checkingCut ?? false) || !auto.previewBoundary
+                }
+                onClick={() => {
+                  auto.previewBoundary?.(row.id, alternative.id);
+                }}
+                data-testid={`auto-boundary-${row.id}-${String(index)}`}
+              >
+                Preview {alternative.previewMetadata.label}
+              </button>
+            ))}
+            {auto.boundaryPreview?.candidateId === row.id ? (
+              <button
+                type="button"
+                className="primary-action auto-row__button"
+                disabled={auto.stale || auto.busy || (auto.checkingCut ?? false)}
+                onClick={() => {
+                  if (auto.boundaryPreview)
+                    auto.previewBoundary?.(row.id, auto.boundaryPreview.alternativeId, true);
+                }}
+                data-testid={`auto-boundary-confirm-${row.id}`}
+              >
+                Choose this option
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <button
+            type="button"
+            className={`${auto.selected?.operation !== SuggestionOperation.Component && row.id === auto.rows.find((candidate) => candidate.executable && !(candidate.selected && auto.unsafeCut))?.id ? 'primary-action' : 'secondary-action'} auto-row__button`}
+            disabled={!row.executable || (row.selected && auto.unsafeCut)}
+            aria-describedby={reasonId}
+            onClick={() => {
+              auto.preview(row.id);
+            }}
+            data-testid={`auto-preview-${row.id}`}
+          >
+            {AUTO_SPLIT_COPY.preview}
+          </button>
+        )}
       </div>
     </li>
   );

@@ -2,6 +2,7 @@ import {
   clearSemanticNativeFinalists,
   registerSemanticNativeFinalists,
 } from './semantic-native-finalists';
+import { qualifySemanticBoundaries } from './semantic-boundary-qualification';
 import {
   validateSemanticHierarchy,
   validateHuman,
@@ -259,7 +260,7 @@ export const autoSplitRenderHandler: OperationHandler<'autosplit/render'> = asyn
   };
 };
 
-export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = (
+export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = async (
   payload,
   context,
 ) => {
@@ -283,13 +284,29 @@ export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = (
         code: 'AUTO_SPLIT_ANSWER_INVALID',
       });
     const result = decomposeSemantic(cached.prepared, checked.value, checkpointOf(context));
+    const qualified = await qualifySemanticBoundaries(
+      payload.source,
+      payload.partId,
+      mesh.indices.length / 3,
+      result.suggestions,
+      context,
+    );
+    const { suggestions } = qualified;
     context.throwIfCancelled();
+    if (
+      preparationSequence !== cached.preparationId ||
+      resolveMesh(payload.source, payload.partId) !== mesh
+    )
+      throw invalidState('Prepare this piece again before finding parts.', {
+        code: 'AUTO_SPLIT_SOURCE_STALE',
+      });
     registerSemanticNativeFinalists(
       payload.source,
       payload.partId,
       mesh,
       cached.preparationId,
-      result.suggestions,
+      suggestions,
+      qualified,
     );
     return Promise.resolve({
       value: {
@@ -297,8 +314,10 @@ export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = (
         partId: payload.partId,
         mode: payload.mode,
         objectLabel: result.objectLabel,
-        suggestions: result.suggestions.map((s) =>
-          s.operation === 'PLANE' ? { ...s, semanticPreparationId: cached.preparationId } : s,
+        suggestions: suggestions.map((s) =>
+          s.operation === 'PLANE' || s.boundaryConfirmation
+            ? { ...s, semanticPreparationId: cached.preparationId }
+            : s,
         ),
         components: result.components,
         componentCount: result.componentCount,

@@ -17,6 +17,7 @@ export * from './vehicle-match';
 export * from './vehicle-suggest';
 
 export * from './semantic';
+export * from './semantic-boundary-confirmation';
 export type { SemanticRealization, SemanticCandidate } from './semantic-candidate';
 
 export {

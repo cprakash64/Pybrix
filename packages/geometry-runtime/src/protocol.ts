@@ -292,13 +292,20 @@ export interface EditDiscardResult {
 
 /* ------------------------------------------------------------------- split -- */
 export interface SplitCreatePayload {
-  readonly semanticQualification?: { readonly preparationId: number; readonly candidateId: string };
+  readonly semanticQualification?: {
+    readonly preparationId: number;
+    readonly candidateId: string;
+    readonly boundaryAlternativeId?: string;
+    readonly boundaryChoice?: 'PREVIEW' | 'CONFIRM';
+  };
   readonly source: DocumentHandle;
   readonly partId: string;
   readonly request: SplitRequest;
 }
 export interface SplitCreateResult extends SplitCandidateSummary {
   readonly semanticQualification?: {
+    readonly boundaryAlternativeId?: string;
+    readonly boundaryChoice?: 'PREVIEW' | 'CONFIRM';
     readonly preparationId: number;
     readonly candidateId: string;
     readonly plane: SplitRequest['plane'];

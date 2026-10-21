@@ -151,6 +151,8 @@ export function describeStatus(suggestion: Suggestion, sourceReady: boolean): Su
     return { label: 'No safe split found', tone: 'unavailable' };
   if (!sourceReady) return { label: NOT_CLOSED_COPY.chip, tone: 'repair' };
   switch (suggestion.status) {
+    case SuggestionStatus.NeedsBoundaryConfirmation:
+      return { label: 'Choose a boundary', tone: 'review' };
     case SuggestionStatus.Suggested:
       if (suggestion.quality === 'SUGGESTED') return { label: 'Suggested', tone: 'review' };
       if (suggestion.family === 'semantic' && suggestion.quality === 'READY')

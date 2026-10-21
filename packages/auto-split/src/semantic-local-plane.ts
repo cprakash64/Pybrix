@@ -29,6 +29,8 @@ import {
 } from './semantic-peerless-scope';
 import { refineSemanticPlanes, type SemanticPlaneRefinement } from './semantic-plane';
 import { structuralSeamEvidence } from './semantic-seam';
+import { interfaceOwnershipEvidence } from './semantic-interface-ownership';
+import type { BoundaryAmbiguity } from './semantic-boundary-confirmation';
 import { probePeerlessSections } from './semantic-peerless-frontier';
 import {
   collectGroundedBoundaryWitnesses,
@@ -63,6 +65,10 @@ export interface PlaneOwnershipTelemetry {
   peerScoringPasses: number;
   rankingComparisons: number;
   compatibilityReserveChecks: number;
+  boundaryAlternativesInspected: number;
+  boundaryOwnershipFaceVisits: number;
+  boundaryOwnershipPixelVisits: number;
+  boundaryOwnershipScratchBytes: number;
 }
 export const planeOwnershipTelemetry = (): PlaneOwnershipTelemetry => ({
   workUnits: 0,
@@ -76,6 +82,10 @@ export const planeOwnershipTelemetry = (): PlaneOwnershipTelemetry => ({
   peerScoringPasses: 0,
   rankingComparisons: 0,
   compatibilityReserveChecks: 0,
+  boundaryAlternativesInspected: 0,
+  boundaryOwnershipFaceVisits: 0,
+  boundaryOwnershipPixelVisits: 0,
+  boundaryOwnershipScratchBytes: 0,
 });
 export interface PlaneOwnershipContext {
   readonly telemetry: PlaneOwnershipTelemetry;
@@ -137,6 +147,7 @@ interface Score {
   }[];
 }
 export interface LocalPlaneProposal {
+  readonly boundaryAmbiguity?: BoundaryAmbiguity;
   readonly groundedTargetScope?: GroundedTargetScopeEvidence;
   readonly targetScope?: PeerlessScopeEvidence;
   readonly peerlessRefinement?: SemanticPlaneRefinement;
@@ -628,6 +639,7 @@ function semanticOrder(a: Candidate, b: Candidate): number {
     b.score.recall - a.score.recall ||
     b.score.purity - a.score.purity ||
     a.score.worstLeakage - b.score.worstLeakage ||
+    groundedFrontierDistance(a) - groundedFrontierDistance(b) ||
     a.score.fraction - b.score.fraction ||
     a.section - b.section ||
     a.normal[0] - b.normal[0] ||
@@ -635,6 +647,16 @@ function semanticOrder(a: Candidate, b: Candidate): number {
     a.normal[2] - b.normal[2] ||
     a.offset - b.offset
   );
+}
+/** A dense, corroborated perimeter resolves ties that the sparse score cannot see. */
+function groundedFrontierDistance(candidate: Candidate): number {
+  const scope = candidate.groundedScope;
+  return scope?.boundaryWitness && scope.boundaryWitness.observedAxes.length >= 2
+    ? Math.max(
+        0,
+        Math.abs(candidate.offset - scope.intrinsicFrontier) - scope.pixelUncertainty - 1e-8,
+      )
+    : 0;
 }
 /** The frontier, fused source support and structured geometry must all corroborate approximation. */
 function assemblyBaseEligible(
@@ -1429,6 +1451,7 @@ export function synthesizeSemanticPlane(
     trace.peerless.finalists = [];
   }
   const confirmedRefinements = new Map<Candidate, SemanticPlaneRefinement>();
+  const confirmedOrigins = new Map<Candidate, Candidate>();
   for (const [beamIndex, original] of beam.entries()) {
     let c = original;
     const refined = peerlessProfiles?.refinements.get(String(beamIndex));
@@ -1513,6 +1536,7 @@ export function synthesizeSemanticPlane(
       if (low < 0 && high > 0) c.section++;
     }
     confirmed.push(c);
+    confirmedOrigins.set(c, original);
     const entry = trace.peerless?.finalists?.[beamIndex];
     if (entry) entry.confirmed = true;
   }
@@ -1528,7 +1552,89 @@ export function synthesizeSemanticPlane(
       : semanticOrder(a, b);
   });
   trace.confirmed = confirmed.length;
-  const winner = confirmed[0];
+  let winner = confirmed[0];
+  let boundaryAmbiguity: BoundaryAmbiguity | undefined;
+  let ownershipResolved = false;
+  const original = winner && confirmedOrigins.get(winner);
+  const winningRefinement = winner && confirmedRefinements.get(winner);
+  if (
+    winner &&
+    original &&
+    winningRefinement &&
+    structuralSeamEvidence(winningRefinement, checkpoint).reason === 'STABLE_SECTION_STEP' &&
+    Math.abs(winner.offset - original.offset) > 1e-7
+  ) {
+    const cut = (c: Candidate): LocalPlaneProposal['cut'] => ({
+      normal: c.normal,
+      origin: vector(c.normal.map((n) => n * c.offset)),
+    });
+    const alternatives = [cut(original), cut(winner)] as const;
+    const originalScore = directScore(
+      evidence,
+      original.normal,
+      original.offset,
+      checkpoint,
+      context,
+    );
+    const originalAdmitted =
+      originalScore &&
+      assemblyEligible(
+        evidence,
+        answer,
+        part,
+        { ...original, score: originalScore },
+        candidates,
+        checkpoint,
+        charge,
+      );
+    const ownership = interfaceOwnershipEvidence(
+      prepared,
+      part,
+      evidence.peers.map((p) => p.part),
+      alternatives,
+      checkpoint,
+      charge,
+    );
+    context.telemetry.boundaryAlternativesInspected += 2;
+    context.telemetry.boundaryOwnershipFaceVisits += ownership.faceVisits;
+    context.telemetry.boundaryOwnershipPixelVisits += ownership.pixelVisits;
+    context.telemetry.boundaryOwnershipScratchBytes = Math.max(
+      context.telemetry.boundaryOwnershipScratchBytes,
+      ownership.scratchBytes,
+    );
+    if (ownership.surfaceArea > 0 && ownership.interfaceSelectedAlternative === null)
+      winner = undefined;
+    if (ownership.surfaceArea > 0 && ownership.interfaceSelectedAlternative !== null) {
+      const included = ownership.interfaceSelectedAlternative;
+      if (ownership.conflict || !originalAdmitted) winner = undefined;
+      else if (ownership.ownership !== 'AMBIGUOUS') {
+        ownershipResolved = true;
+        const selected = ownership.ownership === 'TARGET_SIDE' ? included : 1 - included;
+        if (selected === 0) {
+          winner = original;
+          confirmedRefinements.set(original, {
+            ...winningRefinement,
+            cut: alternatives[0],
+            chosenOffset: dot(winningRefinement.profileNormal, alternatives[0].origin),
+          });
+        }
+      } else {
+        boundaryAmbiguity = {
+          targetId: part.id,
+          route: 'STRUCTURAL_SEAM',
+          interfaceOwnership: 'AMBIGUOUS',
+          materialUnknownInterface: true,
+          hypotheses: alternatives.map((plane, index) => ({
+            plane,
+            ownershipClass: index === included ? 'TARGET_SIDE' : 'BODY_SIDE',
+            semanticAdmission: true,
+            preservesPositiveEvidence: true,
+            respectsKnownOwnership: true,
+          })),
+        };
+      }
+    }
+  }
   if (winner) peerlessRefinement = confirmedRefinements.get(winner);
   if (winner) trace.phase = 'PROPOSAL';
   if (trace.peerless) trace.peerless.phase = 'COMPLETE';
@@ -1598,9 +1704,10 @@ export function synthesizeSemanticPlane(
   return winner
     ? {
         ...proposal(winner, evidence, part, candidates, answer, checkpoint, charge),
+        ...(boundaryAmbiguity ? { boundaryAmbiguity } : {}),
         ...(peerlessRefinement ? { peerlessRefinement } : {}),
         compatibilityReserve: reserve,
-        finalists: confirmed.map((c) => ({
+        finalists: (ownershipResolved ? [winner] : confirmed).map((c) => ({
           normal: c.normal,
           origin: vector(c.normal.map((n) => n * c.offset)),
           independentComplement: c.score.peers.some(
@@ -1770,6 +1877,7 @@ export function semanticPlaneScorer(
     });
     return {
       ...result,
+      ...(previous.boundaryAmbiguity ? { boundaryAmbiguity: previous.boundaryAmbiguity } : {}),
       ...(previous.provenance
         ? {
             provenance: {

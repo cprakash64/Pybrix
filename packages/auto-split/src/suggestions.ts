@@ -1,4 +1,5 @@
 import type { Vec3 } from '@cadfixer/auto-split-contract';
+import type { BoundaryAmbiguity, BoundaryConfirmation } from './semantic-boundary-confirmation';
 
 /**
  * WHAT AUTO SPLIT HANDS THE PAGE: editable SUGGESTIONS, never operations.
@@ -16,6 +17,7 @@ export const SuggestionStatus = {
   NeedsAdjustment: 'NEEDS_ADJUSTMENT',
   /** The part was found but no safe split can be prepared for it. */
   Unavailable: 'UNAVAILABLE',
+  NeedsBoundaryConfirmation: 'NEEDS_BOUNDARY_CONFIRMATION',
 } as const;
 export type SuggestionStatus = (typeof SuggestionStatus)[keyof typeof SuggestionStatus];
 
@@ -76,7 +78,16 @@ export interface Suggestion {
   readonly semanticConfidence?: number;
   readonly geometryConfidence?: number;
   readonly quality?:
-    'SUGGESTED' | 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
+    | 'SUGGESTED'
+    | 'READY'
+    | 'RECOGNIZED_NOT_SEPARABLE'
+    | 'UNSAFE'
+    | 'LOW_CONFIDENCE'
+    | 'STALE'
+    | 'NEEDS_BOUNDARY_CONFIRMATION';
+  /** Worker-only pending evidence; never an executable or native-qualified claim. */
+  readonly boundaryAmbiguity?: BoundaryAmbiguity;
+  readonly boundaryConfirmation?: BoundaryConfirmation;
   /** Presentation diagnosis only; never grants an operation or changes validation. */
   readonly diagnostic?: 'CONFIRMED_FUSED' | 'MAPPING_UNCERTAIN' | 'NO_REALIZATION_PROPOSAL';
   /** Semantically admitted alternatives, never native-validity claims. At most three. */

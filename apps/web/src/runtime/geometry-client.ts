@@ -37,6 +37,7 @@ import {
   type AutoSplitRenderResult,
   type AutoSplitSuggestResult,
   type AutoSplitComponentFacesResult,
+  type SplitCreatePayload,
   type SplitCreateResult,
   type SplitCommitResult,
   type SplitDiscardResult,
@@ -514,7 +515,7 @@ export class GeometryClient {
     partId: string,
     request: SplitRequest,
     onProgress?: (update: ProgressUpdate) => void,
-    semanticQualification?: { readonly preparationId: number; readonly candidateId: string },
+    semanticQualification?: SplitCreatePayload['semanticQualification'],
   ): OperationHandle<SplitCreateResult> {
     return this.coordinator.dispatch(
       'split/create',

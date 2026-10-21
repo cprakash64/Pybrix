@@ -7,6 +7,7 @@ import type {
   OperationHandle,
   PartDescriptor,
   SplitConnector,
+  SplitCreatePayload,
   SplitCreateResult,
   SplitPlane,
 } from '@cadfixer/geometry-runtime';
@@ -135,7 +136,7 @@ export interface SplitControls {
   readonly loadSuggestedPlane: (
     plane: SplitPlane,
     label?: string,
-    semanticQualification?: { readonly preparationId: number; readonly candidateId: string },
+    semanticQualification?: SplitCreatePayload['semanticQualification'],
   ) => { readonly exact: boolean } | undefined;
   /** Makes the next preview a component split, or (with undefined) returns to the plane. */
   readonly setComponentSource: (ranks: readonly number[] | undefined, label?: string) => void;
@@ -355,7 +356,7 @@ export function useSplitWorkflow(): SplitControls {
     | {
         key: string;
         label: string;
-        qualification?: { readonly preparationId: number; readonly candidateId: string };
+        qualification?: SplitCreatePayload['semanticQualification'];
       }
     | undefined
   >(undefined);
@@ -582,7 +583,7 @@ export function useSplitWorkflow(): SplitControls {
     (
       suggested: SplitPlane,
       label?: string,
-      qualification?: { readonly preparationId: number; readonly candidateId: string },
+      qualification?: SplitCreatePayload['semanticQualification'],
     ): { readonly exact: boolean } | undefined => {
       if (part === undefined) return undefined;
       const mapped = planeSettingsFor(suggested, part.bounds);
@@ -697,6 +698,7 @@ export function useSplitWorkflow(): SplitControls {
       // settings are neither read nor validated for them.
       if (
         !byComponents &&
+        semanticIntent.current?.qualification?.boundaryChoice !== 'PREVIEW' &&
         connector.kind !== 'none' &&
         (!available || connectorProblem !== undefined)
       ) {
@@ -728,12 +730,14 @@ export function useSplitWorkflow(): SplitControls {
                 {
                   plane: splitPlane,
                   connector:
-                    semanticIntent.current?.key === partKey &&
-                    connector.kind === 'none' &&
-                    unitValue &&
-                    !plainRequested.current
-                      ? { kind: 'automatic', unit: unitValue }
-                      : connectorRequest(connector, unitValue),
+                    semanticIntent.current?.qualification?.boundaryChoice === 'PREVIEW'
+                      ? { kind: 'none' }
+                      : semanticIntent.current?.key === partKey &&
+                          connector.kind === 'none' &&
+                          unitValue &&
+                          !plainRequested.current
+                        ? { kind: 'automatic', unit: unitValue }
+                        : connectorRequest(connector, unitValue),
                 },
                 onProgress,
                 semanticIntent.current?.key === partKey
@@ -844,7 +848,8 @@ export function useSplitWorkflow(): SplitControls {
   const apply = useCallback((): void => {
     if (client === undefined || model === undefined || part === undefined) return;
     const current = previewRef.current;
-    if (current === undefined) return;
+    if (current === undefined || current.semanticQualification?.boundaryChoice === 'PREVIEW')
+      return;
     if (
       semanticIntent.current?.key === partKey &&
       componentRanks.length === 0 &&

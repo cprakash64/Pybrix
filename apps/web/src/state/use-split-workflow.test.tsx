@@ -171,6 +171,30 @@ async function applied(s: ReturnType<typeof setup>): Promise<void> {
   await frame();
 }
 describe('Split action guards and painted phases', () => {
+  it('boundary inspection ignores unrelated invalid connector settings and stays connector-free', async () => {
+    const s = setup();
+    act(() => {
+      s.result.current.setConnector({ kind: 'pin', diameter: -1 });
+    });
+    act(() => {
+      s.result.current.loadSuggestedPlane({ normal: [0, 0, 1], origin: [0, 0, 52] }, 'Option A', {
+        preparationId: 7,
+        candidateId: 'part',
+        boundaryAlternativeId: 'part:boundary:0',
+        boundaryChoice: 'PREVIEW',
+      });
+    });
+    expect(s.result.current.connectorProblem).toBeDefined();
+    act(() => {
+      s.result.current.updatePreview();
+    });
+    await frame();
+    await frame();
+    expect(s.create).toHaveBeenCalledTimes(1);
+    expect(s.create.mock.calls[0]?.[2].connector).toEqual({ kind: 'none' });
+    expect(s.commit).not.toHaveBeenCalled();
+  });
+
   it('Preview closes synchronously, dispatches once after paint, and recovers', async () => {
     const s = setup();
     act(() => {

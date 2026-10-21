@@ -21,6 +21,7 @@ import type {
   DocumentHandle,
   DocumentRenderSnapshot,
   PartDescriptor,
+  SplitCreateResult,
 } from '@cadfixer/geometry-runtime';
 import { SplitHud } from './SplitHud';
 import { SplitWorkspace } from './SplitWorkspace';
@@ -330,6 +331,95 @@ async function findParts(kind: 'human' | 'vehicle' = 'human'): Promise<void> {
   click('auto-analyze');
   await settle();
 }
+
+describe('boundary option preview', () => {
+  it('loads only the explicit option without connectors or an automatic commit', async () => {
+    const alternative = (
+      index: number,
+    ): NonNullable<Suggestion['boundaryConfirmation']>['alternatives'][number] => ({
+      id: `head:boundary:${String(index)}`,
+      plane: { normal: [0, 0, 1] as const, origin: [0, 0, 80 + index] as const },
+      selectedSide: 'POSITIVE' as const,
+      nativeProof: {
+        valid: true as const,
+        sourcePreserved: true as const,
+        partitionCount: 2 as const,
+      },
+      previewMetadata: { label: index === 0 ? ('Option A' as const) : ('Option B' as const) },
+    });
+    const spies = mount({
+      suggestions: [
+        {
+          ...HEAD,
+          family: 'semantic',
+          operation: 'NONE',
+          plane: null,
+          status: SuggestionStatus.NeedsBoundaryConfirmation,
+          quality: 'NEEDS_BOUNDARY_CONFIRMATION',
+          semanticPreparationId: 7,
+          boundaryConfirmation: {
+            status: 'NEEDS_BOUNDARY_CONFIRMATION',
+            targetId: 'head',
+            route: 'STRUCTURAL_SEAM',
+            ambiguityReason: 'UNRESOLVED_INTERFACE_OWNERSHIP',
+            alternatives: [alternative(0), alternative(1)],
+          },
+        },
+      ],
+    });
+    await findParts();
+    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Choose a boundary');
+    expect(screen.queryByTestId('auto-preview-head')).toBeNull();
+    expect(screen.queryByTestId('auto-boundary-confirm-head')).toBeNull();
+    spies.createSplit.mockReturnValue({
+      promise: Promise.resolve({
+        candidate: { documentId: 'doc-1', generation: 1, candidateId: 'option-b' },
+        render: { parts: [] },
+        parts: [],
+        pieceAId: 'a',
+        pieceBId: 'b',
+        metrics: { pieceAFinalVolume: 1, pieceBFinalVolume: 1, volumeRelativeError: 0 },
+        section: { area: 1, loopCount: 1 },
+        connector: { kind: 'none' },
+        semanticQualification: {
+          preparationId: 7,
+          candidateId: 'head',
+          boundaryAlternativeId: 'head:boundary:1',
+          boundaryChoice: 'PREVIEW',
+          plane: alternative(1).plane,
+          attempts: 1,
+          failures: 0,
+          winnerIndex: 0,
+          milliseconds: 1,
+        },
+      } as unknown as SplitCreateResult),
+      cancel: (): void => undefined,
+    });
+    click('auto-boundary-head-1');
+    await settle();
+    expect(spies.createSplit).toHaveBeenCalledTimes(1);
+    const call = spies.createSplit.mock.calls[0] as unknown as [
+      DocumentHandle,
+      string,
+      { connector: { kind: string }; plane: { origin: number[] } },
+      unknown,
+      unknown,
+    ];
+    expect(call[2].connector).toEqual({ kind: 'none' });
+    expect(call[2].plane.origin[2]).toBeCloseTo(81, 6);
+    expect(call[4]).toEqual({
+      preparationId: 7,
+      candidateId: 'head',
+      boundaryAlternativeId: 'head:boundary:1',
+      boundaryChoice: 'PREVIEW',
+    });
+    expect(screen.getByTestId('auto-boundary-confirm-head')).toBeVisible();
+    expect(screen.getByTestId('auto-boundary-head-0')).toBeVisible();
+    expect(screen.getByTestId('split-apply')).toBeDisabled();
+    click('split-apply');
+    expect(spies.commitSplit).not.toHaveBeenCalled();
+  });
+});
 
 describe('the tabs', () => {
   it('opens on Manual Split, with the Beta badge on the Auto Split tab, and neither tab sends anything', async () => {

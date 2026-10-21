@@ -714,7 +714,7 @@ describe('semantic preparation cleanup', () => {
 });
 
 describe('semantic final READY lifecycle', () => {
-  async function suggested(pair = false): Promise<Rig> {
+  async function suggested(pair = false, confirmation = false): Promise<Rig> {
     const r = rig();
     ready(r);
     r.session.analyze(target());
@@ -729,6 +729,33 @@ describe('semantic final READY lifecycle', () => {
           family: 'semantic',
           quality: 'SUGGESTED',
           semanticPreparationId: 7,
+          ...(confirmation
+            ? {
+                operation: 'NONE' as const,
+                plane: null,
+                status: 'NEEDS_BOUNDARY_CONFIRMATION' as const,
+                quality: 'NEEDS_BOUNDARY_CONFIRMATION' as const,
+                boundaryConfirmation: {
+                  status: 'NEEDS_BOUNDARY_CONFIRMATION' as const,
+                  targetId: 'head',
+                  route: 'STRUCTURAL_SEAM' as const,
+                  ambiguityReason: 'UNRESOLVED_INTERFACE_OWNERSHIP' as const,
+                  alternatives: [0, 1].map((index) => ({
+                    id: `head:boundary:${String(index)}`,
+                    plane: { normal: [0, 0, 1] as const, origin: [0, 0, 1.2 + index] as const },
+                    selectedSide: 'POSITIVE' as const,
+                    nativeProof: {
+                      valid: true as const,
+                      sourcePreserved: true as const,
+                      partitionCount: 2 as const,
+                    },
+                    previewMetadata: {
+                      label: index === 0 ? ('Option A' as const) : ('Option B' as const),
+                    },
+                  })) as unknown as NonNullable<Suggestion['boundaryConfirmation']>['alternatives'],
+                },
+              }
+            : {}),
           ...(pair
             ? {
                 sharedBoundary: {
@@ -772,6 +799,38 @@ describe('semantic final READY lifecycle', () => {
     winnerIndex: 1,
     milliseconds: 10,
   };
+  it('only an explicit exact source-bound boundary choice promotes a confirmation', async () => {
+    const r = await suggested(false, true);
+    const choice = { ...proof, boundaryAlternativeId: 'head:boundary:0' };
+    for (const candidate of [
+      proof,
+      { ...choice, boundaryChoice: 'PREVIEW' as const },
+      { ...choice, boundaryChoice: 'CONFIRM' as const, boundaryAlternativeId: 'missing' },
+      { ...choice, boundaryChoice: 'CONFIRM' as const, preparationId: 6 },
+      {
+        ...choice,
+        boundaryChoice: 'CONFIRM' as const,
+        plane: { ...proof.plane, origin: [0, 0, 99] as const },
+      },
+    ]) {
+      r.session.nativeQualified(candidate);
+      expect(r.session.getSnapshot().result?.suggestions[0]?.operation).toBe('NONE');
+    }
+    r.session.nativeQualified({ ...choice, boundaryChoice: 'CONFIRM' });
+    const selected = r.session.getSnapshot().result?.suggestions[0];
+    expect(selected?.operation).toBe('PLANE');
+    expect(selected?.quality).toBe('READY');
+    expect(selected?.plane).toEqual(proof.plane);
+    expect(selected?.boundaryConfirmation?.alternatives).toHaveLength(2);
+    r.session.previewBoundary('head', 'missing');
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('READY');
+    r.session.previewBoundary('head', 'head:boundary:1');
+    expect(r.session.getSnapshot().result?.suggestions[0]?.operation).toBe('NONE');
+    expect(r.session.getSnapshot().result?.suggestions[0]?.plane).toBeNull();
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe(
+      'NEEDS_BOUNDARY_CONFIRMATION',
+    );
+  });
   it('suggestions are pending until the matching authoritative Preview succeeds', async () => {
     const r = await suggested();
     expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('SUGGESTED');

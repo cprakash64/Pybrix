@@ -23,5 +23,11 @@ export interface SemanticCandidate {
   readonly instances: number;
   readonly realization: SemanticRealization;
   readonly quality:
-    'SUGGESTED' | 'READY' | 'RECOGNIZED_NOT_SEPARABLE' | 'UNSAFE' | 'LOW_CONFIDENCE' | 'STALE';
+    | 'SUGGESTED'
+    | 'READY'
+    | 'RECOGNIZED_NOT_SEPARABLE'
+    | 'UNSAFE'
+    | 'LOW_CONFIDENCE'
+    | 'STALE'
+    | 'NEEDS_BOUNDARY_CONFIRMATION';
 }

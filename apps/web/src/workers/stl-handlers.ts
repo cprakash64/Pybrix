@@ -6,6 +6,7 @@ import {
   type Diagnostic,
 } from '@cadfixer/shared';
 import { BooleanOperationController } from './boolean-operation-controller';
+import { releaseBoundaryPreview } from './semantic-native-finalists';
 import {
   assertGeometryDocument,
   assertMeshStructure,
@@ -737,6 +738,7 @@ export const modelReleaseHandler: OperationHandler<'model/release'> = (payload) 
   holeFillCandidates.releaseDocument(documentId);
   geometryEdits.releaseDocument(documentId);
   splitCandidates.releaseDocument(documentId);
+  releaseBoundaryPreview(documentId);
   booleanOperations.cancelDocument(documentId);
   topologyReports.release(documentId);
   const value: ModelReleaseResult = { released };

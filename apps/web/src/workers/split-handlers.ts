@@ -1,5 +1,10 @@
 import { qualifySemanticFinalists } from '@cadfixer/auto-split';
-import { semanticNativePlan, recordSemanticNativeWinner } from './semantic-native-finalists';
+import {
+  semanticNativePlan,
+  recordSemanticNativeWinner,
+  recordBoundaryPreview,
+  requireConfirmedBoundary,
+} from './semantic-native-finalists';
 import { isAppError, AppErrorCode, invalidState } from '@cadfixer/shared';
 import { documentTriangleCount, documentVertexCount, partId } from '@cadfixer/mesh-core';
 import {
@@ -106,6 +111,10 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
     );
     context.reportProgress(0.85, 'Checking parts…');
     const summary = splitCandidates.resolve(ticket, result, context.cancellation);
+    recordBoundaryPreview(
+      summary.candidate,
+      payload.semanticQualification?.boundaryChoice === 'PREVIEW',
+    );
     const preview = splitCandidates.preview(summary.candidate, (document) => ({
       render: buildDocumentRenderSnapshot(document),
       parts: describeParts(document),
@@ -200,6 +209,7 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
 
 export const splitCommitHandler: OperationHandler<'split/commit'> = (payload, context) => {
   context.throwIfCancelled();
+  requireConfirmedBoundary(payload.candidate);
   const committed = splitCandidates.commit(
     payload.candidate,
     payload.expectedSource,

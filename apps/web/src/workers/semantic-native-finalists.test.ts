@@ -13,7 +13,10 @@ import {
   semanticNativePlan,
   clearSemanticNativeFinalists,
   recordSemanticNativeWinner,
+  recordBoundaryPreview,
+  requireConfirmedBoundary,
 } from './semantic-native-finalists';
+import type { SplitCandidateHandle } from '@cadfixer/geometry-runtime';
 const source = { documentId: 'finalist-test', revision: 0 } as DocumentHandle;
 const planes = [0, 1, 2].map((z) => ({ origin: [0, 0, z] as const, normal: [0, 0, 1] as const }));
 const suggestions: Suggestion[] = ['a', 'b', 'c', 'd'].map((id) => ({
@@ -163,5 +166,88 @@ describe('revision-scoped scalar native finalist plan', () => {
     registerSemanticNativeFinalists(source, 'part', mesh, 7, suggestions);
     clearSemanticNativeFinalists();
     expect(() => planFor(payload(), mesh)).toThrow();
+  });
+});
+
+describe('explicit boundary confirmation plan', () => {
+  it('keeps an unconfirmed preview uncommittable after the semantic analysis is cleared', () => {
+    const candidate = {
+      documentId: source.documentId,
+      candidateId: 'boundary-preview',
+    } as SplitCandidateHandle;
+    recordBoundaryPreview(candidate, true);
+    expect(() => {
+      requireConfirmedBoundary(candidate);
+    }).toThrow('Choose a boundary');
+    clearSemanticNativeFinalists();
+    expect(() => {
+      requireConfirmedBoundary(candidate);
+    }).toThrow('Choose a boundary');
+    recordBoundaryPreview(candidate, false);
+    expect(() => {
+      requireConfirmedBoundary(candidate);
+    }).not.toThrow();
+  });
+  function setup(): CanonicalMesh {
+    const mesh = box([-1, -1, -1], [1, 1, 1]);
+    const base = required(suggestions[0]);
+    registerSemanticNativeFinalists(source, 'part', mesh, 7, [
+      {
+        ...base,
+        operation: SuggestionOperation.None,
+        plane: null,
+        quality: 'NEEDS_BOUNDARY_CONFIRMATION',
+        status: SuggestionStatus.NeedsBoundaryConfirmation,
+        boundaryConfirmation: {
+          status: 'NEEDS_BOUNDARY_CONFIRMATION',
+          targetId: 'a',
+          route: 'STRUCTURAL_SEAM',
+          ambiguityReason: 'UNRESOLVED_INTERFACE_OWNERSHIP',
+          alternatives: [0, 1].map((index) => ({
+            id: `option-${String(index)}`,
+            plane: required(planes[index]),
+            selectedSide: 'POSITIVE',
+            nativeProof: { valid: true, sourcePreserved: true, partitionCount: 2 },
+            previewMetadata: { label: index === 0 ? 'Option A' : 'Option B' },
+          })) as unknown as NonNullable<Suggestion['boundaryConfirmation']>['alternatives'],
+        },
+      },
+    ]);
+    return mesh;
+  }
+  it('refuses an unspecified choice and never substitutes another option', () => {
+    const mesh = setup();
+    expect(() => semanticNativePlan(payload(), mesh)).toThrow('Choose a boundary');
+    const request = {
+      ...payload(),
+      semanticQualification: {
+        preparationId: 7,
+        candidateId: 'a',
+        boundaryAlternativeId: 'option-1',
+        boundaryChoice: 'CONFIRM' as const,
+      },
+      request: { plane: required(planes[1]), connector: { kind: 'none' as const } },
+    };
+    expect(planFor(request, mesh).planes).toEqual([planes[1]]);
+    expect(() => planFor({ ...request, request: payload().request }, mesh)).toThrow();
+    expect(recordSemanticNativeWinner(request, required(planes[1]))).toBe(true);
+  });
+  it('allows connector-free option preview and rejects connectors before an explicit decision', () => {
+    const mesh = setup();
+    const preview = {
+      ...payload(),
+      semanticQualification: {
+        preparationId: 7,
+        candidateId: 'a',
+        boundaryAlternativeId: 'option-0',
+        boundaryChoice: 'PREVIEW' as const,
+      },
+    };
+    expect(planFor(preview, mesh).planes).toEqual([planes[0]]);
+    const withConnector = {
+      ...preview,
+      request: { ...preview.request, connector: { kind: 'automatic' as const, unit: 'mm' } },
+    };
+    expect(() => planFor(withConnector, mesh)).toThrow();
   });
 });

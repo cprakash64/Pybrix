@@ -9,6 +9,7 @@ import {
 } from '@cadfixer/auto-split-contract';
 import {
   AUTO_SPLIT_TOO_DETAILED,
+  sameSemanticPlane,
   type ComponentSummary,
   type Suggestion,
 } from '@cadfixer/auto-split';
@@ -591,9 +592,18 @@ export class AutoSplitSession {
           (s.id === proof.candidateId ||
             (target?.sharedBoundary && s.sharedBoundary?.key === target.sharedBoundary.key)) &&
           s.semanticPreparationId === proof.preparationId &&
-          s.operation === 'PLANE'
+          (s.boundaryConfirmation
+            ? proof.boundaryChoice === 'CONFIRM' &&
+              s.boundaryConfirmation.alternatives.some(
+                (alternative) =>
+                  alternative.id === proof.boundaryAlternativeId &&
+                  sameSemanticPlane(alternative.plane, proof.plane),
+              )
+            : s.operation === 'PLANE')
             ? {
                 ...s,
+                operation: 'PLANE' as const,
+                status: 'SUGGESTED' as const,
                 quality: 'READY' as const,
                 plane:
                   target?.sharedBoundary && s.sharedBoundary?.side !== target.sharedBoundary.side
@@ -606,6 +616,31 @@ export class AutoSplitSession {
                         origin: proof.plane.origin,
                       }
                     : proof.plane,
+              }
+            : s,
+        ),
+      },
+    });
+  }
+  /** Inspecting another ownership option withdraws the previous explicit choice for this operation. */
+  public previewBoundary(id: string, alternativeId: string): void {
+    const result = this.snapshot.result;
+    if (!result || this.snapshot.stale) return;
+    const target = result.suggestions.find((s) => s.id === id);
+    if (!target?.boundaryConfirmation?.alternatives.some((option) => option.id === alternativeId))
+      return;
+    this.select(id);
+    this.set({
+      result: {
+        ...result,
+        suggestions: result.suggestions.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                operation: 'NONE' as const,
+                plane: null,
+                quality: 'NEEDS_BOUNDARY_CONFIRMATION' as const,
+                status: 'NEEDS_BOUNDARY_CONFIRMATION' as const,
               }
             : s,
         ),
