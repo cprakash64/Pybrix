@@ -47,6 +47,7 @@ export async function qualifyBoundaryConfirmation(
   ambiguity: BoundaryAmbiguity,
   control: {
     readonly checkpoint: Checkpoint;
+    readonly attemptLimit?: number;
     readonly charge: () => void;
     readonly validate: (plane: SuggestedPlane) => Promise<BoundaryAlternative['nativeProof']>;
     readonly isNativeInvalid: (error: unknown) => boolean;
@@ -55,34 +56,46 @@ export async function qualifyBoundaryConfirmation(
   control.checkpoint();
   // The existing native finalist ceiling is three, including duplicate ownership representatives.
   if (ambiguity.hypotheses.length > 3) return undefined;
-  const classes = new Map<BoundaryHypothesis['ownershipClass'], BoundaryHypothesis>();
+  const classes = new Map<BoundaryHypothesis['ownershipClass'], BoundaryHypothesis[]>();
   for (const hypothesis of ambiguity.hypotheses) {
     control.checkpoint();
-    if (!classes.has(hypothesis.ownershipClass)) classes.set(hypothesis.ownershipClass, hypothesis);
+    const group = classes.get(hypothesis.ownershipClass) ?? [];
+    if (!group.some((h) => sameSemanticPlane(h.plane, hypothesis.plane))) group.push(hypothesis);
+    classes.set(hypothesis.ownershipClass, group);
   }
   const target = classes.get('TARGET_SIDE'),
     body = classes.get('BODY_SIDE');
-  if (!target || !body || sameSemanticPlane(target.plane, body.plane)) return undefined;
+  if (!target?.length || !body?.length || sameSemanticPlane(target[0]!.plane, body[0]!.plane))
+    return undefined;
   const alternatives: BoundaryAlternative[] = [];
-  for (const [index, hypothesis] of [target, body].entries()) {
-    control.checkpoint();
-    control.charge();
-    let nativeProof: BoundaryAlternative['nativeProof'];
-    try {
-      nativeProof = await control.validate(hypothesis.plane);
-    } catch (error) {
+  let attempted = 0;
+  for (const [index, group] of [target, body].entries()) {
+    let accepted: BoundaryAlternative | undefined;
+    for (const hypothesis of group) {
       control.checkpoint();
-      if (!control.isNativeInvalid(error)) throw error;
-      return undefined;
+      if (attempted >= Math.min(3, control.attemptLimit ?? 3)) return undefined;
+      attempted++;
+      control.charge();
+      let nativeProof: BoundaryAlternative['nativeProof'];
+      try {
+        nativeProof = await control.validate(hypothesis.plane);
+      } catch (error) {
+        control.checkpoint();
+        if (!control.isNativeInvalid(error)) throw error;
+        continue;
+      }
+      control.checkpoint();
+      accepted = {
+        id: `${ambiguity.targetId}:boundary:${String(index)}`,
+        plane: hypothesis.plane,
+        selectedSide: 'POSITIVE',
+        nativeProof,
+        previewMetadata: { label: index === 0 ? 'Option A' : 'Option B' },
+      };
+      break;
     }
-    control.checkpoint();
-    alternatives.push({
-      id: `${ambiguity.targetId}:boundary:${String(index)}`,
-      plane: hypothesis.plane,
-      selectedSide: 'POSITIVE',
-      nativeProof,
-      previewMetadata: { label: index === 0 ? 'Option A' : 'Option B' },
-    });
+    if (!accepted) return undefined;
+    alternatives.push(accepted);
   }
   const a = alternatives[0],
     b = alternatives[1];

@@ -135,3 +135,45 @@ it('propagates unexpected failures without a confirmation result', async () => {
     }),
   ).rejects.toThrow('unexpected');
 });
+
+it('uses one same-class fallback without native-ranking or exceeding three calls', async () => {
+  const a = ambiguity(),
+    attempted: number[] = [];
+  const fallback = { ...required(a.hypotheses[0], 'target'), plane: plane(-1) };
+  const result = await qualifyBoundaryConfirmation(
+    { ...a, hypotheses: [...a.hypotheses, fallback] },
+    {
+      checkpoint: () => undefined,
+      charge: () => undefined,
+      validate: (cut) => {
+        attempted.push(cut.origin[0]);
+        if (cut.origin[0] === 0) throw Error('native invalid');
+        return Promise.resolve(proof);
+      },
+      isNativeInvalid: () => true,
+    },
+  );
+  expect(attempted).toEqual([0, -1, 1]);
+  expect(result?.alternatives.map((x) => x.plane.origin[0])).toEqual([-1, 1]);
+});
+it('refuses when the remaining budget cannot validate both classes', async () => {
+  const a = ambiguity(),
+    attempted: number[] = [];
+  const fallback = { ...required(a.hypotheses[0], 'target'), plane: plane(-1) };
+  const result = await qualifyBoundaryConfirmation(
+    { ...a, hypotheses: [...a.hypotheses, fallback] },
+    {
+      attemptLimit: 2,
+      checkpoint: () => undefined,
+      charge: () => undefined,
+      validate: (cut) => {
+        attempted.push(cut.origin[0]);
+        if (cut.origin[0] === 0) throw Error('invalid');
+        return Promise.resolve(proof);
+      },
+      isNativeInvalid: () => true,
+    },
+  );
+  expect(result).toBeUndefined();
+  expect(attempted).toEqual([0, -1]);
+});

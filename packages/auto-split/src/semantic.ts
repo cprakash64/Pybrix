@@ -1,4 +1,8 @@
 import {
+  semanticExecutionEligibility,
+  guardSemanticExecution,
+} from './semantic-execution-eligibility';
+import {
   reconcileComplementarySiblings,
   type ComplementarySiblingPair,
 } from './semantic-complementary';
@@ -944,6 +948,7 @@ export function decomposeSemantic(
           ),
       );
     // Geometric evidence is measured independently even when the semantic label is uncertain.
+    const executionEligibility = semanticExecutionEligibility(partById.get(part.id));
     const localPlane = localPlanes.get(part.id);
     const seam = localPlane ? structuralSeamEvidence(refined, checkpoint) : undefined;
     const independentAxes = localPlane
@@ -977,6 +982,7 @@ export function decomposeSemantic(
       return !result || result.outcome === 'CONSISTENT' || result.outcome === 'IRRELEVANT';
     };
     const supportedPlane =
+      executionEligibility.state === 'EXECUTABLE' &&
       Boolean(localPlane) &&
       decompositionIntent?.admitted === true &&
       (decompositionIntent.rule !== 'STRUCTURAL_SEAM' ||
@@ -988,7 +994,10 @@ export function decomposeSemantic(
         majorSiblingConsistency.outcome === 'IRRELEVANT');
     let geometryConfidence =
       componentConfidence > 0 ? componentConfidence : (localPlane?.confidence ?? 0);
-    if (semanticConfidence < SEMANTIC_WORK_LIMITS.semanticConfidence) {
+    if (executionEligibility.state !== 'EXECUTABLE') {
+      quality = 'RECOGNIZED_NOT_SEPARABLE';
+      reason = 'Semantic target is not executable';
+    } else if (semanticConfidence < SEMANTIC_WORK_LIMITS.semanticConfidence) {
       quality = 'LOW_CONFIDENCE';
       reason = 'Semantic evidence is uncertain';
     } else if (
@@ -1069,6 +1078,7 @@ export function decomposeSemantic(
     )
       reason = 'Material interface ownership is not independently established';
     const s: Suggestion = {
+      semanticExecutionEligibility: executionEligibility,
       id: part.id,
       family: 'semantic',
       label:
@@ -1608,7 +1618,7 @@ export function decomposeSemantic(
       : s;
   });
   // READY for exact component partitions; planes need authoritative Preview first.
-  const published = resolved.map((s) =>
+  const geometricallyPublished = resolved.map((s) =>
     s.operation === SuggestionOperation.Plane && s.quality === 'READY' && s.boundaryAmbiguity
       ? {
           ...s,
@@ -1654,6 +1664,13 @@ export function decomposeSemantic(
               }),
           }
         : s,
+  );
+  const published = geometricallyPublished.map((s) =>
+    guardSemanticExecution(
+      s,
+      s.semanticExecutionEligibility ??
+        semanticExecutionEligibility(partById.get(s.id) ?? partById.get(s.parentId ?? '')),
+    ),
   );
   const peerlessRefinement = [...planeContext.synthesis.values()].reduce(
     (sum, trace) => ({

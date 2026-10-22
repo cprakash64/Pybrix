@@ -1,3 +1,4 @@
+import type { SemanticExecutionEligibility } from './semantic-execution-eligibility';
 import type { Vec3 } from '@cadfixer/auto-split-contract';
 import type { BoundaryAmbiguity, BoundaryConfirmation } from './semantic-boundary-confirmation';
 
@@ -62,6 +63,8 @@ export interface SuggestedPlane {
 }
 
 export interface Suggestion {
+  /** Original semantic execution permission; native success cannot upgrade it. */
+  readonly semanticExecutionEligibility?: SemanticExecutionEligibility;
   /** Stable for one analysis: `head`, `left_arm`, `wheel:wheel_1`, `cab`, `cab_bed`... */
   readonly id: string;
   readonly family: SuggestionFamily;

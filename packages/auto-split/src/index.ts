@@ -27,3 +27,5 @@ export {
   SEMANTIC_NATIVE_LIMITS,
   type NativeFinalistResult,
 } from './semantic-native';
+
+export * from './semantic-execution-eligibility';

@@ -1,5 +1,6 @@
 import {
   qualifyBoundaryConfirmation,
+  guardSemanticExecution,
   semanticNativePolicy,
   SuggestionOperation,
   SuggestionStatus,
@@ -31,6 +32,15 @@ export async function qualifySemanticBoundaries(
   for (const suggestion of suggestions) {
     context.throwIfCancelled();
     const { boundaryAmbiguity, ...publicSuggestion } = suggestion;
+    if (
+      suggestion.semanticExecutionEligibility &&
+      suggestion.semanticExecutionEligibility.state !== 'EXECUTABLE'
+    ) {
+      result.push(
+        guardSemanticExecution(publicSuggestion, suggestion.semanticExecutionEligibility),
+      );
+      continue;
+    }
     if (!boundaryAmbiguity) {
       result.push(publicSuggestion);
       continue;
@@ -38,6 +48,7 @@ export async function qualifySemanticBoundaries(
     const confirmation =
       policy.finalistsPerPart >= 2 && ++parts <= policy.parts && attempts + 2 <= policy.attempts
         ? await qualifyBoundaryConfirmation(boundaryAmbiguity, {
+            attemptLimit: Math.min(policy.finalistsPerPart, policy.attempts - attempts),
             checkpoint: () => {
               context.throwIfCancelled();
             },

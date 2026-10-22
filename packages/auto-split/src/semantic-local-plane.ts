@@ -1,3 +1,5 @@
+import { semanticExecutionEligibility } from "./semantic-execution-eligibility";
+import { sameSemanticPlane } from "./semantic-native";
 import {
   structuralOwnershipCardinality,
   structuralNeckOwnershipCardinality,
@@ -877,6 +879,11 @@ export function synthesizeSemanticPlane(
   context = boundedContext(context);
   const trace = planeSynthesisTrace();
   context.synthesis?.set(part.id, trace);
+  trace.semanticExecutionEligibility = semanticExecutionEligibility(part);
+  if (trace.semanticExecutionEligibility.state !== "EXECUTABLE") {
+    trace.phase = "INPUT_REFUSED";
+    return undefined;
+  }
   trace.inputRefusal =
     part.importance !== "major"
       ? "NOT_MAJOR"
@@ -2005,18 +2012,82 @@ export function synthesizeSemanticPlane(
           });
         } else winner = undefined;
       } else if (included && excluded) {
+        // One spare native slot may use an existing completed refinement of the SAME
+        // complete ownership class. Its own profile must support this connected source
+        // interface; no extra plane, offset, refinement or native ranking is introduced.
+        const fallback = confirmed.find((c) => {
+          checkpoint();
+          charge();
+          const signature =
+            ownershipAudit.signatures[supportedOwnershipCandidates.indexOf(c)];
+          if (
+            !signature?.complete ||
+            sameSemanticPlane(cut(c), cut(included)) ||
+            sameSemanticPlane(cut(c), cut(excluded))
+          )
+            return false;
+          const own = confirmedRefinements.get(c);
+          if (
+            !own ||
+            !structuralSeamEvidence(own, checkpoint).admitted ||
+            !seamSupportsPlane(
+              own,
+              cut(c),
+              structuralSeamEvidence(own, checkpoint),
+            )
+          )
+            return false;
+          const low = own.sectionProfile[0]?.offset,
+            high = own.sectionProfile.at(-1)?.offset;
+          if (low === undefined || high === undefined) return false;
+          for (const f of region.faces)
+            for (let k = 0; k < 3; k++) {
+              checkpoint();
+              charge();
+              const i = (prepared.geometry.indices[f * 3 + k] ?? 0) * 3;
+              const p: Vec3 = [
+                prepared.geometry.positions[i] ?? 0,
+                prepared.geometry.positions[i + 1] ?? 0,
+                prepared.geometry.positions[i + 2] ?? 0,
+              ];
+              const d = dot(own.profileNormal, p);
+              if (d < low - 1e-6 || d > high + 1e-6) return false;
+            }
+          return true;
+        });
+        const fallbackOwnership = fallback
+          ? interfaceMembershipSignature(
+              prepared.geometry,
+              region,
+              cut(fallback),
+              checkpoint,
+              charge,
+            ).ownership
+          : undefined;
+        const classCandidates = [
+          { candidate: included, ownershipClass: "TARGET_SIDE" as const },
+          { candidate: excluded, ownershipClass: "BODY_SIDE" as const },
+          ...(fallback &&
+          fallbackOwnership &&
+          fallbackOwnership !== "INTERMEDIATE"
+            ? [{ candidate: fallback, ownershipClass: fallbackOwnership }]
+            : []),
+        ];
+        if (fallback) context.telemetry.boundaryAlternativesInspected++;
         boundaryAmbiguity = {
           targetId: part.id,
           route: "STRUCTURAL_SEAM",
           interfaceOwnership: "AMBIGUOUS",
           materialUnknownInterface: true,
-          hypotheses: [included, excluded].map((c, index) => ({
-            plane: cut(c),
-            ownershipClass: index === 0 ? "TARGET_SIDE" : "BODY_SIDE",
-            semanticAdmission: true,
-            preservesPositiveEvidence: true,
-            respectsKnownOwnership: true,
-          })),
+          hypotheses: classCandidates.map(
+            ({ candidate: c, ownershipClass }) => ({
+              plane: cut(c),
+              ownershipClass,
+              semanticAdmission: true,
+              preservesPositiveEvidence: true,
+              respectsKnownOwnership: true,
+            }),
+          ),
         };
       } else winner = undefined;
     } else winner = undefined;
