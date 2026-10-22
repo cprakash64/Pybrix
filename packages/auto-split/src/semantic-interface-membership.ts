@@ -64,8 +64,13 @@ export function collectMaterialInterface(
   checkpoint: Checkpoint,
   charge: () => void,
 ): MaterialInterface | undefined {
-  let anchor: Vec3 | undefined,
-    normal: Vec3 | undefined,
+  // Fit the supporting plane from the changed surface, rather than amplifying
+  // one small triangle's floating-point normal error over the whole interface.
+  // The correspondence bound and complete connected expansion stay unchanged.
+  const changed: number[] = [],
+    sum = [0, 0, 0],
+    center = [0, 0, 0];
+  let total = 0,
     clips = 0;
   for (let f = 0; f < g.faceCount; f++) {
     if ((f & 255) === 0) checkpoint();
@@ -81,17 +86,35 @@ export function collectMaterialInterface(
       ) <= TOLERANCE
     )
       continue;
-    const p = vertex(g, f, 0);
-    if (!normal) {
-      normal = dot(unit, cuts[0].normal) >= 0 ? unit : (unit.map((x) => -x) as unknown as Vec3);
-      anchor = p;
-    } else if (
-      Math.abs(dot(normal, unit)) < 1 - CORRESPONDENCE ||
-      Math.abs(dot(normal, p) - dot(normal, anchor!)) > CORRESPONDENCE
+    if (changed.length >= FACE_LIMIT) return undefined;
+    changed.push(f);
+    const sign = Math.sign(dot(unit, cuts[0].normal));
+    for (let a = 0; a < 3; a++) {
+      sum[a] = (sum[a] ?? 0) + sign * (n.vector[a] ?? 0);
+      center[a] =
+        (center[a] ?? 0) +
+        (n.length *
+          ((vertex(g, f, 0)[a] ?? 0) + (vertex(g, f, 1)[a] ?? 0) + (vertex(g, f, 2)[a] ?? 0))) /
+          3;
+    }
+    total += n.length;
+  }
+  const magnitude = Math.hypot(...sum);
+  if (!changed.length || !(magnitude > 0) || !(total > 0)) return undefined;
+  const normal = sum.map((x) => x / magnitude) as unknown as Vec3;
+  const anchor = center.map((x) => x / total) as unknown as Vec3;
+  for (const f of changed) {
+    checkpoint();
+    charge();
+    const n = groundedSourceFaceNormal(g, f);
+    if (
+      Math.abs(dot(normal, n.vector) / n.length) < 1 - CORRESPONDENCE ||
+      [0, 1, 2].some(
+        (k) => Math.abs(dot(normal, vertex(g, f, k)) - dot(normal, anchor)) > CORRESPONDENCE,
+      )
     )
       return undefined;
   }
-  if (!normal || !anchor) return undefined;
   const offset = dot(normal, anchor),
     faces: number[] = [];
   let surface = 0;
@@ -135,7 +158,7 @@ export function collectMaterialInterface(
     area: surface,
     sourceFacesInspected: g.faceCount * 2,
     clippedOperations: clips,
-    scratchBytes: faces.length * 20 + edges.size * 160,
+    scratchBytes: faces.length * 20 + edges.size * 160 + changed.length * 8,
   };
 }
 export interface InterfaceMembershipSignature {

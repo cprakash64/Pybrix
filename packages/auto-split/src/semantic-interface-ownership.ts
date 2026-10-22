@@ -45,6 +45,7 @@ export function interfaceOwnershipEvidence(
   alternatives: readonly [SuggestedPlane, SuggestedPlane],
   checkpoint: Checkpoint,
   charge: () => void = (): void => undefined,
+  collectedInterface?: MaterialInterface,
 ): InterfaceOwnershipEvidence {
   const { geometry } = prepared;
   const faces = new Uint8Array(geometry.faceCount);
@@ -64,7 +65,8 @@ export function interfaceOwnershipEvidence(
       (sum, n, axis) => sum + n * ((p[axis] ?? 0) - (plane.origin[axis] ?? 0)),
       0,
     );
-  const region = collectMaterialInterface(geometry, alternatives, checkpoint, chargeVisit);
+  const region =
+    collectedInterface ?? collectMaterialInterface(geometry, alternatives, checkpoint, chargeVisit);
   if (region) {
     surfaceArea = region.area;
     const signatures = alternatives.map((c) =>

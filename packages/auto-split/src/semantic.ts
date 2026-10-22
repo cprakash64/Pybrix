@@ -979,6 +979,10 @@ export function decomposeSemantic(
     const supportedPlane =
       Boolean(localPlane) &&
       decompositionIntent?.admitted === true &&
+      (decompositionIntent.rule !== 'STRUCTURAL_SEAM' ||
+        localPlane?.structuralOwnership?.state === 'IDENTIFIED' ||
+        (localPlane?.structuralOwnership?.state === 'TWO_WAY_UNRESOLVED' &&
+          localPlane.boundaryAmbiguity !== undefined)) &&
       (!majorSiblingConsistency ||
         majorSiblingConsistency.outcome === 'CONSISTENT' ||
         majorSiblingConsistency.outcome === 'IRRELEVANT');
@@ -1052,6 +1056,18 @@ export function decomposeSemantic(
       familyCompletion !== undefined ||
       part.cut !== null ||
       part.componentIds.length > 0;
+    const structuralOwnershipState = planeContext.synthesis.get(part.id)?.ownershipCardinality
+      ?.state;
+    if (
+      operation === SuggestionOperation.None &&
+      structuralOwnershipState === 'MULTIWAY_UNRESOLVED'
+    )
+      reason = 'More than two material interface ownership interpretations remain unresolved';
+    else if (
+      operation === SuggestionOperation.None &&
+      structuralOwnershipState === 'INSUFFICIENT_EVIDENCE'
+    )
+      reason = 'Material interface ownership is not independently established';
     const s: Suggestion = {
       id: part.id,
       family: 'semantic',

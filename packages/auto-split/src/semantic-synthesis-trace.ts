@@ -1,3 +1,4 @@
+import type { StructuralOwnershipCardinality } from './semantic-structural-ownership';
 import type { PeerlessScopeEvidence } from './semantic-peerless-scope';
 import type { Vec3 } from '@cadfixer/auto-split-contract';
 
@@ -27,6 +28,7 @@ export interface PlaneCandidateProvenance {
 /** Compact diagnostics only: <=32 normal rows, six view rows and scalar counters.
  * No raster, source faces, per-offset scores or mesh buffers are retained here. */
 export interface PlaneSynthesisTrace {
+  ownershipCardinality?: StructuralOwnershipCardinality;
   interfaceOwnership?: {
     readonly ownership: string;
     readonly targetPixels: number;

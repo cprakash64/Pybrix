@@ -1,4 +1,9 @@
 import {
+  structuralOwnershipCardinality,
+  structuralNeckOwnershipCardinality,
+  type StructuralOwnershipCardinality,
+} from './semantic-structural-ownership';
+import {
   planeSynthesisTrace,
   PLANE_NORMAL_SOURCES,
   type PlaneSynthesisTrace,
@@ -148,6 +153,7 @@ interface Score {
   }[];
 }
 export interface LocalPlaneProposal {
+  readonly structuralOwnership?: StructuralOwnershipCardinality;
   readonly boundaryAmbiguity?: BoundaryAmbiguity;
   readonly groundedTargetScope?: GroundedTargetScopeEvidence;
   readonly targetScope?: PeerlessScopeEvidence;
@@ -1571,20 +1577,38 @@ export function synthesizeSemanticPlane(
   let winner = confirmed[0];
   let boundaryAmbiguity: BoundaryAmbiguity | undefined;
   let ownershipResolved = false;
+  let structuralOwnership: StructuralOwnershipCardinality | undefined;
   const original = winner && confirmedOrigins.get(winner);
   const winningRefinement = winner && confirmedRefinements.get(winner);
   if (
     winner &&
     original &&
     winningRefinement &&
-    structuralSeamEvidence(winningRefinement, checkpoint).reason === 'STABLE_SECTION_STEP' &&
-    Math.abs(winner.offset - original.offset) > 1e-7
+    structuralSeamEvidence(winningRefinement, checkpoint).reason === 'STABLE_SECTION_STEP'
   ) {
     const cut = (c: Candidate): LocalPlaneProposal['cut'] => ({
       normal: c.normal,
       origin: vector(c.normal.map((n) => n * c.offset)),
     });
-    const alternatives = [cut(original), cut(winner)] as const;
+    const supportedOwnershipCandidates = [...confirmed, ...eligible].filter(
+      (c) => c.targetScope?.state === 'TARGET_SCOPE_SUPPORTED',
+    );
+    const sameTransition = supportedOwnershipCandidates.filter((c) =>
+      seamSupportsPlane(
+        winningRefinement,
+        cut(c),
+        structuralSeamEvidence(winningRefinement, checkpoint),
+      ),
+    );
+    const ordered = sameTransition.toSorted((a, b) => a.offset - b.offset);
+    const low = ordered[0],
+      high = ordered[ordered.length - 1];
+    // A stationary winner is not evidence that material ownership is identified.
+    // Only existing admitted candidates provide the second interpretation.
+    const alternatives =
+      Math.abs(winner.offset - original.offset) > 1e-7
+        ? ([cut(original), cut(winner)] as const)
+        : ([cut(low ?? original), cut(high ?? winner)] as const);
     const originalScore = directScore(
       evidence,
       original.normal,
@@ -1630,8 +1654,23 @@ export function synthesizeSemanticPlane(
       ownershipComparisons: 0,
       scratchBytes: ownership.scratchBytes,
     };
+    structuralOwnership = structuralOwnershipCardinality(
+      prepared,
+      part,
+      evidence.peers.map((p) => p.part),
+      alternatives,
+      supportedOwnershipCandidates.map(cut),
+      ownership,
+      checkpoint,
+      charge,
+    );
+    trace.ownershipCardinality = structuralOwnership;
     const region = ownership.materialInterface;
-    if (region) {
+    if (
+      region &&
+      structuralOwnership.state !== 'MULTIWAY_UNRESOLVED' &&
+      structuralOwnership.state !== 'INSUFFICIENT_EVIDENCE'
+    ) {
       // Class diversity is selected from the existing admitted bounded search, before native work.
       // Intermediate assignments cannot stand in for a complete ownership class.
       const representatives = new Map<'TARGET_SIDE' | 'BODY_SIDE', Candidate>();
@@ -1740,6 +1779,52 @@ export function synthesizeSemanticPlane(
     } else winner = undefined;
   }
 
+  if (winner && winningRefinement && peerlessEligible && !structuralOwnership) {
+    const seam = structuralSeamEvidence(winningRefinement, checkpoint);
+    if (seam.reason === 'STABLE_SECTION_MINIMUM' && seam.minimumOffsetRange) {
+      structuralOwnership = structuralNeckOwnershipCardinality(
+        prepared,
+        winningRefinement.profileNormal,
+        seam.minimumOffsetRange,
+        eligible.length,
+        checkpoint,
+        charge,
+      );
+    }
+  }
+  if (peerlessEligible && structuralOwnership) {
+    if (!winner || (structuralOwnership.state === 'TWO_WAY_UNRESOLVED' && !boundaryAmbiguity)) {
+      if (structuralOwnership.state !== 'MULTIWAY_UNRESOLVED')
+        structuralOwnership = {
+          ...structuralOwnership,
+          state: 'INSUFFICIENT_EVIDENCE',
+          reason: 'COMPLETE_OWNERSHIP_REPRESENTATIVES_UNAVAILABLE',
+          unresolvedClasses: null,
+        };
+      winner = undefined;
+    }
+    trace.ownershipCardinality = structuralOwnership;
+    if (
+      structuralOwnership.state !== 'IDENTIFIED' &&
+      structuralOwnership.state !== 'TWO_WAY_UNRESOLVED'
+    )
+      winner = undefined;
+  }
+  if (peerlessEligible && winner && !structuralOwnership) {
+    trace.ownershipCardinality = {
+      state: 'INSUFFICIENT_EVIDENCE',
+      reason: 'OWNERSHIP_ANALYSIS_REQUIRED',
+      materialInterfaces: 0,
+      interfaceComponents: 0,
+      unresolvedClasses: null,
+      admittedCandidatesInspected: eligible.length,
+      sourceFaceVisits: 0,
+      clippedOperations: 0,
+      pixelVisits: 0,
+      scratchBytes: 0,
+    };
+    winner = undefined;
+  }
   if (winner) peerlessRefinement = confirmedRefinements.get(winner);
   if (winner) trace.phase = 'PROPOSAL';
   if (trace.peerless) trace.peerless.phase = 'COMPLETE';
@@ -1809,6 +1894,7 @@ export function synthesizeSemanticPlane(
   return winner
     ? {
         ...proposal(winner, evidence, part, candidates, answer, checkpoint, charge),
+        ...(structuralOwnership ? { structuralOwnership } : {}),
         ...(boundaryAmbiguity ? { boundaryAmbiguity } : {}),
         ...(peerlessRefinement ? { peerlessRefinement } : {}),
         compatibilityReserve: reserve,
@@ -1982,6 +2068,11 @@ export function semanticPlaneScorer(
     });
     return {
       ...result,
+      ...(previous.structuralOwnership &&
+      previous.cut.normal.every((n, a) => Math.abs(n - (normal[a] ?? 0)) <= 1e-7) &&
+      Math.abs(dot(previous.cut.normal, previous.cut.origin) - offset) <= 1e-7
+        ? { structuralOwnership: previous.structuralOwnership }
+        : {}),
       ...(previous.boundaryAmbiguity ? { boundaryAmbiguity: previous.boundaryAmbiguity } : {}),
       ...(previous.provenance
         ? {
