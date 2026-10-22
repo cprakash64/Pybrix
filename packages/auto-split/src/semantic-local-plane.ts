@@ -2,7 +2,7 @@ import {
   structuralOwnershipCardinality,
   structuralNeckOwnershipCardinality,
   type StructuralOwnershipCardinality,
-} from './semantic-structural-ownership';
+} from "./semantic-structural-ownership";
 import {
   planeSynthesisTrace,
   PLANE_NORMAL_SOURCES,
@@ -10,8 +10,11 @@ import {
   type PlaneNormalSource,
   type PlaneOffsetSource,
   type PlaneCandidateProvenance,
-} from './semantic-synthesis-trace';
-import { independentPlanePeer, SEMANTIC_INTENT_LIMITS } from './semantic-intent';
+} from "./semantic-synthesis-trace";
+import {
+  independentPlanePeer,
+  SEMANTIC_INTENT_LIMITS,
+} from "./semantic-intent";
 import {
   cameraFor,
   FRAME_FILL,
@@ -19,30 +22,33 @@ import {
   type SemanticHierarchy,
   type SemanticPart,
   type Vec3,
-} from '@cadfixer/auto-split-contract';
-import type { PreparedSemanticGeometry } from './semantic';
-import { pointInSemanticPolygon, SEMANTIC_WORK_LIMITS } from './semantic';
-import { NO_CHECKPOINT, type Checkpoint } from './checkpoint';
-import { resourceLimitExceeded } from '@cadfixer/shared';
-import { semanticRoleScope } from './semantic-extent';
+} from "@cadfixer/auto-split-contract";
+import type { PreparedSemanticGeometry } from "./semantic";
+import { pointInSemanticPolygon, SEMANTIC_WORK_LIMITS } from "./semantic";
+import { NO_CHECKPOINT, type Checkpoint } from "./checkpoint";
+import { resourceLimitExceeded } from "@cadfixer/shared";
+import { semanticRoleScope } from "./semantic-extent";
 import {
   PEERLESS_SCOPE_LIMITS,
   peerlessScopeProjection,
   collectPeerlessScopeEnvelope,
   peerlessScopeForCut,
   type PeerlessScopeEvidence,
-} from './semantic-peerless-scope';
-import { refineSemanticPlanes, type SemanticPlaneRefinement } from './semantic-plane';
-import { structuralSeamEvidence, seamSupportsPlane } from './semantic-seam';
-import { interfaceMembershipSignature } from './semantic-interface-membership';
-import { interfaceOwnershipEvidence } from './semantic-interface-ownership';
-import type { BoundaryAmbiguity } from './semantic-boundary-confirmation';
-import { probePeerlessSections } from './semantic-peerless-frontier';
+} from "./semantic-peerless-scope";
+import {
+  refineSemanticPlanes,
+  type SemanticPlaneRefinement,
+} from "./semantic-plane";
+import { structuralSeamEvidence, seamSupportsPlane } from "./semantic-seam";
+import { interfaceMembershipSignature } from "./semantic-interface-membership";
+import { interfaceOwnershipEvidence } from "./semantic-interface-ownership";
+import type { BoundaryAmbiguity } from "./semantic-boundary-confirmation";
+import { probePeerlessSections } from "./semantic-peerless-frontier";
 import {
   collectGroundedBoundaryWitnesses,
   groundedBoundaryForNormal,
   GROUNDED_BOUNDARY_LIMITS,
-} from './semantic-grounded-boundary';
+} from "./semantic-grounded-boundary";
 import {
   complementaryCoveragePartners,
   collectGroundedScopeEnvelope,
@@ -50,7 +56,7 @@ import {
   groundedScopeForCut,
   groundedSourceFrame,
   type GroundedTargetScopeEvidence,
-} from './semantic-grounded-scope';
+} from "./semantic-grounded-scope";
 export const LOCAL_PLANE_LIMITS = Object.freeze({
   sampleStride: 16,
   normals: 32,
@@ -160,7 +166,7 @@ export interface LocalPlaneProposal {
   readonly peerlessRefinement?: SemanticPlaneRefinement;
   readonly provenance?: PlaneCandidateProvenance;
   /** Compact ordinary-supported normal diversity, used only by complementary reconciliation. */
-  readonly compatibilityReserve?: LocalPlaneProposal['finalists'];
+  readonly compatibilityReserve?: LocalPlaneProposal["finalists"];
   readonly finalists?: readonly {
     readonly normal: Vec3;
     readonly origin: Vec3;
@@ -174,25 +180,26 @@ export interface LocalPlaneProposal {
     readonly origin: Vec3;
   };
   readonly confidence: number;
-  readonly scope: 'part' | 'assembly';
-  readonly alignment: 'focused' | 'broad';
+  readonly scope: "part" | "assembly";
+  readonly alignment: "focused" | "broad";
   readonly samples: number;
   readonly candidates: number;
   readonly sectionSamples: number;
   readonly capturedFraction: number;
-  readonly views: Score['views'];
+  readonly views: Score["views"];
   readonly ownership: {
     readonly admitted: true;
-    readonly rule: 'CLEAN_PHYSICAL_EXTENT' | 'BEST_FEASIBLE_FUSED_ASSEMBLY';
+    readonly rule: "CLEAN_PHYSICAL_EXTENT" | "BEST_FEASIBLE_FUSED_ASSEMBLY";
     readonly targetRecall: number;
     readonly semanticPurity: number;
     readonly worstPeerLeakage: number;
-    readonly peers: Score['peers'];
+    readonly peers: Score["peers"];
     readonly comparableCleanerCandidates: number;
     readonly frontierCandidates: number;
   };
 }
-const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const dot = (a: Vec3, b: Vec3): number =>
+  a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const unit = (a: Vec3): Vec3 | undefined => {
   const m = Math.hypot(...a);
   return m > 1e-9 ? [a[0] / m, a[1] / m, a[2] / m] : undefined;
@@ -200,7 +207,11 @@ const unit = (a: Vec3): Vec3 | undefined => {
 const vector = (a: number[]): Vec3 => [a[0] ?? 0, a[1] ?? 0, a[2] ?? 0];
 function mean(points: readonly Vec3[]): Vec3 {
   return vector(
-    [0, 1, 2].map((a) => points.reduce((s, p) => s + (p[a] ?? 0), 0) / Math.max(1, points.length)),
+    [0, 1, 2].map(
+      (a) =>
+        points.reduce((s, p) => s + (p[a] ?? 0), 0) /
+        Math.max(1, points.length),
+    ),
   );
 }
 /** Three Jacobi eigenvectors. Fixed iterations, stable tie order; axes are candidates, not semantic directions. */
@@ -217,7 +228,8 @@ function principal(points: readonly Vec3[]): Vec3[] {
       for (let b = 0; b < 3; b++)
         defined(m[a])[b] =
           defined(defined(m[a])[b]) +
-          (defined(p[a]) - defined(center[a])) * (defined(p[b]) - defined(center[b]));
+          (defined(p[a]) - defined(center[a])) *
+            (defined(p[b]) - defined(center[b]));
   for (let pass = 0; pass < 24; pass++) {
     let a = 0,
       b = 1;
@@ -226,7 +238,8 @@ function principal(points: readonly Vec3[]): Vec3[] {
       [1, 2],
     ])
       if (
-        Math.abs(defined(defined(m[defined(i)])[defined(j)])) > Math.abs(defined(defined(m[a])[b]))
+        Math.abs(defined(defined(m[defined(i)])[defined(j)])) >
+        Math.abs(defined(defined(m[a])[b]))
       ) {
         a = defined(i);
         b = defined(j);
@@ -263,7 +276,11 @@ function principal(points: readonly Vec3[]): Vec3[] {
     .sort((a, b) => defined(defined(m[b])[b]) - defined(defined(m[a])[a]))
     .map((i) => vector(v.map((row) => defined(row[i]))));
 }
-function ancestor(answer: SemanticHierarchy, parent: string, child: SemanticPart): boolean {
+function ancestor(
+  answer: SemanticHierarchy,
+  parent: string,
+  child: SemanticPart,
+): boolean {
   let id = child.parentId;
   for (let depth = 0; id && depth < 4; depth++) {
     if (id === parent) return true;
@@ -273,8 +290,8 @@ function ancestor(answer: SemanticHierarchy, parent: string, child: SemanticPart
 }
 const physical = (p: SemanticPart): boolean =>
   p.confidence >= SEMANTIC_WORK_LIMITS.semanticConfidence &&
-  p.expectedGeometry.kind !== 'surface_part' &&
-  (p.expectedGeometry.kind !== 'unknown' || p.importance === 'major');
+  p.expectedGeometry.kind !== "surface_part" &&
+  (p.expectedGeometry.kind !== "unknown" || p.importance === "major");
 function observations(
   prepared: PreparedSemanticGeometry,
   answer: SemanticHierarchy,
@@ -317,7 +334,10 @@ function observations(
           ny = (y + 0.5) / raster.size,
           u = (x + 0.5 - raster.size / 2) / k,
           w = -(y + 0.5 - raster.size / 2) / k,
-          hit = region?.polygons.some((poly) => pointInSemanticPolygon(nx, ny, poly)) ?? false,
+          hit =
+            region?.polygons.some((poly) =>
+              pointInSemanticPolygon(nx, ny, poly),
+            ) ?? false,
           rank = prepared.labelling.faceRank[f] ?? -1,
           base = vi * ranks + rank;
         if (rank >= 0 && rank < ranks) {
@@ -328,7 +348,9 @@ function observations(
         let mask = 0;
         for (const [i, peer] of peerRegions.entries()) {
           charge();
-          if (peer?.polygons.some((poly) => pointInSemanticPolygon(nx, ny, poly))) {
+          if (
+            peer?.polygons.some((poly) => pointInSemanticPolygon(nx, ny, poly))
+          ) {
             mask |= 1 << i;
             const row = defined(counts[i]);
             row[vi] = (row[vi] ?? 0) + 1;
@@ -367,7 +389,8 @@ function observations(
     new Set(
       VIEW_NAMES.flatMap((_v, vi) => {
         checkpoint();
-        return owner(vi) >= 8 && owner(vi) / Math.max(1, rankTotals[vi * ranks + rank] ?? 0) >= 0.82
+        return owner(vi) >= 8 &&
+          owner(vi) / Math.max(1, rankTotals[vi * ranks + rank] ?? 0) >= 0.82
           ? [Math.floor(vi / 2)]
           : [];
       }),
@@ -386,13 +409,15 @@ function observations(
       joint = defined(shared[i]);
     if ([...row].filter((n) => n >= 8).length < 2) continue;
     const inclusive =
-      semanticRoleScope(part, answer) === 'WHOLE_ASSEMBLY' &&
+      semanticRoleScope(part, answer) === "WHOLE_ASSEMBLY" &&
       ancestor(answer, part.id, peer) &&
       VIEW_NAMES.filter(
         (_v, vi) =>
           (row[vi] ?? 0) >= 8 &&
           (joint[vi] ?? 0) / Math.max(1, row[vi] ?? 0) >= 0.9 &&
-          (target[vi] ?? 0) / Math.max(1, result.filter((p) => p.view === vi).length) >= 0.9,
+          (target[vi] ?? 0) /
+            Math.max(1, result.filter((p) => p.view === vi).length) >=
+            0.9,
       ).length >= 2;
     if (inclusive) continue;
     const exactRanks: number[] = [];
@@ -440,8 +465,8 @@ function observations(
       }
     p.peerMask = compact;
   }
-  const exactRanks = Array.from({ length: ranks }, (_x, rank) => rank).filter((rank) =>
-    rankGrounded(rank, (vi) => rankTarget[vi * ranks + rank] ?? 0),
+  const exactRanks = Array.from({ length: ranks }, (_x, rank) => rank).filter(
+    (rank) => rankGrounded(rank, (vi) => rankTarget[vi * ranks + rank] ?? 0),
   );
   const exactShare = exactRanks.reduce(
     (sum, rank) => sum + (prepared.facts[rank]?.areaShare ?? 0),
@@ -486,7 +511,8 @@ const robustHigh = (values: readonly number[]): number => {
   const sorted = [...values].sort((a, b) => b - a);
   return sorted[1] ?? 0;
 };
-const robustLow = (values: readonly number[]): number => 1 - robustHigh(values.map((v) => 1 - v));
+const robustLow = (values: readonly number[]): number =>
+  1 - robustHigh(values.map((v) => 1 - v));
 const emptyCounts = (peers: number): Counts[] =>
   Array.from({ length: 6 }, () => ({
     selected: 0,
@@ -525,7 +551,8 @@ function evaluate(
             exclusion: 1,
             rawPurity: r.hit / r.selected,
             agreement: 0,
-            semanticPurity: (r.hit - r.shared) / Math.max(1, r.hit + r.competing - r.shared),
+            semanticPurity:
+              (r.hit - r.shared) / Math.max(1, r.hit + r.competing - r.shared),
           },
         ]
       : [],
@@ -541,7 +568,8 @@ function evaluate(
     if (trace) trace.scoreRefusals.viewRecall++;
     return undefined;
   }
-  const recall = targetViews.reduce((n, v) => n + v.recall, 0) / targetViews.length;
+  const recall =
+    targetViews.reduce((n, v) => n + v.recall, 0) / targetViews.length;
   if (recall < 0.9) {
     if (trace) trace.scoreRefusals.meanRecall++;
     return undefined;
@@ -571,7 +599,9 @@ function evaluate(
     const row = defined(counts[view.view]);
     const leak = Math.max(
       0,
-      ...row.peer.map((total, i) => (total >= 8 ? (row.peerSelected[i] ?? 0) / total : 0)),
+      ...row.peer.map((total, i) =>
+        total >= 8 ? (row.peerSelected[i] ?? 0) / total : 0,
+      ),
     );
     view.exclusion = 1 - leak;
     view.agreement = Math.min(view.recall, view.exclusion);
@@ -579,7 +609,9 @@ function evaluate(
   const worstLeakage = Math.max(0, ...peers.map((p) => p.leakage));
   const purityViews = counts
     .filter((r) => r.target >= 8 && r.hit + r.competing - r.shared >= 8)
-    .map((r) => (r.hit - r.shared) / Math.max(1, r.hit + r.competing - r.shared));
+    .map(
+      (r) => (r.hit - r.shared) / Math.max(1, r.hit + r.competing - r.shared),
+    );
   const purity = robustLow(purityViews);
   return {
     confidence: Math.min(recall, 1 - worstLeakage),
@@ -588,7 +620,8 @@ function evaluate(
     worstLeakage,
     clean: purity >= 0.9 && worstLeakage <= 0.1,
     fraction,
-    rawPurity: targetViews.reduce((n, v) => n + v.rawPurity, 0) / targetViews.length,
+    rawPurity:
+      targetViews.reduce((n, v) => n + v.rawPurity, 0) / targetViews.length,
     peers,
     views: targetViews,
   };
@@ -640,9 +673,13 @@ interface Candidate {
 }
 function semanticOrder(a: Candidate, b: Candidate): number {
   return (
-    (a.groundedScope && b.groundedScope ? (b.localization ?? 0) - (a.localization ?? 0) : 0) ||
+    (a.groundedScope && b.groundedScope
+      ? (b.localization ?? 0) - (a.localization ?? 0)
+      : 0) ||
     Number(!a.score.clean) - Number(!b.score.clean) ||
-    (!a.score.clean && !b.score.clean ? a.score.worstLeakage - b.score.worstLeakage : 0) ||
+    (!a.score.clean && !b.score.clean
+      ? a.score.worstLeakage - b.score.worstLeakage
+      : 0) ||
     b.score.recall - a.score.recall ||
     b.score.purity - a.score.purity ||
     a.score.worstLeakage - b.score.worstLeakage ||
@@ -658,10 +695,13 @@ function semanticOrder(a: Candidate, b: Candidate): number {
 /** A dense, corroborated perimeter resolves ties that the sparse score cannot see. */
 function groundedFrontierDistance(candidate: Candidate): number {
   const scope = candidate.groundedScope;
-  return scope?.boundaryWitness && scope.boundaryWitness.observedAxes.length >= 2
+  return scope?.boundaryWitness &&
+    scope.boundaryWitness.observedAxes.length >= 2
     ? Math.max(
         0,
-        Math.abs(candidate.offset - scope.intrinsicFrontier) - scope.pixelUncertainty - 1e-8,
+        Math.abs(candidate.offset - scope.intrinsicFrontier) -
+          scope.pixelUncertainty -
+          1e-8,
       )
     : 0;
 }
@@ -672,7 +712,10 @@ function assemblyBaseEligible(
   part: SemanticPart,
   candidate: Candidate,
 ): boolean {
-  if (candidate.groundedScope && candidate.groundedScope.state !== 'TARGET_SCOPE_SUPPORTED')
+  if (
+    candidate.groundedScope &&
+    candidate.groundedScope.state !== "TARGET_SCOPE_SUPPORTED"
+  )
     return false;
   const s = candidate.score;
   if (s.clean) return true;
@@ -692,7 +735,9 @@ function assemblyBaseEligible(
     const metric = defined(s.peers[i]);
     if (
       metric.leakage > 0.1 &&
-      (metric.exactComponent || !peer.fused || peer.part.expectedGeometry.likelySeparable)
+      (metric.exactComponent ||
+        !peer.fused ||
+        peer.part.expectedGeometry.likelySeparable)
     )
       return false;
   }
@@ -712,8 +757,10 @@ function cleanerAlternative(
     assemblyBaseEligible(evidence, answer, part, other) &&
     other.score.recall >= s.recall - 0.02 &&
     (other.score.clean ||
-      (other.score.purity >= s.purity + 0.1 && other.score.worstLeakage <= s.worstLeakage + 1e-9) ||
-      (other.score.worstLeakage <= s.worstLeakage - 0.1 && other.score.purity >= s.purity - 0.02))
+      (other.score.purity >= s.purity + 0.1 &&
+        other.score.worstLeakage <= s.worstLeakage + 1e-9) ||
+      (other.score.worstLeakage <= s.worstLeakage - 0.1 &&
+        other.score.purity >= s.purity - 0.02))
   );
 }
 function assemblyEligible(
@@ -745,10 +792,17 @@ function proposal(
   const score = candidate.score,
     assembly =
       !score.clean ||
-      (evidence.fusedTarget && !part.expectedGeometry.likelySeparable && score.rawPurity < 0.9);
-  const anchor = Math.min(1, ...score.peers.filter((p) => p.views >= 2).map((p) => p.leakage));
+      (evidence.fusedTarget &&
+        !part.expectedGeometry.likelySeparable &&
+        score.rawPurity < 0.9);
+  const anchor = Math.min(
+    1,
+    ...score.peers.filter((p) => p.views >= 2).map((p) => p.leakage),
+  );
   return {
-    ...(candidate.groundedScope ? { groundedTargetScope: candidate.groundedScope } : {}),
+    ...(candidate.groundedScope
+      ? { groundedTargetScope: candidate.groundedScope }
+      : {}),
     ...(candidate.targetScope ? { targetScope: candidate.targetScope } : {}),
     ...(candidate.offsetSource
       ? {
@@ -765,9 +819,12 @@ function proposal(
       normal: candidate.normal,
       origin: vector(candidate.normal.map((n) => n * candidate.offset)),
     },
-    confidence: score.clean ? score.confidence : Math.min(score.recall, score.purity, 1 - anchor),
-    scope: assembly ? 'assembly' : 'part',
-    alignment: score.rawPurity >= SEMANTIC_WORK_LIMITS.planePurity ? 'focused' : 'broad',
+    confidence: score.clean
+      ? score.confidence
+      : Math.min(score.recall, score.purity, 1 - anchor),
+    scope: assembly ? "assembly" : "part",
+    alignment:
+      score.rawPurity >= SEMANTIC_WORK_LIMITS.planePurity ? "focused" : "broad",
     samples: evidence.points.length,
     candidates: candidates.length,
     sectionSamples: candidate.section,
@@ -775,7 +832,9 @@ function proposal(
     views: score.views,
     ownership: {
       admitted: true,
-      rule: score.clean ? 'CLEAN_PHYSICAL_EXTENT' : 'BEST_FEASIBLE_FUSED_ASSEMBLY',
+      rule: score.clean
+        ? "CLEAN_PHYSICAL_EXTENT"
+        : "BEST_FEASIBLE_FUSED_ASSEMBLY",
       targetRecall: score.recall,
       semanticPurity: score.purity,
       worstPeerLeakage: score.worstLeakage,
@@ -785,18 +844,24 @@ function proposal(
         if ((i & 255) === 0) checkpoint();
         return cleanerAlternative(evidence, answer, part, candidate, c);
       }).length,
-      frontierCandidates: candidates.filter((c) => c.score.recall >= score.recall - 0.02).length,
+      frontierCandidates: candidates.filter(
+        (c) => c.score.recall >= score.recall - 0.02,
+      ).length,
     },
   };
 }
-function boundedContext(context?: PlaneOwnershipContext): PlaneOwnershipContext {
+function boundedContext(
+  context?: PlaneOwnershipContext,
+): PlaneOwnershipContext {
   let work = 0;
   return (
     context ?? {
       telemetry: planeOwnershipTelemetry(),
       charge: (): void => {
         if (++work > SEMANTIC_WORK_LIMITS.regionPixels)
-          throw resourceLimitExceeded('The semantic regions exceed the supported work limit.');
+          throw resourceLimitExceeded(
+            "The semantic regions exceed the supported work limit.",
+          );
       },
     }
   );
@@ -813,23 +878,27 @@ export function synthesizeSemanticPlane(
   const trace = planeSynthesisTrace();
   context.synthesis?.set(part.id, trace);
   trace.inputRefusal =
-    part.importance !== 'major'
-      ? 'NOT_MAJOR'
+    part.importance !== "major"
+      ? "NOT_MAJOR"
       : part.instances !== 1
-        ? 'MULTIPLE_INSTANCES'
-        : part.expectedGeometry.kind === 'surface_part'
-          ? 'SURFACE_ONLY'
+        ? "MULTIPLE_INSTANCES"
+        : part.expectedGeometry.kind === "surface_part"
+          ? "SURFACE_ONLY"
           : part.views.length < 2
-            ? 'INSUFFICIENT_VIEWS'
+            ? "INSUFFICIENT_VIEWS"
             : Math.min(answer.object.confidence, part.confidence) <
                 SEMANTIC_WORK_LIMITS.semanticConfidence
-              ? 'SEMANTIC_CONFIDENCE'
+              ? "SEMANTIC_CONFIDENCE"
               : null;
   if (trace.inputRefusal) return undefined;
   const evidence = observations(prepared, answer, part, checkpoint, context),
     points = evidence.points;
   const target: Vec3[] = [];
-  trace.views = VIEW_NAMES.map((_v, view) => ({ view, foreground: 0, target: 0 }));
+  trace.views = VIEW_NAMES.map((_v, view) => ({
+    view,
+    foreground: 0,
+    target: 0,
+  }));
   // Collect compact counts while extracting the existing target samples.
   for (const [i, p] of points.entries()) {
     if ((i & 1023) === 0) checkpoint();
@@ -845,8 +914,8 @@ export function synthesizeSemanticPlane(
   trace.exactTarget = evidence.exactTarget;
   trace.phase =
     target.length < 32 || target.length / Math.max(1, points.length) >= 0.995
-      ? 'TARGET_SAMPLES_REFUSED'
-      : 'EXACT_COMPONENT_WITNESS';
+      ? "TARGET_SAMPLES_REFUSED"
+      : "EXACT_COMPONENT_WITNESS";
   if (
     target.length < 32 ||
     target.length / Math.max(1, points.length) >= 0.995 ||
@@ -859,7 +928,10 @@ export function synthesizeSemanticPlane(
   };
   const normals: Vec3[] = [];
   const normalMasks: number[] = [];
-  const add = (raw: Vec3, source: PlaneNormalSource = 'CANONICAL_AXES_AND_DIAGONALS'): void => {
+  const add = (
+    raw: Vec3,
+    source: PlaneNormalSource = "CANONICAL_AXES_AND_DIAGONALS",
+  ): void => {
     const n = unit(raw);
     trace.normalAttempts++;
     if (!n) {
@@ -871,7 +943,8 @@ export function synthesizeSemanticPlane(
     if (parallel >= 0) {
       trace.normalRefusals.parallel++;
       normalMasks[parallel] = (normalMasks[parallel] ?? 0) | mask;
-    } else if (normals.length >= LOCAL_PLANE_LIMITS.normals) trace.normalRefusals.cap++;
+    } else if (normals.length >= LOCAL_PLANE_LIMITS.normals)
+      trace.normalRefusals.cap++;
     else {
       normals.push(n);
       normalMasks.push(mask);
@@ -879,13 +952,20 @@ export function synthesizeSemanticPlane(
   };
   const modelAxes = principal(points.map((p) => p.point));
   const coveragePartners = evidence.peers.length
-    ? complementaryCoveragePartners(points, evidence.peers, part, checkpoint, charge)
+    ? complementaryCoveragePartners(
+        points,
+        evidence.peers,
+        part,
+        checkpoint,
+        charge,
+      )
     : [];
   if (coveragePartners.length > 1) {
-    trace.phase = 'NO_ELIGIBLE_CANDIDATE';
+    trace.phase = "NO_ELIGIBLE_CANDIDATE";
     return undefined;
   }
-  const groundedScope = evidence.peers.length > 0 && coveragePartners.length === 0;
+  const groundedScope =
+    evidence.peers.length > 0 && coveragePartners.length === 0;
   const groundedUncertainty = groundedScope
     ? collectGroundedScopeEnvelope(
         points,
@@ -914,11 +994,11 @@ export function synthesizeSemanticPlane(
         charge,
       )
     : [];
-  for (const normal of sourceFrame) add(normal, 'SOURCE_SECTION_FRAME');
+  for (const normal of sourceFrame) add(normal, "SOURCE_SECTION_FRAME");
   for (let x = -1; x <= 1; x++)
     for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) add([x, y, z]);
-  for (const n of principal(target)) add(n, 'TARGET_PCA');
-  for (const n of modelAxes) add(n, 'MODEL_PCA');
+  for (const n of principal(target)) add(n, "TARGET_PCA");
+  for (const n of modelAxes) add(n, "MODEL_PCA");
   if (evidence.peers.length === 0) {
     trace.peerless = {
       scopeMilliseconds: 0,
@@ -930,29 +1010,41 @@ export function synthesizeSemanticPlane(
       frontier: [],
       refinements: 0,
       triangleVisits: 0,
-      phase: 'COLLECT_SCOPE',
+      phase: "COLLECT_SCOPE",
       scratchBytes: points.length * 40 + 8192,
     };
     const scopeStart = Date.now();
-    const envelope = collectPeerlessScopeEnvelope(points, modelAxes, checkpoint, charge);
+    const envelope = collectPeerlessScopeEnvelope(
+      points,
+      modelAxes,
+      checkpoint,
+      charge,
+    );
     trace.peerless.targetEnvelope = envelope.bounds;
     trace.peerless.scopeMilliseconds += Date.now() - scopeStart;
   }
   const center = mean(target);
   for (let i = 0; i < evidence.peers.length; i++) {
     checkpoint();
-    const peer = mean(points.filter((p) => p.peerMask & (1 << i)).map((p) => p.point));
-    add(vector(center.map((v, a) => v - defined(peer[a]))), 'PEER_DIRECTION');
+    const peer = mean(
+      points.filter((p) => p.peerMask & (1 << i)).map((p) => p.point),
+    );
+    add(vector(center.map((v, a) => v - defined(peer[a]))), "PEER_DIRECTION");
   }
-  if (part.cut) add(part.cut.normal, 'PROVIDER_HINT');
+  if (part.cut) add(part.cut.normal, "PROVIDER_HINT");
   trace.normalCandidates = normals.map((normal, i) => ({
     normal,
-    sources: PLANE_NORMAL_SOURCES.filter((_s, j) => (normalMasks[i] ?? 0) & (1 << j)),
+    sources: PLANE_NORMAL_SOURCES.filter(
+      (_s, j) => (normalMasks[i] ?? 0) & (1 << j),
+    ),
   }));
-  trace.phase = 'NO_ELIGIBLE_CANDIDATE';
+  trace.phase = "NO_ELIGIBLE_CANDIDATE";
   const candidates: Candidate[] = [],
     bins = LOCAL_PLANE_LIMITS.offsets,
-    channels = 5 + evidence.peers.length + (evidence.peers.length === 0 || groundedScope ? 1 : 0);
+    channels =
+      5 +
+      evidence.peers.length +
+      (evidence.peers.length === 0 || groundedScope ? 1 : 0);
   for (const [normalIndex, normal] of normals.entries()) {
     checkpoint();
     context.telemetry.normals++;
@@ -994,17 +1086,27 @@ export function synthesizeSemanticPlane(
         }
     }
     if (hi - lo < 1e-9) continue;
-    const variance = Math.max(0, sumSquared / points.length - (sum / points.length) ** 2),
+    const variance = Math.max(
+        0,
+        sumSquared / points.length - (sum / points.length) ** 2,
+      ),
       targetVariance = Math.max(
         0,
-        targetSquared / Math.max(1, targetCount) - (targetSum / Math.max(1, targetCount)) ** 2,
+        targetSquared / Math.max(1, targetCount) -
+          (targetSum / Math.max(1, targetCount)) ** 2,
       ),
-      localization = Math.max(0, 1 - targetVariance / Math.max(1e-12, variance));
+      localization = Math.max(
+        0,
+        1 - targetVariance / Math.max(1e-12, variance),
+      );
     const hist = new Uint32Array(6 * channels * bins),
       prefix = new Uint32Array(6 * channels * (bins + 1));
     const slot = (view: number, channel: number, bin: number): number =>
       (view * channels + channel) * bins + bin;
-    const increment = (p: Observation, action: (channel: number) => void): void => {
+    const increment = (
+      p: Observation,
+      action: (channel: number) => void,
+    ): void => {
       action(0);
       if (p.target) action(1);
       if (p.peerMask) {
@@ -1013,7 +1115,8 @@ export function synthesizeSemanticPlane(
       }
       if (!p.target && !p.peerMask) action(4);
       if (evidence.peers.length === 0 && p.scopeOverhangWitness) action(5);
-      if (groundedScope && p.scopeOverhangWitness) action(5 + evidence.peers.length);
+      if (groundedScope && p.scopeOverhangWitness)
+        action(5 + evidence.peers.length);
       for (let j = 0; j < evidence.peers.length; j++)
         if (p.peerMask & (1 << j)) {
           charge();
@@ -1023,7 +1126,10 @@ export function synthesizeSemanticPlane(
     for (const [i, p] of points.entries()) {
       if ((i & 1023) === 0) checkpoint();
       charge();
-      const bin = Math.min(bins - 1, Math.floor(((defined(projected[i]) - lo) / (hi - lo)) * bins));
+      const bin = Math.min(
+        bins - 1,
+        Math.floor(((defined(projected[i]) - lo) / (hi - lo)) * bins),
+      );
       next[i] = heads[bin] ?? -1;
       heads[bin] = i;
       increment(p, (channel) => {
@@ -1072,7 +1178,10 @@ export function synthesizeSemanticPlane(
     const offsetSources: PlaneOffsetSource[] = [];
     const offsets: number[] = [],
       epsilon = (hi - lo) * 1e-8;
-    const offset = (d: number, source: PlaneOffsetSource = 'SEMANTIC_TRANSITION'): void => {
+    const offset = (
+      d: number,
+      source: PlaneOffsetSource = "SEMANTIC_TRANSITION",
+    ): void => {
       if (
         Number.isFinite(d) &&
         offsets.length < bins &&
@@ -1085,19 +1194,22 @@ export function synthesizeSemanticPlane(
       }
     };
     // Semantic starts/ends and nearest peer transitions precede any geometric preference.
-    offset(targetLo - epsilon, 'TARGET_MIN');
-    offset(targetHi + epsilon, 'TARGET_MAX');
+    offset(targetLo - epsilon, "TARGET_MIN");
+    offset(targetHi + epsilon, "TARGET_MAX");
     for (let j = 0; j < evidence.peers.length; j++) {
       checkpoint();
       const a = defined(peerLo[j]),
         b = defined(peerHi[j]);
-      if ((a + b) / 2 < (targetLo + targetHi) / 2) offset((targetLo + b) / 2, 'PEER_INTERVAL');
-      else offset((targetHi + a) / 2, 'PEER_INTERVAL');
+      if ((a + b) / 2 < (targetLo + targetHi) / 2)
+        offset((targetLo + b) / 2, "PEER_INTERVAL");
+      else offset((targetHi + a) / 2, "PEER_INTERVAL");
     }
     if (scopeProjection) {
       // Robust boundary proposals trim at most the existing .10 recall allowance.
       // They propose offsets only; localization, scope and structure still all must pass.
-      const targetDepths = points.flatMap((p, i) => (p.target ? [projected[i] ?? 0] : []));
+      const targetDepths = points.flatMap((p, i) =>
+        p.target ? [projected[i] ?? 0] : [],
+      );
       targetDepths.sort((a, b) => {
         checkpoint();
         charge();
@@ -1105,11 +1217,15 @@ export function synthesizeSemanticPlane(
       });
       for (const q of [0.05, 0.95]) {
         checkpoint();
-        const robust = targetDepths[Math.floor((targetDepths.length - 1) * q)] ?? 0;
-        offset(robust, 'TARGET_QUANTILE');
+        const robust =
+          targetDepths[Math.floor((targetDepths.length - 1) * q)] ?? 0;
+        offset(robust, "TARGET_QUANTILE");
         // A bounded interior proposal covers the uncertainty between a raster
         // extremum and its robust frontier; it cannot bypass scope or structure.
-        offset((robust + (q < 0.5 ? targetLo : targetHi)) / 2, 'TARGET_FRONTIER_BRACKET');
+        offset(
+          (robust + (q < 0.5 ? targetLo : targetHi)) / 2,
+          "TARGET_FRONTIER_BRACKET",
+        );
       }
     }
     if (groundedProjection) {
@@ -1119,19 +1235,25 @@ export function synthesizeSemanticPlane(
         groundedProjection.high,
         groundedProjection.high + groundedUncertainty,
       ])
-        offset(d, 'TARGET_FRONTIER_BRACKET');
+        offset(d, "TARGET_FRONTIER_BRACKET");
     }
     if (
       part.cut &&
-      Math.abs(dot(part.cut.normal, normal)) / Math.max(1e-9, Math.hypot(...part.cut.normal)) >
+      Math.abs(dot(part.cut.normal, normal)) /
+        Math.max(1e-9, Math.hypot(...part.cut.normal)) >
         0.999
     )
-      offset(dot(part.cut.origin, normal), 'PROVIDER_HINT');
+      offset(dot(part.cut.origin, normal), "PROVIDER_HINT");
     const aggregate = (channel: number, bin: number): number =>
-      VIEW_NAMES.reduce((sum, _view, vi) => sum + (hist[slot(vi, channel, bin)] ?? 0), 0);
+      VIEW_NAMES.reduce(
+        (sum, _view, vi) => sum + (hist[slot(vi, channel, bin)] ?? 0),
+        0,
+      );
     if (scopeProjection) {
       const width = (hi - lo) / bins;
-      const boundaries = offsets.filter((_d, i) => offsetSources[i] === 'TARGET_QUANTILE');
+      const boundaries = offsets.filter(
+        (_d, i) => offsetSources[i] === "TARGET_QUANTILE",
+      );
       for (const boundary of boundaries) {
         let best:
           | {
@@ -1154,7 +1276,7 @@ export function synthesizeSemanticPlane(
           const contrast = Math.abs(a - next) / Math.max(a, next);
           if (!best || contrast > best.contrast) best = { offset: d, contrast };
         }
-        if (best) offset(best.offset, 'VISIBLE_SECTION_TRANSITION');
+        if (best) offset(best.offset, "VISIBLE_SECTION_TRANSITION");
       }
     }
     for (let bin = 1; bin < bins; bin++) {
@@ -1193,12 +1315,16 @@ export function synthesizeSemanticPlane(
     );
     for (const [offsetIndex, d] of offsets.entries()) {
       checkpoint();
-      const bin = Math.min(bins - 1, Math.max(0, Math.floor(((d - lo) / (hi - lo)) * bins))),
+      const bin = Math.min(
+          bins - 1,
+          Math.max(0, Math.floor(((d - lo) / (hi - lo)) * bins)),
+        ),
         below = new Uint32Array(6 * channels);
       for (let v = 0; v < 6; v++)
         for (let c = 0; c < channels; c++) {
           charge();
-          below[v * channels + c] = prefix[(v * channels + c) * (bins + 1) + bin] ?? 0;
+          below[v * channels + c] =
+            prefix[(v * channels + c) * (bins + 1) + bin] ?? 0;
         }
       // Coarse-to-fine: only resolve samples in the boundary bin, never source faces × peers × offsets.
       for (let i = heads[bin] ?? -1; i >= 0; i = next[i] ?? -1) {
@@ -1217,9 +1343,12 @@ export function synthesizeSemanticPlane(
         const rows = emptyCounts(evidence.peers.length);
         for (let v = 0; v < 6; v++) {
           const row = defined(rows[v]);
-          const all = (c: number): number => prefix[(v * channels + c) * (bins + 1) + bins] ?? 0;
+          const all = (c: number): number =>
+            prefix[(v * channels + c) * (bins + 1) + bins] ?? 0;
           const selected = (c: number): number =>
-            side === 1 ? all(c) - (below[v * channels + c] ?? 0) : (below[v * channels + c] ?? 0);
+            side === 1
+              ? all(c) - (below[v * channels + c] ?? 0)
+              : (below[v * channels + c] ?? 0);
           row.selected = selected(0);
           row.target = all(1);
           row.hit = selected(1);
@@ -1270,27 +1399,45 @@ export function synthesizeSemanticPlane(
             : undefined;
           if (targetScope && trace.peerless) {
             trace.peerless.scopeMilliseconds += Date.now() - scopeStart;
-            if (targetScope.state === 'TARGET_SCOPE_SUPPORTED') trace.peerless.supported++;
-            else if (targetScope.state === 'TARGET_SCOPE_OVERBROAD') trace.peerless.overbroad++;
+            if (targetScope.state === "TARGET_SCOPE_SUPPORTED")
+              trace.peerless.supported++;
+            else if (targetScope.state === "TARGET_SCOPE_OVERBROAD")
+              trace.peerless.overbroad++;
             else trace.peerless.ambiguous++;
           }
           const structuralStart = Date.now();
           let structuralHint = 0;
-          if (targetScope?.state === 'TARGET_SCOPE_SUPPORTED') {
-            for (let b = Math.max(1, bin); b <= Math.min(bins - 1, bin + 1); b++) {
+          if (targetScope?.state === "TARGET_SCOPE_SUPPORTED") {
+            for (
+              let b = Math.max(1, bin);
+              b <= Math.min(bins - 1, bin + 1);
+              b++
+            ) {
               checkpoint();
               charge();
               const a = aggregate(0, b - 1),
                 next = aggregate(0, b);
-              if (a < PEERLESS_SCOPE_LIMITS.samples || next < PEERLESS_SCOPE_LIMITS.samples)
+              if (
+                a < PEERLESS_SCOPE_LIMITS.samples ||
+                next < PEERLESS_SCOPE_LIMITS.samples
+              )
                 continue;
-              structuralHint = Math.max(structuralHint, Math.abs(a - next) / Math.max(1, a, next));
+              structuralHint = Math.max(
+                structuralHint,
+                Math.abs(a - next) / Math.max(1, a, next),
+              );
             }
           }
-          if (trace.peerless) trace.peerless.structuralMilliseconds += Date.now() - structuralStart;
+          if (trace.peerless)
+            trace.peerless.structuralMilliseconds +=
+              Date.now() - structuralStart;
           candidates.push({
-            ...(groundedEvidence ? { groundedScope: groundedEvidence, localization } : {}),
-            ...(targetScope ? { targetScope, structuralHint, localization } : {}),
+            ...(groundedEvidence
+              ? { groundedScope: groundedEvidence, localization }
+              : {}),
+            ...(targetScope
+              ? { targetScope, structuralHint, localization }
+              : {}),
             normalSourceMask: defined(normalMasks[normalIndex]),
             offsetSource: defined(offsetSources[offsetIndex]),
             normal: vector(normal.map((n) => n * side)),
@@ -1311,15 +1458,25 @@ export function synthesizeSemanticPlane(
   });
   const eligible = candidates.filter((c) => {
     checkpoint();
-    return assemblyEligible(evidence, answer, part, c, candidates, checkpoint, charge);
+    return assemblyEligible(
+      evidence,
+      answer,
+      part,
+      c,
+      candidates,
+      checkpoint,
+      charge,
+    );
   });
   trace.scoredCandidates = candidates.length;
   trace.ownershipEligible = eligible.length;
-  trace.phase = eligible.length ? 'NO_CONFIRMED_FINALIST' : 'NO_ELIGIBLE_CANDIDATE';
+  trace.phase = eligible.length
+    ? "NO_CONFIRMED_FINALIST"
+    : "NO_ELIGIBLE_CANDIDATE";
   let peerlessRefinement: SemanticPlaneRefinement | undefined;
   let peerlessEligible: Candidate[] | undefined;
   if (evidence.peers.length === 0) {
-    if (trace.peerless) trace.peerless.phase = 'BUILD_FRONTIER';
+    if (trace.peerless) trace.peerless.phase = "BUILD_FRONTIER";
     // Four intrinsic normal families, with one interior boundary bracket and
     // one independently visible transition per family. Scope is a gate, not an
     // unknown-foreground penalty. Localization compares target/source variance
@@ -1336,33 +1493,41 @@ export function synthesizeSemanticPlane(
       ((a.structuralHint ?? 0) === (b.structuralHint ?? 0) &&
         (a.score.recall > b.score.recall ||
           (a.score.recall === b.score.recall &&
-            defined(a.targetScope).boundaryGap < defined(b.targetScope).boundaryGap)));
+            defined(a.targetScope).boundaryGap <
+              defined(b.targetScope).boundaryGap)));
     for (const c of eligible) {
       checkpoint();
       charge();
-      if (c.targetScope?.state !== 'TARGET_SCOPE_SUPPORTED') continue;
+      if (c.targetScope?.state !== "TARGET_SCOPE_SUPPORTED") continue;
       let family = families.find((f) => dot(f.normal, c.normal) > 0.999);
       if (!family) {
         family = { normal: c.normal, localization: c.localization ?? 0 };
         if (families.length === PEERLESS_SCOPE_LIMITS.frontier / 2) {
           let worst = 0;
           for (let i = 1; i < families.length; i++)
-            if (defined(families[i]).localization < defined(families[worst]).localization)
+            if (
+              defined(families[i]).localization <
+              defined(families[worst]).localization
+            )
               worst = i;
-          if (family.localization <= defined(families[worst]).localization) continue;
+          if (family.localization <= defined(families[worst]).localization)
+            continue;
           families.splice(worst, 1);
         }
         families.push(family);
       }
       if (
-        c.offsetSource === 'TARGET_FRONTIER_BRACKET' &&
+        c.offsetSource === "TARGET_FRONTIER_BRACKET" &&
         (!family.bracket || better(c, family.bracket))
       )
         family.bracket = c;
-      if (c.offsetSource === 'TARGET_QUANTILE' && (!family.robust || better(c, family.robust)))
+      if (
+        c.offsetSource === "TARGET_QUANTILE" &&
+        (!family.robust || better(c, family.robust))
+      )
         family.robust = c;
       if (
-        c.offsetSource !== 'TARGET_FRONTIER_BRACKET' &&
+        c.offsetSource !== "TARGET_FRONTIER_BRACKET" &&
         (!family.structural || better(c, family.structural))
       )
         family.structural = c;
@@ -1374,7 +1539,11 @@ export function synthesizeSemanticPlane(
     });
     const frontier: Candidate[] = [];
     const retain = (c: Candidate | undefined): void => {
-      if (c && !frontier.includes(c) && frontier.length < PEERLESS_SCOPE_LIMITS.frontier)
+      if (
+        c &&
+        !frontier.includes(c) &&
+        frontier.length < PEERLESS_SCOPE_LIMITS.frontier
+      )
         frontier.push(c);
     };
     // First cover normal diversity. The two most localized families also keep
@@ -1387,7 +1556,7 @@ export function synthesizeSemanticPlane(
       retain(f.robust);
       retain(f.structural);
     }
-    if (trace.peerless) trace.peerless.phase = 'STRUCTURAL_RANKING';
+    if (trace.peerless) trace.peerless.phase = "STRUCTURAL_RANKING";
     const probeStarted = Date.now();
     const probes = probePeerlessSections(
       prepared.geometry,
@@ -1395,7 +1564,8 @@ export function synthesizeSemanticPlane(
       LOCAL_PLANE_LIMITS.sectionFaces,
       checkpoint,
     );
-    for (const [i, c] of frontier.entries()) c.structuralHint = probes.profiles[i]?.contrast ?? 0;
+    for (const [i, c] of frontier.entries())
+      c.structuralHint = probes.profiles[i]?.contrast ?? 0;
     frontier.sort((a, b) => {
       checkpoint();
       charge();
@@ -1418,7 +1588,7 @@ export function synthesizeSemanticPlane(
         scope: defined(c.targetScope),
         structuralHint: c.structuralHint ?? 0,
         localization: c.localization ?? 0,
-        offsetSource: c.offsetSource ?? 'SEMANTIC_TRANSITION',
+        offsetSource: c.offsetSource ?? "SEMANTIC_TRANSITION",
       }));
   }
   const beam: Candidate[] = [];
@@ -1431,7 +1601,8 @@ export function synthesizeSemanticPlane(
     strongest &&
     peerlessEligible?.find(
       (c) =>
-        dot(c.normal, strongest.normal) > 0.999 && Math.abs(c.offset - strongest.offset) >= 1e-7,
+        dot(c.normal, strongest.normal) > 0.999 &&
+        Math.abs(c.offset - strongest.offset) >= 1e-7,
     );
   const beamOrder =
     strongest && alternate
@@ -1439,7 +1610,13 @@ export function synthesizeSemanticPlane(
       : (peerlessEligible ?? eligible);
   for (const c of beamOrder) {
     checkpoint();
-    if (!beam.some((b) => dot(b.normal, c.normal) > 0.999 && Math.abs(b.offset - c.offset) < 1e-7))
+    if (
+      !beam.some(
+        (b) =>
+          dot(b.normal, c.normal) > 0.999 &&
+          Math.abs(b.offset - c.offset) < 1e-7,
+      )
+    )
       beam.push(c);
     if (beam.length >= LOCAL_PLANE_LIMITS.finalists) break;
   }
@@ -1449,14 +1626,17 @@ export function synthesizeSemanticPlane(
     Math.ceil(prepared.geometry.faceCount / LOCAL_PLANE_LIMITS.sectionFaces),
   );
   const confirmed: Candidate[] = [];
-  if (trace.peerless) trace.peerless.phase = 'REFINEMENT';
+  if (trace.peerless) trace.peerless.phase = "REFINEMENT";
   const peerlessProfiles = peerlessEligible
     ? refineSemanticPlanes(
         prepared.geometry,
         beam.map((c, i) => ({
           ...part,
           id: String(i),
-          cut: { normal: c.normal, origin: vector(c.normal.map((n) => n * c.offset)) },
+          cut: {
+            normal: c.normal,
+            origin: vector(c.normal.map((n) => n * c.offset)),
+          },
           expectedGeometry: { ...part.expectedGeometry, likelySeparable: true },
         })),
         checkpoint,
@@ -1469,7 +1649,7 @@ export function synthesizeSemanticPlane(
     trace.peerless.triangleVisits = peerlessProfiles.triangleVisits;
   }
   if (trace.peerless) {
-    trace.peerless.phase = 'CONFIRMATION';
+    trace.peerless.phase = "CONFIRMATION";
     trace.peerless.finalists = [];
   }
   const confirmedRefinements = new Map<Candidate, SemanticPlaneRefinement>();
@@ -1493,7 +1673,12 @@ export function synthesizeSemanticPlane(
         offset = dot(normal, refined.cut.origin);
       const scopeStart = Date.now();
       const projected = Float64Array.from(points, (p) => dot(p.point, normal));
-      const scopeProjection = peerlessScopeProjection(points, projected, checkpoint, charge);
+      const scopeProjection = peerlessScopeProjection(
+        points,
+        projected,
+        checkpoint,
+        charge,
+      );
       const rows = emptyCounts(0),
         below = new Array<number>(6).fill(0),
         outsideSelected = new Array<number>(6).fill(0);
@@ -1505,7 +1690,8 @@ export function synthesizeSemanticPlane(
         if (defined(projected[i]) >= offset) {
           row.selected++;
           if (p.target) row.hit++;
-          if (p.scopeOverhangWitness) outsideSelected[p.view] = (outsideSelected[p.view] ?? 0) + 1;
+          if (p.scopeOverhangWitness)
+            outsideSelected[p.view] = (outsideSelected[p.view] ?? 0) + 1;
         } else if (!p.target) below[p.view] = (below[p.view] ?? 0) + 1;
       }
       const targetScope = peerlessScopeForCut(
@@ -1523,15 +1709,29 @@ export function synthesizeSemanticPlane(
         const entry = trace.peerless.finalists?.[beamIndex];
         if (entry) entry.scopeState = targetScope.state;
       }
-      if (targetScope.state !== 'TARGET_SCOPE_SUPPORTED') continue;
+      if (targetScope.state !== "TARGET_SCOPE_SUPPORTED") continue;
       c = { ...original, normal, offset, targetScope };
       confirmedRefinements.set(c, refined);
     }
     checkpoint();
-    const score = directScore(evidence, c.normal, c.offset, checkpoint, context);
+    const score = directScore(
+      evidence,
+      c.normal,
+      c.offset,
+      checkpoint,
+      context,
+    );
     if (
       !score ||
-      !assemblyEligible(evidence, answer, part, { ...c, score }, candidates, checkpoint, charge)
+      !assemblyEligible(
+        evidence,
+        answer,
+        part,
+        { ...c, score },
+        candidates,
+        checkpoint,
+        charge,
+      )
     )
       continue;
     c.score = score;
@@ -1569,7 +1769,8 @@ export function synthesizeSemanticPlane(
     charge();
     return peerlessEligible
       ? (b.structuralHint ?? 0) - (a.structuralHint ?? 0) ||
-          defined(a.targetScope).boundaryGap - defined(b.targetScope).boundaryGap ||
+          defined(a.targetScope).boundaryGap -
+            defined(b.targetScope).boundaryGap ||
           b.score.recall - a.score.recall
       : semanticOrder(a, b);
   });
@@ -1584,14 +1785,15 @@ export function synthesizeSemanticPlane(
     winner &&
     original &&
     winningRefinement &&
-    structuralSeamEvidence(winningRefinement, checkpoint).reason === 'STABLE_SECTION_STEP'
+    structuralSeamEvidence(winningRefinement, checkpoint).reason ===
+      "STABLE_SECTION_STEP"
   ) {
-    const cut = (c: Candidate): LocalPlaneProposal['cut'] => ({
+    const cut = (c: Candidate): LocalPlaneProposal["cut"] => ({
       normal: c.normal,
       origin: vector(c.normal.map((n) => n * c.offset)),
     });
     const supportedOwnershipCandidates = [...confirmed, ...eligible].filter(
-      (c) => c.targetScope?.state === 'TARGET_SCOPE_SUPPORTED',
+      (c) => c.targetScope?.state === "TARGET_SCOPE_SUPPORTED",
     );
     const sameTransition = supportedOwnershipCandidates.filter((c) =>
       seamSupportsPlane(
@@ -1627,7 +1829,7 @@ export function synthesizeSemanticPlane(
         checkpoint,
         charge,
       );
-    const ownership = interfaceOwnershipEvidence(
+    let ownership = interfaceOwnershipEvidence(
       prepared,
       part,
       evidence.peers.map((p) => p.part),
@@ -1648,38 +1850,60 @@ export function synthesizeSemanticPlane(
       bodyPixels: ownership.bodyPixels,
       unknownPixels: ownership.unknownPixels,
       positiveFrontierProof: ownership.positiveFrontierProof,
-      ...(ownership.localSupport ? { localSupport: ownership.localSupport } : {}),
+      ...(ownership.localSupport
+        ? { localSupport: ownership.localSupport }
+        : {}),
       sourceFaceVisits: ownership.faceVisits,
       clippedOperations: ownership.clippedOperations,
       ownershipComparisons: 0,
       scratchBytes: ownership.scratchBytes,
     };
-    structuralOwnership = structuralOwnershipCardinality(
+    const ownershipAudit = structuralOwnershipCardinality(
       prepared,
       part,
       evidence.peers.map((p) => p.part),
       alternatives,
       supportedOwnershipCandidates.map(cut),
       ownership,
+      winningRefinement,
+      modelAxes,
+      sameTransition.map(cut),
       checkpoint,
       charge,
     );
+    structuralOwnership = ownershipAudit.cardinality;
+    ownership = ownershipAudit.primaryOwnership ?? ownership;
     trace.ownershipCardinality = structuralOwnership;
+    if (trace.interfaceOwnership) {
+      trace.interfaceOwnership = {
+        ...trace.interfaceOwnership,
+        ownership: ownership.ownership,
+        targetPixels: ownership.targetPixels,
+        bodyPixels: ownership.bodyPixels,
+        unknownPixels: ownership.unknownPixels,
+        positiveFrontierProof: ownership.positiveFrontierProof,
+        ...(ownership.localSupport
+          ? { localSupport: ownership.localSupport }
+          : {}),
+      };
+    }
     const region = ownership.materialInterface;
     if (
       region &&
-      structuralOwnership.state !== 'MULTIWAY_UNRESOLVED' &&
-      structuralOwnership.state !== 'INSUFFICIENT_EVIDENCE'
+      structuralOwnership.state !== "MULTIWAY_UNRESOLVED" &&
+      structuralOwnership.state !== "INSUFFICIENT_EVIDENCE"
     ) {
       // Class diversity is selected from the existing admitted bounded search, before native work.
       // Intermediate assignments cannot stand in for a complete ownership class.
-      const representatives = new Map<'TARGET_SIDE' | 'BODY_SIDE', Candidate>();
+      const representatives = new Map<"TARGET_SIDE" | "BODY_SIDE", Candidate>();
       const reference = cut(original);
       const unrelated = (c: Candidate): number => {
         let changes = 0;
         const step = Math.max(
           1,
-          Math.ceil(prepared.geometry.faceCount / LOCAL_PLANE_LIMITS.sectionFaces),
+          Math.ceil(
+            prepared.geometry.faceCount / LOCAL_PLANE_LIMITS.sectionFaces,
+          ),
         );
         const interfaceFaces = new Set(region.faces);
         for (let f = 0; f < prepared.geometry.faceCount; f += step) {
@@ -1692,13 +1916,21 @@ export function synthesizeSemanticPlane(
             prepared.geometry.positions[i + 1] ?? 0,
             prepared.geometry.positions[i + 2] ?? 0,
           ];
-          if (dot(c.normal, p) >= c.offset !== dot(reference.normal, p) >= original.offset)
+          if (
+            dot(c.normal, p) >= c.offset !==
+            dot(reference.normal, p) >= original.offset
+          )
             changes++;
         }
         return changes;
       };
       const distances = new Map<Candidate, number>();
-      for (const c of [...confirmed, ...eligible]) {
+      for (const c of supportedOwnershipCandidates) {
+        if (
+          !ownershipAudit.signatures[supportedOwnershipCandidates.indexOf(c)]
+            ?.complete
+        )
+          continue;
         checkpoint();
         charge();
         if (
@@ -1709,7 +1941,13 @@ export function synthesizeSemanticPlane(
           )
         )
           continue;
-        const score = directScore(evidence, c.normal, c.offset, checkpoint, context);
+        const score = directScore(
+          evidence,
+          c.normal,
+          c.offset,
+          checkpoint,
+          context,
+        );
         if (
           !score ||
           !assemblyEligible(
@@ -1721,7 +1959,7 @@ export function synthesizeSemanticPlane(
             checkpoint,
             charge,
           ) ||
-          c.targetScope?.state !== 'TARGET_SCOPE_SUPPORTED'
+          c.targetScope?.state !== "TARGET_SCOPE_SUPPORTED"
         )
           continue;
         if (trace.interfaceOwnership) {
@@ -1735,7 +1973,7 @@ export function synthesizeSemanticPlane(
           checkpoint,
           charge,
         );
-        if (signature.ownership === 'INTERMEDIATE') continue;
+        if (signature.ownership === "INTERMEDIATE") continue;
         const changes = unrelated(c);
         distances.set(c, changes);
         const prior = representatives.get(signature.ownership);
@@ -1743,33 +1981,38 @@ export function synthesizeSemanticPlane(
           !prior ||
           changes < (distances.get(prior) ?? Infinity) ||
           (changes === distances.get(prior) &&
-            Math.abs(c.offset - original.offset) < Math.abs(prior.offset - original.offset))
+            Math.abs(c.offset - original.offset) <
+              Math.abs(prior.offset - original.offset))
         )
           representatives.set(signature.ownership, c);
       }
-      const included = representatives.get('TARGET_SIDE'),
-        excluded = representatives.get('BODY_SIDE');
+      const included = representatives.get("TARGET_SIDE"),
+        excluded = representatives.get("BODY_SIDE");
       if (ownership.conflict || !originalAdmitted) winner = undefined;
-      else if (ownership.ownership !== 'AMBIGUOUS') {
-        const selected = ownership.ownership === 'TARGET_SIDE' ? included : excluded;
+      else if (ownership.ownership !== "AMBIGUOUS") {
+        const selected =
+          ownership.ownership === "TARGET_SIDE" ? included : excluded;
         if (selected) {
           winner = selected;
           ownershipResolved = true;
           confirmedRefinements.set(selected, {
             ...winningRefinement,
             cut: cut(selected),
-            chosenOffset: dot(winningRefinement.profileNormal, cut(selected).origin),
+            chosenOffset: dot(
+              winningRefinement.profileNormal,
+              cut(selected).origin,
+            ),
           });
         } else winner = undefined;
       } else if (included && excluded) {
         boundaryAmbiguity = {
           targetId: part.id,
-          route: 'STRUCTURAL_SEAM',
-          interfaceOwnership: 'AMBIGUOUS',
+          route: "STRUCTURAL_SEAM",
+          interfaceOwnership: "AMBIGUOUS",
           materialUnknownInterface: true,
           hypotheses: [included, excluded].map((c, index) => ({
             plane: cut(c),
-            ownershipClass: index === 0 ? 'TARGET_SIDE' : 'BODY_SIDE',
+            ownershipClass: index === 0 ? "TARGET_SIDE" : "BODY_SIDE",
             semanticAdmission: true,
             preservesPositiveEvidence: true,
             respectsKnownOwnership: true,
@@ -1781,7 +2024,7 @@ export function synthesizeSemanticPlane(
 
   if (winner && winningRefinement && peerlessEligible && !structuralOwnership) {
     const seam = structuralSeamEvidence(winningRefinement, checkpoint);
-    if (seam.reason === 'STABLE_SECTION_MINIMUM' && seam.minimumOffsetRange) {
+    if (seam.reason === "STABLE_SECTION_MINIMUM" && seam.minimumOffsetRange) {
       structuralOwnership = structuralNeckOwnershipCardinality(
         prepared,
         winningRefinement.profileNormal,
@@ -1793,27 +2036,30 @@ export function synthesizeSemanticPlane(
     }
   }
   if (peerlessEligible && structuralOwnership) {
-    if (!winner || (structuralOwnership.state === 'TWO_WAY_UNRESOLVED' && !boundaryAmbiguity)) {
-      if (structuralOwnership.state !== 'MULTIWAY_UNRESOLVED')
+    if (
+      !winner ||
+      (structuralOwnership.state === "TWO_WAY_UNRESOLVED" && !boundaryAmbiguity)
+    ) {
+      if (structuralOwnership.state !== "MULTIWAY_UNRESOLVED")
         structuralOwnership = {
           ...structuralOwnership,
-          state: 'INSUFFICIENT_EVIDENCE',
-          reason: 'COMPLETE_OWNERSHIP_REPRESENTATIVES_UNAVAILABLE',
+          state: "INSUFFICIENT_EVIDENCE",
+          reason: "COMPLETE_OWNERSHIP_REPRESENTATIVES_UNAVAILABLE",
           unresolvedClasses: null,
         };
       winner = undefined;
     }
     trace.ownershipCardinality = structuralOwnership;
     if (
-      structuralOwnership.state !== 'IDENTIFIED' &&
-      structuralOwnership.state !== 'TWO_WAY_UNRESOLVED'
+      structuralOwnership.state !== "IDENTIFIED" &&
+      structuralOwnership.state !== "TWO_WAY_UNRESOLVED"
     )
       winner = undefined;
   }
   if (peerlessEligible && winner && !structuralOwnership) {
     trace.ownershipCardinality = {
-      state: 'INSUFFICIENT_EVIDENCE',
-      reason: 'OWNERSHIP_ANALYSIS_REQUIRED',
+      state: "INSUFFICIENT_EVIDENCE",
+      reason: "OWNERSHIP_ANALYSIS_REQUIRED",
       materialInterfaces: 0,
       interfaceComponents: 0,
       unresolvedClasses: null,
@@ -1826,10 +2072,15 @@ export function synthesizeSemanticPlane(
     winner = undefined;
   }
   if (winner) peerlessRefinement = confirmedRefinements.get(winner);
-  if (winner) trace.phase = 'PROPOSAL';
-  if (trace.peerless) trace.peerless.phase = 'COMPLETE';
+  if (winner) trace.phase = "PROPOSAL";
+  if (trace.peerless) trace.peerless.phase = "COMPLETE";
   const support = (c: Candidate): number =>
-    Math.min(c.score.confidence, c.score.recall, c.score.purity, 1 - c.score.worstLeakage);
+    Math.min(
+      c.score.confidence,
+      c.score.recall,
+      c.score.purity,
+      1 - c.score.worstLeakage,
+    );
   const families: Candidate[] = [];
   if (
     winner?.score.clean &&
@@ -1837,9 +2088,9 @@ export function synthesizeSemanticPlane(
       (peer) =>
         peer.fused &&
         peer.part.parentId === part.parentId &&
-        peer.part.importance === 'major' &&
+        peer.part.importance === "major" &&
         peer.part.instances === 1 &&
-        peer.part.expectedGeometry.kind === 'solid_part',
+        peer.part.expectedGeometry.kind === "solid_part",
     )
   )
     for (const c of eligible) {
@@ -1863,10 +2114,24 @@ export function synthesizeSemanticPlane(
     .slice(0, LOCAL_PLANE_LIMITS.compatibilityReserve)
     .flatMap((c) => {
       checkpoint();
-      const score = directScore(evidence, c.normal, c.offset, checkpoint, context);
+      const score = directScore(
+        evidence,
+        c.normal,
+        c.offset,
+        checkpoint,
+        context,
+      );
       if (
         !score?.clean ||
-        !assemblyEligible(evidence, answer, part, { ...c, score }, candidates, checkpoint, charge)
+        !assemblyEligible(
+          evidence,
+          answer,
+          part,
+          { ...c, score },
+          candidates,
+          checkpoint,
+          charge,
+        )
       )
         return [];
       return [
@@ -1876,16 +2141,22 @@ export function synthesizeSemanticPlane(
           independentComplement: score.peers.some(
             (peer) =>
               peer.views >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews &&
-              peer.leakage <= SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
+              peer.leakage <=
+                SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
               independentPlanePeer(part, peer.id, answer, peer, checkpoint),
           ),
           capturedFraction: score.fraction,
-          support: Math.min(score.confidence, score.recall, score.purity, 1 - score.worstLeakage),
+          support: Math.min(
+            score.confidence,
+            score.recall,
+            score.purity,
+            1 - score.worstLeakage,
+          ),
           provenance: {
             normalSources: PLANE_NORMAL_SOURCES.filter(
               (_s, i) => (c.normalSourceMask ?? 0) & (1 << i),
             ),
-            offsetSource: c.offsetSource ?? 'SEMANTIC_TRANSITION',
+            offsetSource: c.offsetSource ?? "SEMANTIC_TRANSITION",
             refined: false,
           },
         },
@@ -1893,7 +2164,15 @@ export function synthesizeSemanticPlane(
     });
   return winner
     ? {
-        ...proposal(winner, evidence, part, candidates, answer, checkpoint, charge),
+        ...proposal(
+          winner,
+          evidence,
+          part,
+          candidates,
+          answer,
+          checkpoint,
+          charge,
+        ),
         ...(structuralOwnership ? { structuralOwnership } : {}),
         ...(boundaryAmbiguity ? { boundaryAmbiguity } : {}),
         ...(peerlessRefinement ? { peerlessRefinement } : {}),
@@ -1904,7 +2183,8 @@ export function synthesizeSemanticPlane(
           independentComplement: c.score.peers.some(
             (peer) =>
               peer.views >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews &&
-              peer.leakage <= SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
+              peer.leakage <=
+                SEMANTIC_INTENT_LIMITS.maximumOppositePeerLeakage &&
               independentPlanePeer(part, peer.id, answer, peer, checkpoint),
           ),
           capturedFraction: c.score.fraction,
@@ -1912,7 +2192,7 @@ export function synthesizeSemanticPlane(
             normalSources: PLANE_NORMAL_SOURCES.filter(
               (_s, i) => (c.normalSourceMask ?? 0) & (1 << i),
             ),
-            offsetSource: c.offsetSource ?? 'SEMANTIC_TRANSITION',
+            offsetSource: c.offsetSource ?? "SEMANTIC_TRANSITION",
             refined: false,
           },
         })),
@@ -1924,12 +2204,19 @@ export function confirmSemanticPlane(
   prepared: PreparedSemanticGeometry,
   answer: SemanticHierarchy,
   part: SemanticPart,
-  cut: NonNullable<SemanticPart['cut']>,
+  cut: NonNullable<SemanticPart["cut"]>,
   previous: LocalPlaneProposal,
   checkpoint: Checkpoint,
   context?: PlaneOwnershipContext,
 ): LocalPlaneProposal | undefined {
-  return semanticPlaneScorer(prepared, answer, part, previous, checkpoint, context)(cut);
+  return semanticPlaneScorer(
+    prepared,
+    answer,
+    part,
+    previous,
+    checkpoint,
+    context,
+  )(cut);
 }
 export function semanticPlaneScorer(
   prepared: PreparedSemanticGeometry,
@@ -1938,7 +2225,7 @@ export function semanticPlaneScorer(
   previous: LocalPlaneProposal,
   checkpoint: Checkpoint,
   context?: PlaneOwnershipContext,
-): (cut: NonNullable<SemanticPart['cut']>) => LocalPlaneProposal | undefined {
+): (cut: NonNullable<SemanticPart["cut"]>) => LocalPlaneProposal | undefined {
   const bounded = boundedContext(context);
   // Local synthesis may set a derived separability flag. Aggregate intent must use the raw semantics.
   part = answer.parts.find((p) => p.id === part.id) ?? part;
@@ -1965,7 +2252,9 @@ export function semanticPlaneScorer(
     if (!score) return undefined;
     let groundedScope: GroundedTargetScopeEvidence | undefined;
     if (groundedUncertainty !== undefined) {
-      const projected = Float64Array.from(evidence.points, (p) => dot(p.point, normal));
+      const projected = Float64Array.from(evidence.points, (p) =>
+        dot(p.point, normal),
+      );
       const witness = previous.groundedTargetScope?.boundaryWitness;
       const projection = groundedScopeProjection(
         evidence.points,
@@ -1985,7 +2274,8 @@ export function semanticPlaneScorer(
         if (defined(projected[i]) >= offset) {
           row.selected++;
           if (p.target) row.hit++;
-          if (p.scopeOverhangWitness) outside[p.view] = (outside[p.view] ?? 0) + 1;
+          if (p.scopeOverhangWitness)
+            outside[p.view] = (outside[p.view] ?? 0) + 1;
         } else if (!p.target) below[p.view] = (below[p.view] ?? 0) + 1;
       }
       groundedScope = groundedScopeForCut(
@@ -1998,7 +2288,7 @@ export function semanticPlaneScorer(
         groundedUncertainty,
         checkpoint,
       );
-      if (groundedScope.state !== 'TARGET_SCOPE_SUPPORTED') return undefined;
+      if (groundedScope.state !== "TARGET_SCOPE_SUPPORTED") return undefined;
     }
     let targetScope: PeerlessScopeEvidence | undefined;
     if (previous.targetScope && evidence.peers.length === 0) {
@@ -2013,8 +2303,15 @@ export function semanticPlaneScorer(
         checkpoint,
         charge,
       );
-      const projected = Float64Array.from(evidence.points, (p) => dot(p.point, normal));
-      const projection = peerlessScopeProjection(evidence.points, projected, checkpoint, charge);
+      const projected = Float64Array.from(evidence.points, (p) =>
+        dot(p.point, normal),
+      );
+      const projection = peerlessScopeProjection(
+        evidence.points,
+        projected,
+        checkpoint,
+        charge,
+      );
       const rows = emptyCounts(0),
         below = new Array<number>(6).fill(0),
         outsideSelected = new Array<number>(6).fill(0);
@@ -2026,7 +2323,8 @@ export function semanticPlaneScorer(
         if (defined(projected[i]) >= offset) {
           row.selected++;
           if (p.target) row.hit++;
-          if (p.scopeOverhangWitness) outsideSelected[p.view] = (outsideSelected[p.view] ?? 0) + 1;
+          if (p.scopeOverhangWitness)
+            outsideSelected[p.view] = (outsideSelected[p.view] ?? 0) + 1;
         } else if (!p.target) below[p.view] = (below[p.view] ?? 0) + 1;
       }
       targetScope = peerlessScopeForCut(
@@ -2041,7 +2339,7 @@ export function semanticPlaneScorer(
       );
       const trace = context?.synthesis?.get(part.id)?.peerless;
       if (trace) trace.scopeMilliseconds += Date.now() - scopeStart;
-      if (targetScope.state !== 'TARGET_SCOPE_SUPPORTED') return undefined;
+      if (targetScope.state !== "TARGET_SCOPE_SUPPORTED") return undefined;
     }
     const candidate = {
       normal,
@@ -2053,7 +2351,7 @@ export function semanticPlaneScorer(
     };
     if (!score.clean) {
       if (
-        previous.ownership.rule !== 'BEST_FEASIBLE_FUSED_ASSEMBLY' ||
+        previous.ownership.rule !== "BEST_FEASIBLE_FUSED_ASSEMBLY" ||
         !assemblyEligible(evidence, answer, part, candidate, []) ||
         score.recall < previous.ownership.targetRecall - 1e-9 ||
         score.purity < previous.ownership.semanticPurity - 1e-9 ||
@@ -2062,44 +2360,61 @@ export function semanticPlaneScorer(
         return undefined;
     }
     checkpoint();
-    const result = proposal(candidate, evidence, part, [], answer, checkpoint, (): void => {
-      bounded.telemetry.workUnits++;
-      bounded.charge();
-    });
+    const result = proposal(
+      candidate,
+      evidence,
+      part,
+      [],
+      answer,
+      checkpoint,
+      (): void => {
+        bounded.telemetry.workUnits++;
+        bounded.charge();
+      },
+    );
     return {
       ...result,
       ...(previous.structuralOwnership &&
-      previous.cut.normal.every((n, a) => Math.abs(n - (normal[a] ?? 0)) <= 1e-7) &&
+      previous.cut.normal.every(
+        (n, a) => Math.abs(n - (normal[a] ?? 0)) <= 1e-7,
+      ) &&
       Math.abs(dot(previous.cut.normal, previous.cut.origin) - offset) <= 1e-7
         ? { structuralOwnership: previous.structuralOwnership }
         : {}),
-      ...(previous.boundaryAmbiguity ? { boundaryAmbiguity: previous.boundaryAmbiguity } : {}),
+      ...(previous.boundaryAmbiguity
+        ? { boundaryAmbiguity: previous.boundaryAmbiguity }
+        : {}),
       ...(previous.provenance
         ? {
             provenance: {
               ...previous.provenance,
-              refined: Math.abs(dot(previous.cut.origin, normal) - offset) > 1e-8,
+              refined:
+                Math.abs(dot(previous.cut.origin, normal) - offset) > 1e-8,
             },
           }
         : {}),
       ...(previous.finalists ? { finalists: previous.finalists } : {}),
       candidates: previous.candidates,
-      ownership: { ...result.ownership, frontierCandidates: previous.ownership.frontierCandidates },
+      ownership: {
+        ...result.ownership,
+        frontierCandidates: previous.ownership.frontierCandidates,
+      },
     };
   };
 }
 function defined<T>(value: T | undefined): T {
-  if (value === undefined) throw Error('Required bounded geometry evidence is missing.');
+  if (value === undefined)
+    throw Error("Required bounded geometry evidence is missing.");
   return value;
 }
 export interface MajorSiblingConsistency {
-  readonly outcome: 'CONSISTENT' | 'IRRELEVANT' | 'CONTRADICTORY' | 'AMBIGUOUS';
+  readonly outcome: "CONSISTENT" | "IRRELEVANT" | "CONTRADICTORY" | "AMBIGUOUS";
   readonly siblings: readonly {
     readonly id: string;
     readonly splitAxes: number;
     readonly competingAxes: number;
     readonly nonCompetingAxes: number;
-    readonly ownership: 'NON_COMPETING' | 'COMPETING' | 'INSUFFICIENT_EVIDENCE';
+    readonly ownership: "NON_COMPETING" | "COMPETING" | "INSUFFICIENT_EVIDENCE";
     readonly views: readonly {
       readonly total: number;
       readonly selected: number;
@@ -2115,12 +2430,16 @@ export function majorSiblingConsistencyScorer(
   part: SemanticPart,
   checkpoint: Checkpoint,
   context?: PlaneOwnershipContext,
-): (cut: LocalPlaneProposal['cut']) => MajorSiblingConsistency {
+): (cut: LocalPlaneProposal["cut"]) => MajorSiblingConsistency {
   const evidence = observations(prepared, answer, part, checkpoint, context);
   const relevant = evidence.peers
     .flatMap((peer, index) => {
       checkpoint();
-      if (peer.part.parentId !== part.parentId || peer.part.importance !== 'major' || !peer.fused)
+      if (
+        peer.part.parentId !== part.parentId ||
+        peer.part.importance !== "major" ||
+        !peer.fused
+      )
         return [];
       const axes = new Set<number>();
       for (const [i, point] of evidence.points.entries()) {
@@ -2164,7 +2483,8 @@ export function majorSiblingConsistencyScorer(
         }
         if (point.rank !== dominant) continue;
         const row = defined(views[point.view]);
-        if (point.target && dot(point.point, cut.normal) >= offset) row.targetSelected++;
+        if (point.target && dot(point.point, cut.normal) >= offset)
+          row.targetSelected++;
         if (!(point.peerMask & (1 << index))) continue;
         row.total++;
         if (dot(point.point, cut.normal) >= offset) {
@@ -2179,7 +2499,10 @@ export function majorSiblingConsistencyScorer(
       let unresolvedOverlap = false;
       for (const [vi, row] of views.entries()) {
         checkpoint();
-        if (row.shared > 0 && row.shared / Math.max(1, row.targetSelected) > 0.1) {
+        if (
+          row.shared > 0 &&
+          row.shared / Math.max(1, row.targetSelected) > 0.1
+        ) {
           unresolvedOverlap = true;
           unresolvedAxes.add(Math.floor(vi / 2));
         }
@@ -2194,7 +2517,11 @@ export function majorSiblingConsistencyScorer(
           split.add(Math.floor(vi / 2));
         // Candidate-relative ownership: a broad peer mask cannot dilute shared target support.
         // Eight corroborating samples on each of two axes are required for a contradiction.
-        if (row.shared >= 8 && row.targetSelected >= 8 && row.shared / row.targetSelected > 0.1)
+        if (
+          row.shared >= 8 &&
+          row.targetSelected >= 8 &&
+          row.shared / row.targetSelected > 0.1
+        )
           competing.add(Math.floor(vi / 2));
       }
       // One occluded projection can contain another part's silhouette. It is
@@ -2204,10 +2531,11 @@ export function majorSiblingConsistencyScorer(
       const ownership =
         competing.size >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews ||
         split.size >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews
-          ? ('COMPETING' as const)
-          : unresolvedOverlap && nonCompeting.size < SEMANTIC_INTENT_LIMITS.minimumIndependentViews
-            ? ('INSUFFICIENT_EVIDENCE' as const)
-            : ('NON_COMPETING' as const);
+          ? ("COMPETING" as const)
+          : unresolvedOverlap &&
+              nonCompeting.size < SEMANTIC_INTENT_LIMITS.minimumIndependentViews
+            ? ("INSUFFICIENT_EVIDENCE" as const)
+            : ("NON_COMPETING" as const);
       return {
         id: peer.part.id,
         splitAxes: split.size,
@@ -2223,12 +2551,12 @@ export function majorSiblingConsistencyScorer(
           s.splitAxes >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews ||
           s.competingAxes >= SEMANTIC_INTENT_LIMITS.minimumIndependentViews,
       )
-        ? 'CONTRADICTORY'
-        : siblings.some((s) => s.ownership === 'INSUFFICIENT_EVIDENCE')
-          ? 'AMBIGUOUS'
+        ? "CONTRADICTORY"
+        : siblings.some((s) => s.ownership === "INSUFFICIENT_EVIDENCE")
+          ? "AMBIGUOUS"
           : siblings.length
-            ? 'CONSISTENT'
-            : 'IRRELEVANT',
+            ? "CONSISTENT"
+            : "IRRELEVANT",
       siblings,
     };
     cache.set(key, result);
