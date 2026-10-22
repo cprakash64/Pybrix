@@ -1416,7 +1416,22 @@ export function synthesizeSemanticPlane(
       }));
   }
   const beam: Candidate[] = [];
-  for (const c of peerlessEligible ?? eligible) {
+  const strongest = peerlessEligible?.[0];
+  // Sparse probes rank structure but do not establish two-sided section support.
+  // Keep a second existing offset of the strongest structural family before
+  // spending every remaining refinement on unrelated, weaker normal families.
+  // The unchanged full refinement and ownership gates still decide admission.
+  const alternate =
+    strongest &&
+    peerlessEligible?.find(
+      (c) =>
+        dot(c.normal, strongest.normal) > 0.999 && Math.abs(c.offset - strongest.offset) >= 1e-7,
+    );
+  const beamOrder =
+    strongest && alternate
+      ? [strongest, alternate, ...(peerlessEligible ?? [])]
+      : (peerlessEligible ?? eligible);
+  for (const c of beamOrder) {
     checkpoint();
     if (!beam.some((b) => dot(b.normal, c.normal) > 0.999 && Math.abs(b.offset - c.offset) < 1e-7))
       beam.push(c);
