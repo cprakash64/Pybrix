@@ -27,6 +27,25 @@ export interface PlaneCandidateProvenance {
 /** Compact diagnostics only: <=32 normal rows, six view rows and scalar counters.
  * No raster, source faces, per-offset scores or mesh buffers are retained here. */
 export interface PlaneSynthesisTrace {
+  interfaceOwnership?: {
+    readonly ownership: string;
+    readonly targetPixels: number;
+    readonly bodyPixels: number;
+    readonly unknownPixels: number;
+    readonly positiveFrontierProof: boolean;
+    readonly localSupport?: {
+      readonly viewPixels: readonly number[];
+      readonly observedAxes: readonly number[];
+      readonly frontier: number | null;
+      readonly interfaceLow: number;
+      readonly uncertainty: number;
+      readonly interfaceFaces: number;
+    };
+    readonly sourceFaceVisits: number;
+    clippedOperations: number;
+    ownershipComparisons: number;
+    readonly scratchBytes: number;
+  };
   phase:
     | 'INPUT_REFUSED'
     | 'TARGET_SAMPLES_REFUSED'

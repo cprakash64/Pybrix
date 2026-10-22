@@ -1,10 +1,13 @@
+import {
+  collectMaterialInterface,
+  interfaceMembershipSignature,
+  interfaceCorrespondsToPoint,
+  type MaterialInterface,
+} from './semantic-interface-membership';
 import { FRAME_FILL, type SemanticPart, type Vec3 } from '@cadfixer/auto-split-contract';
 import type { PreparedSemanticGeometry } from './semantic';
 import { pointInSemanticPolygon } from './semantic';
-import {
-  collectGroundedBoundaryWitnesses,
-  groundedSourceFaceNormal,
-} from './semantic-grounded-boundary';
+import { collectGroundedBoundaryWitnesses } from './semantic-grounded-boundary';
 import type { SuggestedPlane } from './suggestions';
 import type { Checkpoint } from './checkpoint';
 import type { InterfaceOwnership } from './semantic-boundary-confirmation';
@@ -21,6 +24,16 @@ export interface InterfaceOwnershipEvidence {
   readonly scratchBytes: number;
   readonly conflict: boolean;
   readonly positiveFrontierProof: boolean;
+  readonly localSupport?: {
+    readonly viewPixels: readonly number[];
+    readonly observedAxes: readonly number[];
+    readonly frontier: number | null;
+    readonly interfaceLow: number;
+    readonly uncertainty: number;
+    readonly interfaceFaces: number;
+  };
+  readonly materialInterface?: MaterialInterface;
+  readonly clippedOperations: number;
 }
 /** Inspect only original planar interface faces whose physical ownership differs between two
  * already-admitted candidates. Polygon absence supplies no negative evidence, including in an
@@ -51,47 +64,24 @@ export function interfaceOwnershipEvidence(
       (sum, n, axis) => sum + n * ((p[axis] ?? 0) - (plane.origin[axis] ?? 0)),
       0,
     );
-  for (let face = 0; face < geometry.faceCount; face++) {
-    chargeVisit();
-    if ((face & 255) === 0) checkpoint();
-    const normal = groundedSourceFaceNormal(geometry, face);
-    if (!normal.length) continue;
-    // A longitudinal sliver changed by ordinary plane positioning is not a shoulder ownership bit.
-    if (
-      !alternatives.every(
-        (cut) =>
-          Math.abs(cut.normal.reduce((s, n, a) => s + n * (normal.vector[a] ?? 0), 0)) /
-            normal.length >=
-          0.99,
-      )
-    )
-      continue;
-    const states = alternatives.map((cut) => {
-      let low = Infinity,
-        high = -Infinity;
-      for (let corner = 0; corner < 3; corner++) {
-        const i = (geometry.indices[face * 3 + corner] ?? 0) * 3;
-        const d = signed(cut, [
-          geometry.positions[i] ?? 0,
-          geometry.positions[i + 1] ?? 0,
-          geometry.positions[i + 2] ?? 0,
-        ]);
-        low = Math.min(low, d);
-        high = Math.max(high, d);
-      }
-      return low > 1e-7 ? 1 : high < -1e-7 ? -1 : 0;
+  const region = collectMaterialInterface(geometry, alternatives, checkpoint, chargeVisit);
+  if (region) {
+    surfaceArea = region.area;
+    const signatures = alternatives.map((c) =>
+      interfaceMembershipSignature(geometry, region, c, checkpoint, chargeVisit),
+    );
+    signatures.forEach((signature, i) => {
+      if (signature.ownership === 'TARGET_SIDE') selectedBy.add(i as 0 | 1);
     });
-    if (states[0] === 0 || states[1] === 0 || states[0] === states[1]) continue;
-    faces[face] = 1;
-    selectedBy.add(states[0] === 1 ? 0 : 1);
-    surfaceArea += normal.length / 2;
-    for (let corner = 0; corner < 3; corner++) {
-      const first = (geometry.indices[face * 3 + corner] ?? 0) * 3;
-      const projection = alternatives[0].normal.reduce(
-        (sum, n, a) => sum + n * (geometry.positions[first + a] ?? 0),
-        0,
-      );
-      interfaceLow = Math.min(interfaceLow, projection);
+    for (const face of region.faces) {
+      faces[face] = 1;
+      for (let corner = 0; corner < 3; corner++) {
+        const first = (geometry.indices[face * 3 + corner] ?? 0) * 3;
+        interfaceLow = Math.min(
+          interfaceLow,
+          region.normal.reduce((sum, n, a) => sum + n * (geometry.positions[first + a] ?? 0), 0),
+        );
+      }
     }
   }
   // With parallel hypotheses, preserving a corroborated positive target frontier behind EVERY
@@ -104,17 +94,28 @@ export function interfaceOwnershipEvidence(
       alternatives[0].normal.reduce((sum, n, a) => sum + n * (alternatives[1].normal[a] ?? 0), 0) -
         1,
     ) <= 1e-7;
+  const pixelUncertainty =
+    (2 * geometry.radius) / ((prepared.rasters[0]?.size ?? 512) * FRAME_FILL);
   const frontier = inspectFrontier
     ? collectGroundedBoundaryWitnesses(
         prepared,
         target,
-        [alternatives[0].normal],
+        [region!.normal],
         checkpoint,
         chargeVisit,
+        (point, normal) =>
+          signed({ normal, origin: [0, 0, 0] }, point) < interfaceLow - pixelUncertainty - 1e-8 &&
+          interfaceCorrespondsToPoint(
+            geometry,
+            region!,
+            point,
+            pixelUncertainty,
+            checkpoint,
+            chargeVisit,
+          ),
       )[0]
     : undefined;
-  const pixelUncertainty =
-    (2 * geometry.radius) / ((prepared.rasters[0]?.size ?? 512) * FRAME_FILL);
+
   const positiveFrontierProof = Boolean(
     frontier &&
     frontier.observedAxes.length >= 2 &&
@@ -152,13 +153,28 @@ export function interfaceOwnershipEvidence(
     targetPixels,
     bodyPixels,
     unknownPixels,
-    pixelVisits: workUnits - geometry.faceCount,
-    faceVisits: geometry.faceCount,
+    pixelVisits: workUnits,
+    faceVisits: region?.sourceFacesInspected ?? geometry.faceCount,
+    clippedOperations: (region?.clippedOperations ?? 0) + (region?.faces.length ?? 0) * 2,
     // The corroborated-frontier collector also owns one reusable raster visitation mask.
     scratchBytes:
       faces.byteLength +
+      (region?.scratchBytes ?? 0) +
       (inspectFrontier ? Math.max(0, ...prepared.rasters.map((r) => r.face.length)) : 0),
     conflict: (targetPixels > 0 || positiveFrontierProof) && bodyPixels > 0,
     positiveFrontierProof,
+    ...(region
+      ? {
+          materialInterface: region,
+          localSupport: {
+            viewPixels: frontier?.viewPixels ?? [],
+            observedAxes: frontier?.observedAxes ?? [],
+            frontier: frontier?.low ?? null,
+            interfaceLow,
+            uncertainty: pixelUncertainty,
+            interfaceFaces: region.faces.length,
+          },
+        }
+      : {}),
   };
 }

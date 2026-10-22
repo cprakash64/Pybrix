@@ -28,7 +28,8 @@ import {
   type PeerlessScopeEvidence,
 } from './semantic-peerless-scope';
 import { refineSemanticPlanes, type SemanticPlaneRefinement } from './semantic-plane';
-import { structuralSeamEvidence } from './semantic-seam';
+import { structuralSeamEvidence, seamSupportsPlane } from './semantic-seam';
+import { interfaceMembershipSignature } from './semantic-interface-membership';
 import { interfaceOwnershipEvidence } from './semantic-interface-ownership';
 import type { BoundaryAmbiguity } from './semantic-boundary-confirmation';
 import { probePeerlessSections } from './semantic-peerless-frontier';
@@ -1602,39 +1603,128 @@ export function synthesizeSemanticPlane(
       context.telemetry.boundaryOwnershipScratchBytes,
       ownership.scratchBytes,
     );
-    if (ownership.surfaceArea > 0 && ownership.interfaceSelectedAlternative === null)
-      winner = undefined;
-    if (ownership.surfaceArea > 0 && ownership.interfaceSelectedAlternative !== null) {
-      const included = ownership.interfaceSelectedAlternative;
+    trace.interfaceOwnership = {
+      ownership: ownership.ownership,
+      targetPixels: ownership.targetPixels,
+      bodyPixels: ownership.bodyPixels,
+      unknownPixels: ownership.unknownPixels,
+      positiveFrontierProof: ownership.positiveFrontierProof,
+      ...(ownership.localSupport ? { localSupport: ownership.localSupport } : {}),
+      sourceFaceVisits: ownership.faceVisits,
+      clippedOperations: ownership.clippedOperations,
+      ownershipComparisons: 0,
+      scratchBytes: ownership.scratchBytes,
+    };
+    const region = ownership.materialInterface;
+    if (region) {
+      // Class diversity is selected from the existing admitted bounded search, before native work.
+      // Intermediate assignments cannot stand in for a complete ownership class.
+      const representatives = new Map<'TARGET_SIDE' | 'BODY_SIDE', Candidate>();
+      const reference = cut(original);
+      const unrelated = (c: Candidate): number => {
+        let changes = 0;
+        const step = Math.max(
+          1,
+          Math.ceil(prepared.geometry.faceCount / LOCAL_PLANE_LIMITS.sectionFaces),
+        );
+        const interfaceFaces = new Set(region.faces);
+        for (let f = 0; f < prepared.geometry.faceCount; f += step) {
+          checkpoint();
+          charge();
+          if (interfaceFaces.has(f)) continue;
+          const i = (prepared.geometry.indices[f * 3] ?? 0) * 3;
+          const p: Vec3 = [
+            prepared.geometry.positions[i] ?? 0,
+            prepared.geometry.positions[i + 1] ?? 0,
+            prepared.geometry.positions[i + 2] ?? 0,
+          ];
+          if (dot(c.normal, p) >= c.offset !== dot(reference.normal, p) >= original.offset)
+            changes++;
+        }
+        return changes;
+      };
+      const distances = new Map<Candidate, number>();
+      for (const c of [...confirmed, ...eligible]) {
+        checkpoint();
+        charge();
+        if (
+          !seamSupportsPlane(
+            winningRefinement,
+            cut(c),
+            structuralSeamEvidence(winningRefinement, checkpoint),
+          )
+        )
+          continue;
+        const score = directScore(evidence, c.normal, c.offset, checkpoint, context);
+        if (
+          !score ||
+          !assemblyEligible(
+            evidence,
+            answer,
+            part,
+            { ...c, score },
+            candidates,
+            checkpoint,
+            charge,
+          ) ||
+          c.targetScope?.state !== 'TARGET_SCOPE_SUPPORTED'
+        )
+          continue;
+        if (trace.interfaceOwnership) {
+          trace.interfaceOwnership.ownershipComparisons++;
+          trace.interfaceOwnership.clippedOperations += region.faces.length;
+        }
+        const signature = interfaceMembershipSignature(
+          prepared.geometry,
+          region,
+          cut(c),
+          checkpoint,
+          charge,
+        );
+        if (signature.ownership === 'INTERMEDIATE') continue;
+        const changes = unrelated(c);
+        distances.set(c, changes);
+        const prior = representatives.get(signature.ownership);
+        if (
+          !prior ||
+          changes < (distances.get(prior) ?? Infinity) ||
+          (changes === distances.get(prior) &&
+            Math.abs(c.offset - original.offset) < Math.abs(prior.offset - original.offset))
+        )
+          representatives.set(signature.ownership, c);
+      }
+      const included = representatives.get('TARGET_SIDE'),
+        excluded = representatives.get('BODY_SIDE');
       if (ownership.conflict || !originalAdmitted) winner = undefined;
       else if (ownership.ownership !== 'AMBIGUOUS') {
-        ownershipResolved = true;
-        const selected = ownership.ownership === 'TARGET_SIDE' ? included : 1 - included;
-        if (selected === 0) {
-          winner = original;
-          confirmedRefinements.set(original, {
+        const selected = ownership.ownership === 'TARGET_SIDE' ? included : excluded;
+        if (selected) {
+          winner = selected;
+          ownershipResolved = true;
+          confirmedRefinements.set(selected, {
             ...winningRefinement,
-            cut: alternatives[0],
-            chosenOffset: dot(winningRefinement.profileNormal, alternatives[0].origin),
+            cut: cut(selected),
+            chosenOffset: dot(winningRefinement.profileNormal, cut(selected).origin),
           });
-        }
-      } else {
+        } else winner = undefined;
+      } else if (included && excluded) {
         boundaryAmbiguity = {
           targetId: part.id,
           route: 'STRUCTURAL_SEAM',
           interfaceOwnership: 'AMBIGUOUS',
           materialUnknownInterface: true,
-          hypotheses: alternatives.map((plane, index) => ({
-            plane,
-            ownershipClass: index === included ? 'TARGET_SIDE' : 'BODY_SIDE',
+          hypotheses: [included, excluded].map((c, index) => ({
+            plane: cut(c),
+            ownershipClass: index === 0 ? 'TARGET_SIDE' : 'BODY_SIDE',
             semanticAdmission: true,
             preservesPositiveEvidence: true,
             respectsKnownOwnership: true,
           })),
         };
-      }
-    }
+      } else winner = undefined;
+    } else winner = undefined;
   }
+
   if (winner) peerlessRefinement = confirmedRefinements.get(winner);
   if (winner) trace.phase = 'PROPOSAL';
   if (trace.peerless) trace.peerless.phase = 'COMPLETE';

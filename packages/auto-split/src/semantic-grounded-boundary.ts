@@ -55,6 +55,7 @@ export function collectGroundedBoundaryWitnesses(
   frame: readonly Vec3[],
   checkpoint: Checkpoint,
   charge: () => void,
+  accepts?: (point: Vec3, normal: Vec3) => boolean,
 ): readonly GroundedBoundaryWitness[] {
   const directions = frame.slice(0, GROUNDED_BOUNDARY_LIMITS.directions);
   const rows = directions.map(() =>
@@ -137,6 +138,7 @@ export function collectGroundedBoundaryWitnesses(
               GROUNDED_BOUNDARY_LIMITS.maximumAxialFaceAlignment
             )
               continue;
+            if (accepts && !accepts(point, normal)) continue;
             const row = rows[i]?.[vi];
             if (!row) continue;
             const value = dot(point, normal);
