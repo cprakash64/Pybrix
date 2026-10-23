@@ -1,3 +1,4 @@
+import type { NormalizedGeometry } from "./geometry";
 import { semanticExecutionEligibility } from "./semantic-execution-eligibility";
 import { sameSemanticPlane } from "./semantic-native";
 import {
@@ -59,6 +60,68 @@ import {
   groundedSourceFrame,
   type GroundedTargetScopeEvidence,
 } from "./semantic-grounded-scope";
+/** Bind a replacement to its measured section, retaining only the shared absolute source profile.
+ * This measures one existing plane; it creates no candidate or refinement samples. */
+export function bindRepresentativeRefinement(
+  geometry: NormalizedGeometry,
+  profile: SemanticPlaneRefinement,
+  cut: NonNullable<SemanticPart['cut']>,
+  checkpoint: Checkpoint,
+  charge: () => void,
+): SemanticPlaneRefinement {
+  checkpoint();
+  const offset = dot(profile.profileNormal, cut.origin);
+  const exactNormal = [1, -1].some((sign) =>
+    profile.profileNormal.every((n, i) => Math.abs(n - sign * (cut.normal[i] ?? 0)) <= 1e-12),
+  );
+  const sample = exactNormal
+    ? profile.sectionProfile.find((row) => Math.abs(row.offset - offset) <= 1e-12)
+    : undefined;
+  let length = sample?.length ?? 0;
+  if (!sample) {
+    const planeOffset = dot(cut.normal, cut.origin);
+    for (let face = 0; face < geometry.faceCount; face++) {
+      if ((face & 255) === 0) checkpoint();
+      charge();
+      const points = [0, 1, 2].map((k) => {
+        const i = (geometry.indices[face * 3 + k] ?? 0) * 3;
+        return [
+          geometry.positions[i] ?? 0,
+          geometry.positions[i + 1] ?? 0,
+          geometry.positions[i + 2] ?? 0,
+        ] as Vec3;
+      });
+      const distances = points.map((p) => dot(cut.normal, p) - planeOffset);
+      let first: Vec3 | undefined;
+      for (let edge = 0; edge < 3; edge++) {
+        const next = (edge + 1) % 3,
+          a = distances[edge]!,
+          b = distances[next]!;
+        if (a >= 0 === b >= 0) continue;
+        const point = points[edge]!.map(
+          (x, i) => x + (a / (a - b)) * (points[next]![i]! - x),
+        ) as unknown as Vec3;
+        if (!first) first = point;
+        else {
+          length += Math.hypot(...point.map((x, i) => x - first![i]!));
+          break;
+        }
+      }
+    }
+  }
+  checkpoint();
+  return {
+    cut,
+    proposedOffset: offset,
+    chosenOffset: offset,
+    proposedSectionLength: length,
+    chosenSectionLength: length,
+    samples: profile.samples,
+    profileNormal: profile.profileNormal,
+    sectionProfile: profile.sectionProfile,
+  };
+}
+
 export const LOCAL_PLANE_LIMITS = Object.freeze({
   sampleStride: 16,
   normals: 32,
@@ -2003,14 +2066,21 @@ export function synthesizeSemanticPlane(
         if (selected) {
           winner = selected;
           ownershipResolved = true;
-          confirmedRefinements.set(selected, {
-            ...winningRefinement,
-            cut: cut(selected),
-            chosenOffset: dot(
-              winningRefinement.profileNormal,
-              cut(selected).origin,
-            ),
-          });
+          // A confirmed representative already owns a complete profile. A raw
+          // representative must bind its actual section instead of inheriting the
+          // discarded winner's minimum length or shoulder evidence.
+          if (!confirmedRefinements.has(selected)) {
+            confirmedRefinements.set(
+              selected,
+              bindRepresentativeRefinement(
+                prepared.geometry,
+                winningRefinement,
+                cut(selected),
+                checkpoint,
+                charge,
+              ),
+            );
+          }
         } else winner = undefined;
       } else if (included && excluded) {
         // One spare native slot may use an existing completed refinement of the SAME

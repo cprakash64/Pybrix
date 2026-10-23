@@ -7,12 +7,90 @@ import {
 import { FRAME_FILL, type SemanticPart, type Vec3 } from '@cadfixer/auto-split-contract';
 import type { PreparedSemanticGeometry } from './semantic';
 import { pointInSemanticPolygon } from './semantic';
-import { collectGroundedBoundaryWitnesses } from './semantic-grounded-boundary';
+import { VIEW_NAMES } from '@cadfixer/auto-split-contract';
+import {
+  GROUNDED_BOUNDARY_LIMITS,
+  collectGroundedBoundaryWitnesses,
+} from './semantic-grounded-boundary';
 import type { SuggestedPlane } from './suggestions';
 import type { Checkpoint } from './checkpoint';
 import type { InterfaceOwnership } from './semantic-boundary-confirmation';
 
+export interface InterfaceObservationSupport {
+  readonly view: (typeof VIEW_NAMES)[number];
+  readonly visiblePixels: number;
+  readonly targetPixels: number;
+  readonly bodyPixels: number;
+  readonly unknownPixels: number;
+}
+
+/** Whole-interface proof needs exhaustive direct coverage or independent observations.
+ * The existing grounded-boundary pixel floor counts observations, not coverage fractions.
+ * An unlabeled observation supplies neither BODY evidence nor a contradiction. */
+export function classifyInterfaceOwnershipSupport(
+  observations: readonly InterfaceObservationSupport[],
+  positiveFrontierProof: boolean,
+): {
+  readonly ownership: InterfaceOwnership;
+  readonly conflict: boolean;
+  readonly category:
+    | 'DIRECT_EXHAUSTIVE'
+    | 'DIRECT_CORROBORATED'
+    | 'FRONTIER_CORROBORATED'
+    | 'SPARSE_UNCORROBORATED'
+    | 'CONFLICTED'
+    | 'UNKNOWN';
+  readonly targetAxes: readonly number[];
+  readonly bodyAxes: readonly number[];
+} {
+  const pixels = (key: 'targetPixels' | 'bodyPixels' | 'unknownPixels'): number =>
+    observations.reduce((sum, row) => sum + row[key], 0);
+  const target = pixels('targetPixels'),
+    body = pixels('bodyPixels'),
+    unknown = pixels('unknownPixels');
+  const axes = (key: 'targetPixels' | 'bodyPixels'): number[] =>
+    [0, 1, 2].filter((axis) =>
+      observations.some(
+        (row) =>
+          Math.floor(VIEW_NAMES.indexOf(row.view) / 2) === axis &&
+          row[key] >= GROUNDED_BOUNDARY_LIMITS.minimumPixels,
+      ),
+    );
+  const targetAxes = axes('targetPixels'),
+    bodyAxes = axes('bodyPixels');
+  const conflict = (target > 0 || positiveFrontierProof) && body > 0;
+  const exhaustive = unknown === 0 && (target > 0 || body > 0);
+  const directTarget = target > 0 && (exhaustive || targetAxes.length >= 2);
+  const directBody = body > 0 && (exhaustive || bodyAxes.length >= 2);
+  const ownership: InterfaceOwnership = conflict
+    ? 'AMBIGUOUS'
+    : positiveFrontierProof || directTarget
+      ? 'TARGET_SIDE'
+      : directBody
+        ? 'BODY_SIDE'
+        : 'AMBIGUOUS';
+  return {
+    ownership,
+    conflict,
+    targetAxes,
+    bodyAxes,
+    category: conflict
+      ? 'CONFLICTED'
+      : positiveFrontierProof
+        ? 'FRONTIER_CORROBORATED'
+        : exhaustive
+          ? 'DIRECT_EXHAUSTIVE'
+          : directTarget || directBody
+            ? 'DIRECT_CORROBORATED'
+            : target > 0 || body > 0
+              ? 'SPARSE_UNCORROBORATED'
+              : 'UNKNOWN',
+  };
+}
+
 export interface InterfaceOwnershipEvidence {
+  readonly observations?: readonly InterfaceObservationSupport[];
+  readonly support?: ReturnType<typeof classifyInterfaceOwnershipSupport>;
   readonly interfaceSelectedAlternative: 0 | 1 | null;
   readonly ownership: InterfaceOwnership;
   readonly surfaceArea: number;
@@ -123,7 +201,12 @@ export function interfaceOwnershipEvidence(
     frontier.observedAxes.length >= 2 &&
     frontier.low < interfaceLow - pixelUncertainty - 1e-8,
   );
+  const observations: InterfaceObservationSupport[] = [];
   for (const raster of prepared.rasters) {
+    let visible = 0,
+      viewTarget = 0,
+      viewBody = 0,
+      viewUnknown = 0;
     const targetRegions = target.views.filter((r) => r.view === raster.view);
     const bodyRegions = peers.flatMap((p) => p.views.filter((r) => r.view === raster.view));
     for (let i = 0; i < raster.face.length; i++) {
@@ -131,26 +214,41 @@ export function interfaceOwnershipEvidence(
       if ((i & 1023) === 0) checkpoint();
       const face = raster.face[i] ?? -1;
       if (face < 0 || !faces[face]) continue;
+      visible++;
       const x = ((i % raster.size) + 0.5) / raster.size;
       const y = (Math.floor(i / raster.size) + 0.5) / raster.size;
       const contains = (regions: SemanticPart['views']): boolean =>
         regions.some((r) => r.polygons.some((p) => pointInSemanticPolygon(x, y, p)));
       const ownedTarget = contains(targetRegions),
         ownedBody = contains(bodyRegions);
-      if (ownedTarget) targetPixels++;
-      if (ownedBody) bodyPixels++;
-      if (!ownedTarget && !ownedBody) unknownPixels++;
+      if (ownedTarget) {
+        targetPixels++;
+        viewTarget++;
+      }
+      if (ownedBody) {
+        bodyPixels++;
+        viewBody++;
+      }
+      if (!ownedTarget && !ownedBody) {
+        unknownPixels++;
+        viewUnknown++;
+      }
     }
+    observations.push({
+      view: raster.view,
+      visiblePixels: visible,
+      targetPixels: viewTarget,
+      bodyPixels: viewBody,
+      unknownPixels: viewUnknown,
+    });
   }
   checkpoint();
+  const support = classifyInterfaceOwnershipSupport(observations, positiveFrontierProof);
   return {
+    observations,
+    support,
     interfaceSelectedAlternative: selectedBy.size === 1 ? (selectedBy.has(0) ? 0 : 1) : null,
-    ownership:
-      (targetPixels > 0 || positiveFrontierProof) && bodyPixels === 0
-        ? 'TARGET_SIDE'
-        : bodyPixels > 0 && targetPixels === 0 && !positiveFrontierProof
-          ? 'BODY_SIDE'
-          : 'AMBIGUOUS',
+    ownership: support.ownership,
     surfaceArea,
     targetPixels,
     bodyPixels,
@@ -163,7 +261,7 @@ export function interfaceOwnershipEvidence(
       faces.byteLength +
       (region?.scratchBytes ?? 0) +
       (inspectFrontier ? Math.max(0, ...prepared.rasters.map((r) => r.face.length)) : 0),
-    conflict: (targetPixels > 0 || positiveFrontierProof) && bodyPixels > 0,
+    conflict: support.conflict,
     positiveFrontierProof,
     ...(region
       ? {
