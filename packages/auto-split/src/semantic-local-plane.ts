@@ -1897,6 +1897,7 @@ export function synthesizeSemanticPlane(
     const region = ownership.materialInterface;
     if (
       region &&
+      structuralOwnership.ownershipCompleteness?.state === "COMPLETE" &&
       structuralOwnership.state !== "MULTIWAY_UNRESOLVED" &&
       structuralOwnership.state !== "INSUFFICIENT_EVIDENCE"
     ) {
@@ -2115,15 +2116,20 @@ export function synthesizeSemanticPlane(
         structuralOwnership = {
           ...structuralOwnership,
           state: "INSUFFICIENT_EVIDENCE",
-          reason: "COMPLETE_OWNERSHIP_REPRESENTATIVES_UNAVAILABLE",
+          primaryCause:
+            structuralOwnership.primaryCause ?? structuralOwnership.reason,
+          finalAvailabilityReason:
+            "COMPLETE_OWNERSHIP_REPRESENTATIVES_UNAVAILABLE",
+          reason: structuralOwnership.reason,
           unresolvedClasses: null,
         };
       winner = undefined;
     }
     trace.ownershipCardinality = structuralOwnership;
     if (
-      structuralOwnership.state !== "IDENTIFIED" &&
-      structuralOwnership.state !== "TWO_WAY_UNRESOLVED"
+      structuralOwnership.ownershipCompleteness?.state !== "COMPLETE" ||
+      (structuralOwnership.state !== "IDENTIFIED" &&
+        structuralOwnership.state !== "TWO_WAY_UNRESOLVED")
     )
       winner = undefined;
   }

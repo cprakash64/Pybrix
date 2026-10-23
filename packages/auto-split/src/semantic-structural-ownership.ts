@@ -1,3 +1,11 @@
+import {
+  inventorySourceInterfacePlanes,
+  ownershipCompleteness,
+  resolveOwnershipInterface,
+  exhaustiveOwnershipPublication,
+  type OwnershipCompleteness,
+  type OwnershipInterfaceResolution,
+} from "./semantic-ownership-completeness";
 import type { SemanticPart, Vec3 } from "@cadfixer/auto-split-contract";
 import type { PreparedSemanticGeometry } from "./semantic";
 import type { Checkpoint } from "./checkpoint";
@@ -8,6 +16,8 @@ import {
 } from "./semantic-grounded-boundary";
 import {
   interfaceTriangleFraction,
+  completeSourceInterface,
+  type SourceInterfaceCompletionTelemetry,
   interfaceMembershipSignature,
   type MaterialInterface,
 } from "./semantic-interface-membership";
@@ -30,6 +40,10 @@ export type StructuralOwnershipState =
 export interface StructuralOwnershipCardinality {
   readonly state: StructuralOwnershipState;
   readonly reason: string;
+  readonly ownershipCompleteness?: OwnershipCompleteness;
+  readonly primaryCause?: string;
+  readonly finalAvailabilityReason?: string;
+  readonly interfaceCompletion?: readonly SourceInterfaceCompletionTelemetry[];
   readonly materialInterfaces: number;
   readonly interfaceComponents: number;
   readonly unresolvedClasses: number | null;
@@ -90,6 +104,8 @@ export function structuralOwnershipCardinality(
     relevantInterfaces = 0,
     irrelevantInterfaces = 0;
   const signatures: TargetOwnershipSignature[] = [];
+  let completeness: OwnershipCompleteness | undefined;
+  const completions: SourceInterfaceCompletionTelemetry[] = [];
   const result = (
     state: StructuralOwnershipState,
     reason: string,
@@ -100,6 +116,8 @@ export function structuralOwnershipCardinality(
     cardinality: {
       state,
       reason,
+      ownershipCompleteness: completeness ?? ownershipCompleteness([], reason),
+      interfaceCompletion: completions,
       materialInterfaces: interfaces,
       interfaceComponents: interfaces,
       unresolvedClasses: classes,
@@ -164,50 +182,42 @@ export function structuralOwnershipCardinality(
     clippedOperations++;
     return interfaceTriangleFraction(g, f, cut);
   };
-  const groups: { offset: number; faces: number[]; area: number }[] = [];
-  for (let f = 0; f < g.faceCount; f++) {
-    if ((f & 255) === 0) checkpoint();
-    charge();
-    sourceFaceVisits++;
-    const n = groundedSourceFaceNormal(g, f);
-    if (!n.length || (orientation * dot(n.vector, normal)) / n.length < 0.99)
-      continue;
-    let low = Infinity,
-      high = -Infinity;
-    for (const cut of candidates) {
-      const x = fraction(f, cut);
-      low = Math.min(low, x);
-      high = Math.max(high, x);
-      if (high - low > TOLERANCE) break;
-    }
-    if (high - low <= TOLERANCE) continue;
-    const vertices = [vertex(f, 0), vertex(f, 1), vertex(f, 2)],
-      offset = vertices.reduce((s, v) => s + dot(normal, v), 0) / 3;
-    if (
-      vertices.some((v) => Math.abs(dot(normal, v) - offset) > CORRESPONDENCE)
-    )
-      return result(
-        "INSUFFICIENT_EVIDENCE",
-        "NONPLANAR_MEMBERSHIP_DELTA",
-        groups.length,
-        null,
-      );
-    if (!groups.some((v) => Math.abs(v.offset - offset) <= CORRESPONDENCE)) {
-      if (groups.length >= SEMANTIC_PLANE_REFINEMENT_LIMITS.shoulderPlanes)
-        return result(
-          "INSUFFICIENT_EVIDENCE",
-          "INTERFACE_FEATURE_CAP",
-          groups.length,
-          null,
-        );
-      groups.push({ offset, faces: [], area: 0 });
-    }
-  }
+  const sourceRank = prepared.labelling.faceRank[first ?? -1];
+  if (sourceRank === undefined)
+    return result(
+      "INSUFFICIENT_EVIDENCE",
+      "TRANSITION_SOURCE_CORRESPONDENCE_UNAVAILABLE",
+      0,
+      null,
+    );
+  const inventory = inventorySourceInterfacePlanes(
+    g,
+    normal,
+    orientation,
+    prepared.labelling.faceRank,
+    sourceRank,
+    checkpoint,
+    charge,
+  );
+  sourceFaceVisits += inventory.sourceFaceVisits;
+  if (!inventory.valid)
+    return result(
+      "INSUFFICIENT_EVIDENCE",
+      inventory.reason,
+      inventory.groups.length,
+      null,
+    );
+  const groups = inventory.groups.map((row) => ({
+    offset: row.offset,
+    faces: [] as number[],
+    area: 0,
+  }));
   let retained = 0;
   for (let f = 0; f < g.faceCount; f++) {
     if ((f & 255) === 0) checkpoint();
     charge();
     sourceFaceVisits++;
+    if (prepared.labelling.faceRank[f] !== sourceRank) continue;
     const n = groundedSourceFaceNormal(g, f);
     if (
       !n.length ||
@@ -240,6 +250,33 @@ export function structuralOwnershipCardinality(
     group.faces.push(f);
     group.area += n.length / 2;
   }
+  const componentFaces =
+    prepared.labelling.count > 1
+      ? Array.from({ length: g.faceCount }, (_, f) => f).filter(
+          (f) => prepared.labelling.faceRank[f] === sourceRank,
+        )
+      : undefined;
+  const componentGeometry = componentFaces
+    ? {
+        ...g,
+        faceCount: componentFaces.length,
+        indices: Uint32Array.from(
+          componentFaces.flatMap((f) => [
+            g.indices[f * 3] ?? 0,
+            g.indices[f * 3 + 1] ?? 0,
+            g.indices[f * 3 + 2] ?? 0,
+          ]),
+        ),
+      }
+    : g;
+  const componentIndex = componentFaces
+    ? new Map(componentFaces.map((f, i) => [f, i]))
+    : undefined;
+  scratchBytes = Math.max(
+    scratchBytes,
+    componentFaces ? componentFaces.length * 28 : 0,
+  );
+  let completedRetained = 0;
   const evidenceRows: {
     region: MaterialInterface;
     evidence: InterfaceOwnershipEvidence;
@@ -249,52 +286,56 @@ export function structuralOwnershipCardinality(
   const bandLow = Math.min(...refinement.sectionProfile.map((p) => p.offset)),
     bandHigh = Math.max(...refinement.sectionProfile.map((p) => p.offset));
   for (const group of groups) {
-    const parent = group.faces.map((_, i) => i),
-      edges = new Map<string, number>();
-    const root = (i: number): number => {
-      while (parent[i] !== i) {
-        checkpoint();
-        i = parent[i] ?? i;
-      }
-      return i;
-    };
-    let low = Infinity,
-      high = -Infinity;
-    for (const [i, f] of group.faces.entries()) {
-      checkpoint();
-      charge();
-      sourceFaceVisits++;
-      const keys = [0, 1, 2].map((k) => {
-        const p = vertex(f, k),
-          d = dot(refinement.profileNormal, p);
-        low = Math.min(low, d);
-        high = Math.max(high, d);
-        return p.map((x) => (x === 0 ? 0 : x)).join(",");
-      });
-      for (let k = 0; k < 3; k++) {
-        const a = keys[k] ?? "",
-          b = keys[(k + 1) % 3] ?? "",
-          key = a < b ? a + "|" + b : b + "|" + a,
-          previous = edges.get(key);
-        if (previous === undefined) edges.set(key, i);
-        else parent[root(i)] = root(previous);
-      }
-    }
-    // Declared storage bound, never a measured allocator/heap-memory claim.
-    scratchBytes = Math.max(scratchBytes, retained * 20 + edges.size * 160);
-    if (!group.faces.length || group.faces.some((_, i) => root(i) !== root(0)))
+    const completion = completeSourceInterface(
+      componentGeometry,
+      normal,
+      group.offset,
+      componentIndex
+        ? group.faces.map((f) => componentIndex.get(f)!)
+        : group.faces,
+      checkpoint,
+      charge,
+    );
+    completions.push(completion.telemetry);
+    sourceFaceVisits += completion.telemetry.sourceFaceVisits;
+    if (!completion.valid)
       return result(
         "INSUFFICIENT_EVIDENCE",
-        "DISCONNECTED_MEMBERSHIP_DELTA",
+        completion.reason,
         groups.length,
         null,
       );
+    const completedFaces = componentFaces
+      ? completion.faces.map((f) => componentFaces[f]!)
+      : completion.faces;
+    completedRetained += completedFaces.length;
+    if (completedRetained > FACE_LIMIT)
+      return result(
+        "INSUFFICIENT_EVIDENCE",
+        "INTERFACE_FACE_CAP",
+        groups.length,
+        null,
+      );
+    const low = Math.min(
+        ...completedFaces.flatMap((f) =>
+          [0, 1, 2].map((k) => dot(refinement.profileNormal, vertex(f, k))),
+        ),
+      ),
+      high = Math.max(
+        ...completedFaces.flatMap((f) =>
+          [0, 1, 2].map((k) => dot(refinement.profileNormal, vertex(f, k))),
+        ),
+      );
+    scratchBytes = Math.max(scratchBytes, completion.scratchBytes);
     const collected: MaterialInterface = {
-      ...group,
+      faces: completedFaces,
+      area: completion.area,
       normal,
+      offset: group.offset,
       sourceFacesInspected: sourceFaceVisits,
       clippedOperations,
       scratchBytes,
+      completion: completion.telemetry,
     };
     const evidence =
       region && Math.abs(group.offset - region.offset) <= CORRESPONDENCE
@@ -309,13 +350,6 @@ export function structuralOwnershipCardinality(
             collected,
           );
     pixelVisits += evidence.pixelVisits;
-    if (evidence.conflict)
-      return result(
-        "INSUFFICIENT_EVIDENCE",
-        "CONTRADICTORY_INTERFACE_OWNERSHIP",
-        groups.length,
-        null,
-      );
     evidenceRows.push({ region: collected, evidence, low, high });
   }
   const local = evidenceRows.filter(
@@ -340,6 +374,8 @@ export function structuralOwnershipCardinality(
   )[0];
   pixelVisits += witness?.pixelVisits ?? 0;
   const relevant: typeof evidenceRows = [];
+  const resolutions: OwnershipInterfaceResolution[] = [];
+  let nonlocalUnresolved = false;
   for (const row of evidenceRows) {
     const sourceRank =
       prepared.labelling.faceRank[primaryRow.region.faces[0] ?? -1];
@@ -356,7 +392,26 @@ export function structuralOwnershipCardinality(
       transitionCandidates.every((cut) =>
         row.region.faces.every((f) => fraction(f, cut) >= 1 - TOLERANCE),
       );
-    if (row.evidence.ownership === "AMBIGUOUS" && invariantTarget) {
+    const physical = candidates.map(
+      (cut) =>
+        interfaceMembershipSignature(g, row.region, cut, checkpoint, charge)
+          .ownership,
+    );
+    membershipComparisons += candidates.length;
+    clippedOperations += candidates.length * row.region.faces.length;
+    const resolution = resolveOwnershipInterface(
+      row.evidence.ownership,
+      row.evidence.conflict,
+      Boolean(invariantTarget),
+      physical.includes("TARGET_SIDE"),
+      physical.includes("BODY_SIDE"),
+    );
+    resolutions.push({
+      offset: row.region.offset,
+      faces: row.region.faces.length,
+      resolution,
+    });
+    if (resolution === "PROVEN_IRRELEVANT") {
       irrelevantInterfaces++;
       continue;
     }
@@ -364,14 +419,25 @@ export function structuralOwnershipCardinality(
     relevantInterfaces++;
     // Unknown upstream/other-transition source variation is not absence-based BODY proof.
     if (row !== primaryRow && row.evidence.ownership === "AMBIGUOUS")
-      return result(
-        "INSUFFICIENT_EVIDENCE",
-        "NONLOCAL_UNRESOLVED_TARGET_OWNERSHIP",
-        groups.length,
-        null,
-        primaryRow.evidence,
-      );
+      nonlocalUnresolved = true;
   }
+  completeness = ownershipCompleteness(resolutions);
+  if (completeness.state !== "COMPLETE")
+    return result(
+      "INSUFFICIENT_EVIDENCE",
+      completeness.reason,
+      groups.length,
+      null,
+      primaryRow.evidence,
+    );
+  if (nonlocalUnresolved)
+    return result(
+      "INSUFFICIENT_EVIDENCE",
+      "NONLOCAL_UNRESOLVED_TARGET_OWNERSHIP",
+      groups.length,
+      null,
+      primaryRow.evidence,
+    );
   for (const [candidate, cut] of candidates.entries()) {
     const assignment: ("TARGET_SIDE" | "BODY_SIDE" | "INTERMEDIATE")[] = [];
     let complete = true;
@@ -419,7 +485,10 @@ export function structuralOwnershipCardinality(
       classes,
       primaryRow.evidence,
     );
-  if (classes === 2)
+  if (
+    classes === 2 &&
+    exhaustiveOwnershipPublication(completeness, classes, false)
+  )
     return result(
       "TWO_WAY_UNRESOLVED",
       "TWO_COMPLETE_TARGET_OWNERSHIP_SIGNATURES",
@@ -490,6 +559,10 @@ export function structuralNeckOwnershipCardinality(
     reason: variable
       ? "MATERIAL_INTERFACE_IN_NECK_INTERVAL"
       : "SUPPORTED_NECK_WITH_NO_MATERIAL_INTERFACE",
+    ownershipCompleteness: ownershipCompleteness(
+      [],
+      variable ? "MATERIAL_INTERFACE_IN_NECK_INTERVAL" : undefined,
+    ),
     materialInterfaces: variable ? 1 : 0,
     interfaceComponents: 0,
     unresolvedClasses: variable ? null : 1,

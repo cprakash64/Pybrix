@@ -56,7 +56,145 @@ export interface MaterialInterface {
   readonly sourceFacesInspected: number;
   readonly clippedOperations: number;
   readonly scratchBytes: number;
+  readonly completion?: SourceInterfaceCompletionTelemetry;
 }
+export interface SourceInterfaceCompletionTelemetry {
+  readonly seedFaces: number;
+  readonly candidateFaces: number;
+  readonly completedFaces: number;
+  readonly adjacencyTraversals: number;
+  readonly sourceFaceVisits: number;
+}
+export type SourceInterfaceCompletion =
+  | {
+      readonly valid: true;
+      readonly faces: readonly number[];
+      readonly area: number;
+      readonly scratchBytes: number;
+      readonly telemetry: SourceInterfaceCompletionTelemetry;
+    }
+  | {
+      readonly valid: false;
+      readonly reason:
+        | 'INTERFACE_FACE_CAP'
+        | 'INTERFACE_SEED_UNAVAILABLE'
+        | 'OPPOSED_INTERFACE_ORIENTATION'
+        | 'AMBIGUOUS_SOURCE_ADJACENCY'
+        | 'DISCONNECTED_MEMBERSHIP_DELTA';
+      readonly telemetry: SourceInterfaceCompletionTelemetry;
+    };
+/** Strict normals identify seeds; complete membership follows exact original-source edges.
+ * Every completion vertex must correspond to the SAME fitted plane. Normal sign preserves winding;
+ * a local normal's angular accuracy cannot remove an otherwise corresponding tiny source triangle.
+ * All eligible components are retained for the connectivity check: none is silently discarded. */
+export function completeSourceInterface(
+  g: NormalizedGeometry,
+  normal: Vec3,
+  offset: number,
+  seeds: readonly number[],
+  checkpoint: Checkpoint,
+  charge: () => void,
+): SourceInterfaceCompletion {
+  let visits = 0,
+    traversals = 0,
+    completed = 0;
+  const eligible: number[] = [],
+    faceEdges: string[][] = [],
+    edges = new Map<string, number[]>();
+  const telemetry = (): SourceInterfaceCompletionTelemetry => ({
+    seedFaces: seeds.length,
+    candidateFaces: eligible.length,
+    completedFaces: completed,
+    adjacencyTraversals: traversals,
+    sourceFaceVisits: visits,
+  });
+  const refuse = (
+    reason: Extract<SourceInterfaceCompletion, { valid: false }>['reason'],
+  ): SourceInterfaceCompletion => ({ valid: false, reason, telemetry: telemetry() });
+  const first = seeds[0];
+  if (first === undefined) return refuse('INTERFACE_SEED_UNAVAILABLE');
+  const seedNormal = groundedSourceFaceNormal(g, first);
+  const orientation = Math.sign(dot(seedNormal.vector, normal));
+  if (!orientation) return refuse('OPPOSED_INTERFACE_ORIENTATION');
+  const keys = (f: number): string[] => {
+    const vertices = [0, 1, 2].map((k) =>
+      vertex(g, f, k)
+        .map((x) => (x === 0 ? 0 : x))
+        .join(','),
+    );
+    return vertices.map((a, k) => {
+      const b = vertices[(k + 1) % 3]!;
+      return a < b ? a + '|' + b : b + '|' + a;
+    });
+  };
+  let surface = 0;
+  for (let f = 0; f < g.faceCount; f++) {
+    if ((f & 255) === 0) checkpoint();
+    charge();
+    visits++;
+    if ([0, 1, 2].some((k) => Math.abs(dot(normal, vertex(g, f, k)) - offset) > CORRESPONDENCE))
+      continue;
+    const n = groundedSourceFaceNormal(g, f);
+    if (!n.length || orientation * dot(n.vector, normal) <= 0)
+      return refuse('OPPOSED_INTERFACE_ORIENTATION');
+    if (eligible.length >= FACE_LIMIT) return refuse('INTERFACE_FACE_CAP');
+    const index = eligible.length;
+    eligible.push(f);
+    surface += n.length / 2;
+    const row = keys(f);
+    faceEdges.push(row);
+    for (const edge of row) {
+      const adjacent = edges.get(edge) ?? [];
+      adjacent.push(index);
+      if (adjacent.length > 2) return refuse('AMBIGUOUS_SOURCE_ADJACENCY');
+      edges.set(edge, adjacent);
+    }
+  }
+  // A third original face on an eligible edge is ambiguous even if that face lies off-plane.
+  const incidences = new Map<string, number>();
+  for (let f = 0; f < g.faceCount; f++) {
+    if ((f & 255) === 0) checkpoint();
+    charge();
+    visits++;
+    for (const edge of keys(f))
+      if (edges.has(edge)) {
+        const count = (incidences.get(edge) ?? 0) + 1;
+        if (count > 2) return refuse('AMBIGUOUS_SOURCE_ADJACENCY');
+        incidences.set(edge, count);
+      }
+  }
+  const start = eligible.indexOf(first);
+  const eligibleSet = new Set(eligible);
+  if (start < 0 || seeds.some((f) => !eligibleSet.has(f)))
+    return refuse('INTERFACE_SEED_UNAVAILABLE');
+  const seen = new Uint8Array(eligible.length),
+    pending = [start];
+  seen[start] = 1;
+  while (pending.length) {
+    checkpoint();
+    charge();
+    const i = pending.pop()!;
+    completed++;
+    for (const edge of faceEdges[i]!)
+      for (const next of edges.get(edge) ?? []) {
+        traversals++;
+        charge();
+        if (!seen[next]) {
+          seen[next] = 1;
+          pending.push(next);
+        }
+      }
+  }
+  if (completed !== eligible.length) return refuse('DISCONNECTED_MEMBERSHIP_DELTA');
+  return {
+    valid: true,
+    faces: eligible,
+    area: surface,
+    scratchBytes: eligible.length * 24 + edges.size * 192,
+    telemetry: telemetry(),
+  };
+}
+
 /** Complete a single connected planar source interface; never bridge disconnected coplanar caps. */
 export function collectMaterialInterface(
   g: NormalizedGeometry,
@@ -103,64 +241,30 @@ export function collectMaterialInterface(
   if (!changed.length || !(magnitude > 0) || !(total > 0)) return undefined;
   const normal = sum.map((x) => x / magnitude) as unknown as Vec3;
   const anchor = center.map((x) => x / total) as unknown as Vec3;
+  const seeds: number[] = [];
+  const offset = dot(normal, anchor);
   for (const f of changed) {
     checkpoint();
     charge();
-    const n = groundedSourceFaceNormal(g, f);
-    if (
-      Math.abs(dot(normal, n.vector) / n.length) < 1 - CORRESPONDENCE ||
-      [0, 1, 2].some(
-        (k) => Math.abs(dot(normal, vertex(g, f, k)) - dot(normal, anchor)) > CORRESPONDENCE,
-      )
-    )
+    if ([0, 1, 2].some((k) => Math.abs(dot(normal, vertex(g, f, k)) - offset) > CORRESPONDENCE))
       return undefined;
-  }
-  const offset = dot(normal, anchor),
-    faces: number[] = [];
-  let surface = 0;
-  const parent: number[] = [],
-    edges = new Map<string, number>();
-  const root = (i: number): number => {
-    while (parent[i] !== i) {
-      parent[i] = parent[parent[i]!]!;
-      i = parent[i]!;
-    }
-    return i;
-  };
-  for (let f = 0; f < g.faceCount; f++) {
-    if ((f & 255) === 0) checkpoint();
-    charge();
     const n = groundedSourceFaceNormal(g, f);
-    if (!n.length || Math.abs(dot(normal, n.vector) / n.length) < 1 - CORRESPONDENCE) continue;
-    const vertices = [vertex(g, f, 0), vertex(g, f, 1), vertex(g, f, 2)];
-    if (vertices.some((p) => Math.abs(dot(normal!, p) - offset) > CORRESPONDENCE)) continue;
-    if (faces.length >= FACE_LIMIT) return undefined;
-    const index = faces.length;
-    parent.push(index);
-    faces.push(f);
-    surface += n.length / 2;
-    const keys = vertices.map((p) => p.map((x) => (x === 0 ? 0 : x)).join(','));
-    for (let k = 0; k < 3; k++) {
-      const a = keys[k]!,
-        b = keys[(k + 1) % 3]!,
-        key = a < b ? a + '|' + b : b + '|' + a,
-        other = edges.get(key);
-      if (other !== undefined) parent[root(index)] = root(other);
-      else edges.set(key, index);
-    }
+    if (Math.abs(dot(normal, n.vector) / n.length) >= 1 - CORRESPONDENCE) seeds.push(f);
   }
-  checkpoint();
-  if (!faces.length || faces.some((_f, i) => root(i) !== root(0))) return undefined;
+  const completion = completeSourceInterface(g, normal, offset, seeds, checkpoint, charge);
+  if (!completion.valid) return undefined;
   return {
-    faces,
+    faces: completion.faces,
     normal,
     offset,
-    area: surface,
-    sourceFacesInspected: g.faceCount * 2,
+    area: completion.area,
+    sourceFacesInspected: g.faceCount + completion.telemetry.sourceFaceVisits,
     clippedOperations: clips,
-    scratchBytes: faces.length * 20 + edges.size * 160 + changed.length * 8,
+    scratchBytes: completion.scratchBytes + changed.length * 8,
+    completion: completion.telemetry,
   };
 }
+
 export interface InterfaceMembershipSignature {
   readonly ownership: 'TARGET_SIDE' | 'BODY_SIDE' | 'INTERMEDIATE';
   readonly selectedArea: number;
