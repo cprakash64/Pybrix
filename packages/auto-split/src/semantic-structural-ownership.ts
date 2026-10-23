@@ -1,4 +1,8 @@
 import {
+  resolveOwnershipSourceComponent,
+  type OwnershipSourceComponentResolution,
+} from "./semantic-ownership-source-component";
+import {
   inventorySourceInterfacePlanes,
   ownershipCompleteness,
   resolveOwnershipInterface,
@@ -29,7 +33,7 @@ import {
   SEMANTIC_PLANE_REFINEMENT_LIMITS,
   type SemanticPlaneRefinement,
 } from "./semantic-plane";
-import { groundedSourceFrame } from "./semantic-grounded-scope";
+import { groundedSourceFrameWithProvenance } from "./semantic-grounded-scope";
 
 export type StructuralOwnershipState =
   | "NOT_APPLICABLE"
@@ -41,6 +45,7 @@ export interface StructuralOwnershipCardinality {
   readonly state: StructuralOwnershipState;
   readonly reason: string;
   readonly ownershipCompleteness?: OwnershipCompleteness;
+  readonly sourceComponentResolution?: OwnershipSourceComponentResolution;
   readonly primaryCause?: string;
   readonly finalAvailabilityReason?: string;
   readonly interfaceCompletion?: readonly SourceInterfaceCompletionTelemetry[];
@@ -105,6 +110,7 @@ export function structuralOwnershipCardinality(
     irrelevantInterfaces = 0;
   const signatures: TargetOwnershipSignature[] = [];
   let completeness: OwnershipCompleteness | undefined;
+  let sourceComponentResolution: OwnershipSourceComponentResolution | undefined;
   const completions: SourceInterfaceCompletionTelemetry[] = [];
   const result = (
     state: StructuralOwnershipState,
@@ -117,6 +123,7 @@ export function structuralOwnershipCardinality(
       state,
       reason,
       ownershipCompleteness: completeness ?? ownershipCompleteness([], reason),
+      ...(sourceComponentResolution ? { sourceComponentResolution } : {}),
       interfaceCompletion: completions,
       materialInterfaces: interfaces,
       interfaceComponents: interfaces,
@@ -137,14 +144,31 @@ export function structuralOwnershipCardinality(
     signatures,
   });
   const region = primary?.materialInterface;
+  const groundedFrames = region
+    ? []
+    : groundedSourceFrameWithProvenance(
+        g,
+        sourceAxes,
+        FACE_LIMIT,
+        checkpoint,
+        charge,
+      );
+  sourceFaceVisits += groundedFrames[0]?.sourceFaceVisits ?? 0;
   const sourceFrame = region
-    ? [region.normal]
-    : groundedSourceFrame(g, sourceAxes, FACE_LIMIT, checkpoint, charge);
-  const raw = sourceFrame.toSorted(
+    ? [
+        {
+          normal: region.normal,
+          sourceFaces: region.faces,
+          sourceFaceVisits: 0,
+        },
+      ]
+    : groundedFrames;
+  const selectedFrame = sourceFrame.toSorted(
     (a, b) =>
-      Math.abs(dot(b, refinement.profileNormal)) -
-      Math.abs(dot(a, refinement.profileNormal)),
+      Math.abs(dot(b.normal, refinement.profileNormal)) -
+      Math.abs(dot(a.normal, refinement.profileNormal)),
   )[0];
+  const raw = selectedFrame?.normal;
   if (!raw || candidates.length < 2 || !transitionCandidates.length)
     return result(
       "INSUFFICIENT_EVIDENCE",
@@ -182,14 +206,24 @@ export function structuralOwnershipCardinality(
     clippedOperations++;
     return interfaceTriangleFraction(g, f, cut);
   };
-  const sourceRank = prepared.labelling.faceRank[first ?? -1];
-  if (sourceRank === undefined)
+  sourceComponentResolution = resolveOwnershipSourceComponent(
+    prepared.labelling.faceRank,
+    prepared.labelling.count,
+    region?.faces,
+    region ? undefined : selectedFrame,
+    FACE_LIMIT,
+    checkpoint,
+    charge,
+  );
+  sourceFaceVisits += sourceComponentResolution.provenanceFacesInspected;
+  if (!sourceComponentResolution.proven)
     return result(
       "INSUFFICIENT_EVIDENCE",
       "TRANSITION_SOURCE_CORRESPONDENCE_UNAVAILABLE",
       0,
       null,
     );
+  const sourceRank = sourceComponentResolution.component;
   const inventory = inventorySourceInterfacePlanes(
     g,
     normal,

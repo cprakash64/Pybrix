@@ -37,19 +37,46 @@ const quantile = (values: readonly number[], q: number): number =>
 /** Refine only the three intrinsic directions with corroborating planar source
  * sections. One bounded face pass; neither candidate offsets nor native results
  * participate. Source coordinates and buffers are never changed. */
+export interface GroundedSourceFrameProvenance {
+  readonly normal: Vec3;
+  /** Original faces that contributed to this accepted direction's normal sum. */
+  readonly sourceFaces: readonly number[];
+  readonly sourceFaceVisits: number;
+}
+export function groundedSourceFrameWithProvenance(
+  geometry: NormalizedGeometry,
+  axes: readonly Vec3[],
+  faceSamples: number,
+  checkpoint: Checkpoint,
+  charge: () => void,
+): readonly GroundedSourceFrameProvenance[] {
+  const frames: GroundedSourceFrameProvenance[] = [];
+  groundedSourceFrame(geometry, axes, faceSamples, checkpoint, charge, (frame) =>
+    frames.push(frame),
+  );
+  return frames;
+}
 export function groundedSourceFrame(
   geometry: NormalizedGeometry,
   axes: readonly Vec3[],
   faceSamples: number,
   checkpoint: Checkpoint,
   charge: () => void,
+  provenance?: (frame: GroundedSourceFrameProvenance) => void,
 ): readonly Vec3[] {
-  const sums = axes.map(() => ({ vector: [0, 0, 0], area: 0, faces: 0 }));
+  const sums = axes.map(() => ({
+    vector: [0, 0, 0],
+    area: 0,
+    faces: 0,
+    sourceFaces: provenance ? ([] as number[]) : undefined,
+  }));
+  let sourceFaceVisits = 0;
   let totalArea = 0;
   const stride = Math.max(1, Math.ceil(geometry.faceCount / faceSamples));
   for (let f = 0; f < geometry.faceCount; f += stride) {
     if (f % (stride * 256) === 0) checkpoint();
     charge();
+    sourceFaceVisits++;
     const vertices = [0, 1, 2].map((k) => (geometry.indices[f * 3 + k] ?? 0) * 3);
     const a = vertices[0] ?? 0,
       b = vertices[1] ?? 0,
@@ -72,6 +99,7 @@ export function groundedSourceFrame(
       if (!sum || Math.abs(alignment) < Math.cos(0.1)) continue;
       sum.area += area;
       sum.faces++;
+      sum.sourceFaces?.push(f);
       for (let k = 0; k < 3; k++)
         sum.vector[k] = (sum.vector[k] ?? 0) + (cross[k] ?? 0) * Math.sign(alignment);
     }
@@ -79,15 +107,15 @@ export function groundedSourceFrame(
   checkpoint();
   return sums.flatMap((sum) => {
     const length = Math.hypot(...sum.vector);
-    return sum.faces >= 8 && sum.area / Math.max(1e-12, totalArea) >= 0.01 && length > 0
-      ? [
-          [
-            (sum.vector[0] ?? 0) / length,
-            (sum.vector[1] ?? 0) / length,
-            (sum.vector[2] ?? 0) / length,
-          ] as Vec3,
-        ]
-      : [];
+    if (!(sum.faces >= 8 && sum.area / Math.max(1e-12, totalArea) >= 0.01 && length > 0)) return [];
+    const normal: Vec3 = [
+      (sum.vector[0] ?? 0) / length,
+      (sum.vector[1] ?? 0) / length,
+      (sum.vector[2] ?? 0) / length,
+    ];
+    if (provenance && sum.sourceFaces)
+      provenance({ normal, sourceFaces: sum.sourceFaces, sourceFaceVisits });
+    return [normal];
   });
 }
 function sorted(values: number[], checkpoint: Checkpoint, charge: () => void): number[] {
