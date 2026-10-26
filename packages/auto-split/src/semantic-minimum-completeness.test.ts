@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { StructuralTargetOwnershipAudit } from './semantic-structural-ownership';
+import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest';
 import type { SemanticPart, Vec3 } from '@cadfixer/auto-split-contract';
 import type { NormalizedGeometry } from './geometry';
 import type { PreparedSemanticGeometry } from './semantic';
@@ -16,7 +17,9 @@ import {
 } from './semantic-ownership-completeness';
 import { interfaceMembershipSignature } from './semantic-interface-membership';
 import { bindRepresentativeRefinement } from './semantic-local-plane';
-const noop = (): void => {};
+const noop = (): void => {
+  // Intentionally empty hook; preserve the undefined return value.
+};
 const plane = (offset: number): SuggestedPlane => ({ normal: [1, 0, 0], origin: [offset, 0, 0] });
 const profile = (step = false): SemanticPlaneRefinement => ({
   cut: plane(0),
@@ -72,7 +75,7 @@ const evidence = (
   positiveFrontierProof: false,
   clippedOperations: 0,
 });
-let observe: ReturnType<typeof vi.spyOn<typeof interfaceEvidence, 'interfaceOwnershipEvidence'>>;
+let observe: MockInstance<typeof interfaceEvidence.interfaceOwnershipEvidence>;
 beforeEach(() => {
   observe = vi.spyOn(interfaceEvidence, 'interfaceOwnershipEvidence');
   observe.mockImplementation((_p, _t, _peers, _cuts, _check, _charge, region) => {
@@ -98,7 +101,7 @@ function audit(
   conflict = false,
   checkpoint = noop,
   refinement = profile(),
-) {
+): StructuralTargetOwnershipAudit {
   const g = geometry(offsets),
     face = offsets.indexOf(0),
     region: MaterialInterface = {
@@ -120,7 +123,7 @@ function audit(
       prepared,
       part,
       [],
-      [candidates[0]!, candidates[1]!],
+      [requiredValue(candidates[0]), requiredValue(candidates[1])],
       candidates,
       evidence(region, ownership, conflict),
       refinement,
@@ -158,7 +161,12 @@ it('minimum with both admitted complete ownership signatures remains two-way unr
   expect(r.cardinality).toMatchObject({
     state: 'TWO_WAY_UNRESOLVED',
     unresolvedClasses: 2,
-    ownershipCompleteness: { state: 'COMPLETE', representedUnresolved: 1 },
+    ownershipCompleteness: {
+      state: 'INCOMPLETE_UNRESOLVED',
+      representedUnresolved: 1,
+      inventoryComplete: true,
+      semanticComplete: false,
+    },
   });
   expect(new Set(r.signatures.map((s) => s.key)).size).toBe(2);
 });
@@ -248,3 +256,10 @@ it('the existing STEP route retains identified and represented two-way ownership
       .cardinality.state,
   ).toBe('TWO_WAY_UNRESOLVED');
 });
+
+/** Bounds, cardinality or membership is established by the caller's exact invariant.
+ * Missing evidence aborts; it never supplies a geometric or semantic default. */
+function requiredValue<T>(value: T): NonNullable<T> {
+  if (value === undefined || value === null) throw Error('Required invariant value is missing.');
+  return value;
+}

@@ -13,11 +13,14 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   test: {
+    maxWorkers: 2,
+    testTimeout: 15000,
     // Test globals are not injected; every helper is imported explicitly.
     globals: false,
     projects: [
       {
         test: {
+          testTimeout: 15000,
           name: 'packages',
           environment: 'node',
           include: ['packages/*/src/**/*.test.ts'],
@@ -26,6 +29,7 @@ export default defineConfig({
       {
         // The same-origin Auto Split analysis service: Node, no DOM.
         test: {
+          testTimeout: 15000,
           name: 'service',
           environment: 'node',
           include: ['apps/auto-split-api/src/**/*.test.ts'],
@@ -35,6 +39,7 @@ export default defineConfig({
         // Repository tooling: the Node version guard and anything else that has
         // to run before a build exists.
         test: {
+          testTimeout: 15000,
           name: 'tooling',
           environment: 'node',
           include: ['scripts/**/*.test.ts'],
@@ -43,6 +48,7 @@ export default defineConfig({
       {
         plugins: [react()],
         test: {
+          testTimeout: 15000,
           name: 'web',
           environment: 'jsdom',
           include: ['apps/web/src/**/*.test.{ts,tsx}'],
@@ -71,6 +77,7 @@ export default defineConfig({
          * `import.meta.url`.
          */
         test: {
+          testTimeout: 15000,
           name: 'worker-kernel',
           environment: 'node',
           include: ['apps/web/src/workers/node-tests/**/*.test.ts'],

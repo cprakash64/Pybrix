@@ -57,9 +57,26 @@ describe('bounded semantic candidate discovery', () => {
       const { p, answer, part } = await terminal(axis);
       const result = decomposeSemantic(p, answer),
         e = result.evidence.find((e) => e.id === part.id);
-      expect(result.suggestions.find((s) => s.id === part.id)?.operation).toBe('PLANE');
-      expect(e?.decompositionIntent?.rule).toBe('STRUCTURAL_SEAM');
-      expect(e?.synthesis?.phase).toBe('PROPOSAL');
+      expect(result.suggestions.find((s) => s.id === part.id)?.operation).toBe('NONE');
+      expect(e?.synthesis?.phase).toBe('NO_CONFIRMED_FINALIST');
+      expect(e?.synthesis?.peerless?.finalists).toContainEqual(
+        expect.objectContaining({
+          structuralReason: 'STABLE_SECTION_STEP',
+          structurallyAdmitted: true,
+          confirmed: true,
+          scopeState: 'TARGET_SCOPE_SUPPORTED',
+        }),
+      );
+      expect(e?.synthesis?.interfaceOwnership).toMatchObject({
+        evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+        ownership: 'AMBIGUOUS',
+        wholeCertificate: { complete: false },
+      });
+      expect(e?.synthesis?.ownershipCardinality?.ownershipCompleteness).toMatchObject({
+        state: 'INCOMPLETE_UNRESOLVED',
+        semanticComplete: false,
+        unrepresentedUnresolved: 1,
+      });
       expect(e?.synthesis?.exactTarget).toBe(false);
       expect(e?.synthesis?.normalCandidates.length).toBeLessThanOrEqual(LOCAL_PLANE_LIMITS.normals);
       expect(e?.synthesis?.orientedOffsets).toBeLessThanOrEqual(
@@ -69,8 +86,10 @@ describe('bounded semantic candidate discovery', () => {
         (e?.synthesis?.scoredCandidates ?? 0) +
           Object.values(e?.synthesis?.scoreRefusals ?? {}).reduce((a, b) => a + b, 0),
       );
-      expect(e?.localPlane?.provenance?.normalSources.length).toBeGreaterThan(0);
-      expect(e?.localPlane?.provenance?.offsetSource).toBeDefined();
+      expect(e?.synthesis?.normalCandidates.some((candidate) => candidate.sources.length > 0)).toBe(
+        true,
+      );
+      expect(e?.synthesis?.peerless?.frontier[0]?.offsetSource).toBeDefined();
       expect(e?.synthesis?.confirmed).toBeLessThanOrEqual(3);
       expect(e?.synthesis?.seamDerivedCandidates).toBe(0);
     });
@@ -122,6 +141,31 @@ describe('bounded semantic candidate discovery', () => {
     }).toThrow('cancelled candidate diagnostics');
     expect(published).toBe(false);
     expect(mesh.positions).toEqual(before);
-    expect(synthesizeSemanticPlane(p, answer, part, () => undefined)).toBeDefined();
+    const recovery = new Map<string, PlaneSynthesisTrace>();
+    expect(
+      synthesizeSemanticPlane(p, answer, part, () => undefined, {
+        telemetry: planeOwnershipTelemetry(),
+        charge: () => undefined,
+        synthesis: recovery,
+      }),
+    ).toBeUndefined();
+    expect(recovery.get(part.id)?.interfaceOwnership).toMatchObject({
+      evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+      ownership: 'AMBIGUOUS',
+      wholeCertificate: { complete: false },
+    });
+    expect(recovery.get(part.id)?.ownershipCardinality?.ownershipCompleteness).toMatchObject({
+      state: 'INCOMPLETE_UNRESOLVED',
+      semanticComplete: false,
+      unrepresentedUnresolved: 1,
+    });
+    expect(
+      recovery
+        .get(part.id)
+        ?.peerless?.finalists?.some(
+          (finalist) => finalist.confirmed && finalist.structurallyAdmitted,
+        ),
+    ).toBe(true);
+    expect(mesh.positions).toEqual(before);
   });
 });

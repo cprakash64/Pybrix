@@ -80,5 +80,25 @@ for (const phase of [
     expect(published).toBe(false);
     expect(mesh.positions).toEqual(positions);
     expect(mesh.indices).toEqual(indices);
-    expect(decomposeSemantic(p, answer).suggestions[0]?.operation).toBe('PLANE');
+    const recovery = decomposeSemantic(p, answer);
+    expect(recovery.suggestions[0]?.operation).toBe('NONE');
+    expect(recovery.evidence[0]?.synthesis?.interfaceOwnership).toMatchObject({
+      evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+      ownership: 'AMBIGUOUS',
+      wholeCertificate: { complete: false },
+    });
+    expect(
+      recovery.evidence[0]?.synthesis?.ownershipCardinality?.ownershipCompleteness,
+    ).toMatchObject({
+      state: 'INCOMPLETE_UNRESOLVED',
+      semanticComplete: false,
+      unrepresentedUnresolved: 1,
+    });
+    expect(
+      recovery.evidence[0]?.synthesis?.peerless?.finalists?.some(
+        (finalist) => finalist.confirmed && finalist.structurallyAdmitted,
+      ),
+    ).toBe(true);
+    expect(mesh.positions).toEqual(positions);
+    expect(mesh.indices).toEqual(indices);
   });

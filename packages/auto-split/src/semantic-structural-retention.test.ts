@@ -1,13 +1,13 @@
-import { it, expect } from "vitest";
-import type { SemanticHierarchy } from "@cadfixer/auto-split-contract";
-import { prepareSemanticGeometry, decomposeSemantic } from "./semantic";
-import { voxelUnion } from "./fixtures/solids";
-import { fixtureDeflate } from "./fixtures/deflate";
+import { it, expect } from 'vitest';
+import type { SemanticHierarchy } from '@cadfixer/auto-split-contract';
+import { prepareSemanticGeometry, decomposeSemantic } from './semantic';
+import { voxelUnion } from './fixtures/solids';
+import { fixtureDeflate } from './fixtures/deflate';
 
 // Regression for an oblique shoulder whose strongest sparse section probe
 // leaves only one supported full section before its transition. Another offset
 // in the same existing normal family independently establishes the real seam.
-it("retains a supported shoulder offset without exceeding three refinements", async () => {
+it('retains a supported shoulder offset without exceeding three refinements', async () => {
   const mesh = voxelUnion([
     { lo: [-102, -14, -10], hi: [-23, 14, 10] },
     { lo: [-23, -4, -3], hi: [51, 4, 3] },
@@ -36,18 +36,18 @@ it("retains a supported shoulder offset without exceeding three refinements", as
     mesh.positions[i + 2] = (-sy * x + cy * zz) * scale + (shift[2] ?? 0);
   }
   const answer: SemanticHierarchy = {
-    object: { label: "Unfamiliar physical assembly", confidence: 0.99 },
+    object: { label: 'Unfamiliar physical assembly', confidence: 0.99 },
     parts: [
       {
-        id: "a",
-        label: "Unfamiliar member a",
+        id: 'a',
+        label: 'Unfamiliar member a',
         parentId: null,
-        importance: "major",
+        importance: 'major',
         confidence: 0.99,
         instances: 1,
         views: [
           {
-            view: "front",
+            view: 'front',
             polygons: [
               [
                 [0.552734375, 0.5888671875],
@@ -66,7 +66,7 @@ it("retains a supported shoulder offset without exceeding three refinements", as
             ],
           },
           {
-            view: "right",
+            view: 'right',
             polygons: [
               [
                 [0.375, 0.6875],
@@ -85,7 +85,7 @@ it("retains a supported shoulder offset without exceeding three refinements", as
             ],
           },
           {
-            view: "bottom",
+            view: 'bottom',
             polygons: [
               [
                 [0.5537109375, 0.4521484375],
@@ -105,27 +105,21 @@ it("retains a supported shoulder offset without exceeding three refinements", as
           },
         ],
         componentIds: [],
-        expectedGeometry: { kind: "solid_part", likelySeparable: false },
+        expectedGeometry: { kind: 'solid_part', likelySeparable: false },
         cut: null,
       },
     ],
   };
   const prepared = await prepareSemanticGeometry(mesh, fixtureDeflate);
   const result = decomposeSemantic(prepared, answer);
-  const suggestion = result.suggestions.find((s) => s.id === "a");
+  const suggestion = result.suggestions.find((s) => s.id === 'a');
   expect(suggestion?.boundaryAmbiguity?.hypotheses).toHaveLength(2);
-  expect(suggestion?.boundaryAmbiguity?.route).toBe("STRUCTURAL_SEAM");
+  expect(suggestion?.boundaryAmbiguity?.route).toBe('STRUCTURAL_SEAM');
+  expect(new Set(suggestion?.boundaryAmbiguity?.hypotheses.map((h) => h.ownershipClass)).size).toBe(
+    2,
+  );
+  expect(result.evidence[0]?.synthesis?.peerless?.refinements).toBeLessThanOrEqual(3);
   expect(
-    new Set(
-      suggestion?.boundaryAmbiguity?.hypotheses.map((h) => h.ownershipClass),
-    ).size,
-  ).toBe(2);
-  expect(
-    result.evidence[0]?.synthesis?.peerless?.refinements,
-  ).toBeLessThanOrEqual(3);
-  expect(
-    result.evidence[0]?.synthesis?.peerless?.finalists?.some(
-      (c) => c.structurallyAdmitted,
-    ),
+    result.evidence[0]?.synthesis?.peerless?.finalists?.some((c) => c.structurallyAdmitted),
   ).toBe(true);
 });

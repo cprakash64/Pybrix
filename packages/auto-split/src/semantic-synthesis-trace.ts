@@ -1,3 +1,4 @@
+import type { InterfaceOwnershipEvidence } from './semantic-interface-ownership';
 import type { SemanticExecutionEligibility } from './semantic-execution-eligibility';
 import type { StructuralOwnershipCardinality } from './semantic-structural-ownership';
 import type { PeerlessScopeEvidence } from './semantic-peerless-scope';
@@ -36,6 +37,8 @@ export interface PlaneSynthesisTrace {
     readonly targetPixels: number;
     readonly bodyPixels: number;
     readonly unknownPixels: number;
+    readonly evidenceLevel: InterfaceOwnershipEvidence['evidenceLevel'];
+    readonly wholeCertificate: InterfaceOwnershipEvidence['wholeCertificate'];
     readonly positiveFrontierProof: boolean;
     readonly localSupport?: {
       readonly viewPixels: readonly number[];

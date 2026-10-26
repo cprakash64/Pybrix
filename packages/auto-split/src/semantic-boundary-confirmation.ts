@@ -65,7 +65,11 @@ export async function qualifyBoundaryConfirmation(
   }
   const target = classes.get('TARGET_SIDE'),
     body = classes.get('BODY_SIDE');
-  if (!target?.length || !body?.length || sameSemanticPlane(target[0]!.plane, body[0]!.plane))
+  if (
+    !target?.length ||
+    !body?.length ||
+    sameSemanticPlane(requiredValue(target[0]).plane, requiredValue(body[0]).plane)
+  )
     return undefined;
   const alternatives: BoundaryAlternative[] = [];
   let attempted = 0;
@@ -116,4 +120,11 @@ export function selectBoundaryAlternative(
   alternativeId: string,
 ): BoundaryAlternative | undefined {
   return confirmation.alternatives.find((alternative) => alternative.id === alternativeId);
+}
+
+/** Bounds, cardinality or membership is established by the caller's exact invariant.
+ * Missing evidence aborts; it never supplies a geometric or semantic default. */
+function requiredValue<T>(value: T): NonNullable<T> {
+  if (value === undefined || value === null) throw Error('Required invariant value is missing.');
+  return value;
 }

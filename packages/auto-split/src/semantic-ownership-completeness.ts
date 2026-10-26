@@ -17,6 +17,8 @@ export interface OwnershipInterfaceResolution {
   readonly resolution: InterfaceResolution;
 }
 export interface OwnershipCompleteness {
+  readonly inventoryComplete?: boolean;
+  readonly semanticComplete?: boolean;
   readonly state: 'COMPLETE' | 'INCOMPLETE_UNRESOLVED' | 'INCOMPLETE_CONFLICTED' | 'NOT_APPLICABLE';
   readonly reason: string;
   readonly inventoried: number;
@@ -29,7 +31,7 @@ export interface OwnershipCompleteness {
   readonly inventoryLimit: number;
   readonly interfaces: readonly OwnershipInterfaceResolution[];
 }
-/** Candidate membership can resolve an inventoried row, but cannot delete it. */
+/** Representation accounts for inventory; only whole proof or positive irrelevance resolves knowledge. */
 export function ownershipCompleteness(
   interfaces: readonly OwnershipInterfaceResolution[],
   inventoryFailure?: string,
@@ -39,10 +41,15 @@ export function ownershipCompleteness(
   const conflicted = count('CONFLICTED'),
     unrepresented = count('UNREPRESENTED_UNRESOLVED');
   const capped = interfaces.length > SEMANTIC_PLANE_REFINEMENT_LIMITS.shoulderPlanes;
+  const represented = count('REPRESENTED_UNRESOLVED');
+  const inventoryComplete = !inventoryFailure && !capped && !unrepresented && !conflicted;
+  const semanticComplete = inventoryComplete && represented === 0;
   return {
+    inventoryComplete,
+    semanticComplete,
     state: conflicted
       ? 'INCOMPLETE_CONFLICTED'
-      : inventoryFailure || capped || unrepresented
+      : inventoryFailure || capped || unrepresented || represented
         ? 'INCOMPLETE_UNRESOLVED'
         : 'COMPLETE',
     reason:
@@ -53,7 +60,9 @@ export function ownershipCompleteness(
           ? 'CONTRADICTORY_INTERFACE_OWNERSHIP'
           : unrepresented
             ? 'UNREPRESENTED_UNRESOLVED_SOURCE_INTERFACE'
-            : 'ALL_RELEVANT_SOURCE_INTERFACES_ACCOUNTED_FOR'),
+            : represented
+              ? 'LOCAL_OR_UNKNOWN_INTERFACE_OWNERSHIP'
+              : 'ALL_RELEVANT_SOURCE_INTERFACES_ACCOUNTED_FOR'),
     inventoried: interfaces.length,
     resolvedTarget: count('POSITIVELY_TARGET_OWNED'),
     resolvedBody: count('POSITIVELY_BODY_OWNED'),
@@ -85,9 +94,12 @@ export function exhaustiveOwnershipPublication(
   classes: number,
   identified: boolean,
 ): boolean {
-  return (
-    completeness.state === 'COMPLETE' && (classes === 1 ? identified : classes === 2 && !identified)
-  );
+  return classes === 1
+    ? completeness.state === 'COMPLETE' && identified
+    : classes === 2 &&
+        !identified &&
+        completeness.inventoryComplete === true &&
+        completeness.representedUnresolved === 1;
 }
 export interface SourceInterfacePlaneInventory {
   readonly valid: boolean;

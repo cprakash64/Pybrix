@@ -1,3 +1,4 @@
+import type { SourceInterfacePlaneInventory } from './semantic-ownership-completeness';
 import { it, expect } from 'vitest';
 import type { NormalizedGeometry } from './geometry';
 import {
@@ -20,15 +21,22 @@ const geometry = (offsets: readonly number[]): NormalizedGeometry => ({
   radius: 30,
   extents: [60, 1, 1],
 });
-const inventory = (offsets: readonly number[], ranks = offsets.map(() => 0)) =>
+const inventory = (
+  offsets: readonly number[],
+  ranks = offsets.map(() => 0),
+): SourceInterfacePlaneInventory =>
   inventorySourceInterfacePlanes(
     geometry(offsets),
     [1, 0, 0],
     -1,
     ranks,
     0,
-    () => {},
-    () => {},
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
   );
 it('one represented unresolved dimension can authorize two exhaustive classes', () => {
   const i = inventory([-3, 0, 3]);
@@ -36,7 +44,12 @@ it('one represented unresolved dimension can authorize two exhaustive classes', 
   const c = ownershipCompleteness([
     row(0, resolveOwnershipInterface('AMBIGUOUS', false, false, true, true)),
   ]);
-  expect(c.state).toBe('COMPLETE');
+  expect(c).toMatchObject({
+    state: 'INCOMPLETE_UNRESOLVED',
+    inventoryComplete: true,
+    semanticComplete: false,
+    representedUnresolved: 1,
+  });
   expect(exhaustiveOwnershipPublication(c, 2, false)).toBe(true);
 });
 it('upstream unknown remains inventoried even when every cut excludes it', () => {
@@ -67,7 +80,12 @@ it('downstream invariance alone is insufficient but established positive irrelev
     row(1, resolveOwnershipInterface('AMBIGUOUS', false, true, true, false)),
   ]);
   expect(c.provenIrrelevant).toBe(1);
-  expect(c.state).toBe('COMPLETE');
+  expect(c).toMatchObject({
+    state: 'INCOMPLETE_UNRESOLVED',
+    inventoryComplete: true,
+    semanticComplete: false,
+    representedUnresolved: 1,
+  });
 });
 it('positive target evidence resolves an invariant relevant row', () => {
   const c = ownershipCompleteness([
@@ -100,8 +118,12 @@ it('true nonplanar crease cannot be certified as a same-plane interface', () => 
     -1,
     [0, 0, 0],
     0,
-    () => {},
-    () => {},
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
   );
   expect(i.valid).toBe(false);
   expect(i.reason).toBe('NONPLANAR_SOURCE_INTERFACE');
@@ -130,7 +152,9 @@ it('inventory cancellation aborts with original source byte-identical', () => {
       () => {
         if (++calls === 2) throw Error('cancelled');
       },
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toThrow('cancelled');
   expect(g.positions).toEqual(positions);

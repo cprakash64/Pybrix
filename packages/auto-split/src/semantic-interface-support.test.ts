@@ -1,3 +1,5 @@
+import type { InterfaceOwnership } from './semantic-boundary-confirmation';
+import type { InterfaceEvidenceLevel } from './semantic-interface-ownership';
 import { expect, it } from 'vitest';
 import {
   classifyInterfaceOwnershipSupport,
@@ -20,20 +22,45 @@ const observation = (
   unknownPixels,
   visiblePixels: targetPixels + bodyPixels + unknownPixels,
 });
-const classify = (rows: readonly InterfaceObservationSupport[], frontier = false) =>
-  classifyInterfaceOwnershipSupport(rows, frontier);
+const classify = (
+  rows: readonly InterfaceObservationSupport[],
+  frontier = false,
+): {
+  readonly evidenceLevel: InterfaceEvidenceLevel;
+  readonly ownership: InterfaceOwnership;
+  readonly conflict: boolean;
+  readonly category:
+    | 'DIRECT_EXHAUSTIVE'
+    | 'DIRECT_CORROBORATED'
+    | 'FRONTIER_CORROBORATED'
+    | 'SPARSE_UNCORROBORATED'
+    | 'CONFLICTED'
+    | 'UNKNOWN';
+  readonly targetAxes: readonly number[];
+  readonly bodyAxes: readonly number[];
+} => classifyInterfaceOwnershipSupport(rows, frontier);
 it('retains UNKNOWN for sparse single-observation target support', () => {
   const result = classify([observation('rear', 11, 0, 2000)]);
   expect(result.ownership).toBe('AMBIGUOUS');
   expect(result.category).toBe('SPARSE_UNCORROBORATED');
 });
 it('accepts exhaustive direct target coverage even in one observation', () => {
-  expect(classify([observation('rear', 3, 0, 0)]).ownership).toBe('TARGET_SIDE');
+  // This observation-only wrapper supplies no whole-interface certificate.
+  const result = classify([observation('rear', 3, 0, 0)]);
+  expect(result).toMatchObject({
+    evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+    ownership: 'AMBIGUOUS',
+    category: 'DIRECT_EXHAUSTIVE',
+    conflict: false,
+  });
 });
 it('corroborates partial target support across independent axes', () => {
-  expect(classify([observation('front', 8, 0, 100), observation('top', 8, 0, 300)]).ownership).toBe(
-    'TARGET_SIDE',
-  );
+  expect(classify([observation('front', 8, 0, 100), observation('top', 8, 0, 300)])).toMatchObject({
+    evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+    ownership: 'AMBIGUOUS',
+    category: 'DIRECT_CORROBORATED',
+    conflict: false,
+  });
 });
 it('does not count opposite cameras as independent axes or subminimum pixels as an observation', () => {
   expect(
@@ -45,14 +72,26 @@ it('does not count opposite cameras as independent axes or subminimum pixels as 
 });
 it('preserves accepted positive-frontier proof with zero direct target pixels', () => {
   const result = classify([observation('rear', 0, 0, 2000)], true);
-  expect(result.ownership).toBe('TARGET_SIDE');
+  expect(result).toMatchObject({
+    evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+    ownership: 'AMBIGUOUS',
+    conflict: false,
+  });
   expect(result.category).toBe('FRONTIER_CORROBORATED');
 });
 it('accepts explicit exhaustive BODY and corroborated BODY symmetrically', () => {
-  expect(classify([observation('rear', 0, 3, 0)]).ownership).toBe('BODY_SIDE');
-  expect(classify([observation('front', 0, 8, 100), observation('top', 0, 8, 300)]).ownership).toBe(
-    'BODY_SIDE',
-  );
+  expect(classify([observation('rear', 0, 3, 0)])).toMatchObject({
+    evidenceLevel: 'LOCAL_BODY_ASSOCIATION',
+    ownership: 'AMBIGUOUS',
+    category: 'DIRECT_EXHAUSTIVE',
+    conflict: false,
+  });
+  expect(classify([observation('front', 0, 8, 100), observation('top', 0, 8, 300)])).toMatchObject({
+    evidenceLevel: 'LOCAL_BODY_ASSOCIATION',
+    ownership: 'AMBIGUOUS',
+    category: 'DIRECT_CORROBORATED',
+    conflict: false,
+  });
 });
 it('retains UNKNOWN for sparse uncorroborated BODY pixels', () => {
   expect(classify([observation('rear', 0, 11, 2000)]).ownership).toBe('AMBIGUOUS');
@@ -154,7 +193,14 @@ it('keeps the metadata binding invariant under a rigid change of coordinates', (
     rotate = (p: Vec3): Vec3 => [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]],
     positions = geometry.positions.slice();
   for (let i = 0; i < positions.length; i += 3)
-    positions.set(rotate([positions[i]!, positions[i + 1]!, positions[i + 2]!]), i);
+    positions.set(
+      rotate([
+        requiredValue(positions[i]),
+        requiredValue(positions[i + 1]),
+        requiredValue(positions[i + 2]),
+      ]),
+      i,
+    );
   const normal = rotate([1, 0, 0]),
     origin = rotate([0.1, 0, 0]),
     rotatedProfile = { ...profile, profileNormal: normal };
@@ -167,3 +213,10 @@ it('keeps the metadata binding invariant under a rigid change of coordinates', (
   );
   expect(result.chosenSectionLength).toBeCloseTo(0.9, 6);
 });
+
+/** Bounds, cardinality or membership is established by the caller's exact invariant.
+ * Missing evidence aborts; it never supplies a geometric or semantic default. */
+function requiredValue<T>(value: T): NonNullable<T> {
+  if (value === undefined || value === null) throw Error('Required invariant value is missing.');
+  return value;
+}

@@ -36,6 +36,10 @@ export function guardSemanticExecution(
     sharedBoundary: _shared,
     ...safe
   } = suggestion;
+  void _ambiguity;
+  void _confirmation;
+  void _finalists;
+  void _shared;
   return {
     ...safe,
     semanticExecutionEligibility: eligibility,

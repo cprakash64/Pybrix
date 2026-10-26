@@ -7,7 +7,9 @@ import {
 } from './semantic-grounded-scope';
 import { resolveOwnershipSourceComponent } from './semantic-ownership-source-component';
 import { inventorySourceInterfacePlanes } from './semantic-ownership-completeness';
-const no = () => {};
+const no = (): void => {
+  // Intentionally empty hook; preserve the undefined return value.
+};
 const frame = (faces: readonly number[]): GroundedSourceFrameProvenance => ({
   normal: [1, 0, 0],
   sourceFaces: faces,

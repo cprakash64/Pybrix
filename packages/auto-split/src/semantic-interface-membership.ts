@@ -33,8 +33,8 @@ export function interfaceTriangleFraction(
     out: Vec3[] = [];
   const distance = (p: Vec3): number => dot(cut.normal, p) - dot(cut.normal, cut.origin);
   for (let i = 0; i < 3; i++) {
-    const a = input[i]!,
-      b = input[(i + 1) % 3]!,
+    const a = requiredValue(input[i]),
+      b = requiredValue(input[(i + 1) % 3]),
       da = distance(a),
       db = distance(b);
     if (da >= 0) out.push(a);
@@ -43,9 +43,10 @@ export function interfaceTriangleFraction(
       out.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])]);
     }
   }
-  const total = area(input[0]!, input[1]!, input[2]!);
+  const total = area(requiredValue(input[0]), requiredValue(input[1]), requiredValue(input[2]));
   let selected = 0;
-  for (let i = 1; i + 1 < out.length; i++) selected += area(out[0]!, out[i]!, out[i + 1]!);
+  for (let i = 1; i + 1 < out.length; i++)
+    selected += area(requiredValue(out[0]), requiredValue(out[i]), requiredValue(out[i + 1]));
   return total > 0 ? Math.max(0, Math.min(1, selected / total)) : 0;
 }
 export interface MaterialInterface {
@@ -123,7 +124,7 @@ export function completeSourceInterface(
         .join(','),
     );
     return vertices.map((a, k) => {
-      const b = vertices[(k + 1) % 3]!;
+      const b = requiredValue(vertices[(k + 1) % 3]);
       return a < b ? a + '|' + b : b + '|' + a;
     });
   };
@@ -173,9 +174,9 @@ export function completeSourceInterface(
   while (pending.length) {
     checkpoint();
     charge();
-    const i = pending.pop()!;
+    const i = requiredValue(pending.pop());
     completed++;
-    for (const edge of faceEdges[i]!)
+    for (const edge of requiredValue(faceEdges[i]))
       for (const next of edges.get(edge) ?? []) {
         traversals++;
         charge();
@@ -330,4 +331,11 @@ export function interfaceCorrespondsToPoint(
       return true;
   }
   return false;
+}
+
+/** Bounds, cardinality or membership is established by the caller's exact invariant.
+ * Missing evidence aborts; it never supplies a geometric or semantic default. */
+function requiredValue<T>(value: T): NonNullable<T> {
+  if (value === undefined || value === null) throw Error('Required invariant value is missing.');
+  return value;
 }

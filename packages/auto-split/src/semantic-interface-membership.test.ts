@@ -33,8 +33,12 @@ it('clips the original triangle fraction rather than assigning a straddler as a 
     geometry,
     region,
     plane(0.5),
-    () => {},
-    () => {},
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
   );
   expect(signature.ownership).toBe('INTERMEDIATE');
   expect(signature.partialFaces).toBe(1);
@@ -47,8 +51,12 @@ it('distinguishes complete ownership classes including the exact edge boundary',
       geometry,
       region,
       plane(0),
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ).ownership,
   ).toBe('TARGET_SIDE');
   expect(
@@ -56,8 +64,12 @@ it('distinguishes complete ownership classes including the exact edge boundary',
       geometry,
       region,
       plane(1),
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ).ownership,
   ).toBe('BODY_SIDE');
 });
@@ -71,7 +83,9 @@ it('checks cancellation while constructing membership without mutating the input
       () => {
         throw Error('cancelled');
       },
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toThrow('cancelled');
   expect(geometry.positions).toEqual(before);
@@ -122,8 +136,12 @@ it('completes a connected supporting-plane fan through noisy-normal original fac
       [0, 0, 1],
       0,
       [1, 3],
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     );
   expect(r.valid).toBe(true);
   if (!r.valid) return;
@@ -134,8 +152,12 @@ it('completes a connected supporting-plane fan through noisy-normal original fac
     collectMaterialInterface(
       g,
       [zCut(-0.01), zCut(0.01)],
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     )?.faces,
   ).toHaveLength(4);
 });
@@ -145,8 +167,12 @@ it('completes an independently triangulated thin opposite-corner fan', () => {
     [0, 0, 1],
     0,
     [0, 1],
-    () => {},
-    () => {},
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
   );
   expect(r.valid).toBe(true);
   if (r.valid) expect(r.faces).toHaveLength(4);
@@ -170,8 +196,12 @@ it('refuses genuinely disconnected coplanar source surfaces', () => {
       [0, 0, 1],
       0,
       [0, 1],
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toMatchObject({ valid: false, reason: 'DISCONNECTED_MEMBERSHIP_DELTA' });
 });
@@ -193,8 +223,12 @@ it('does not cross a connected non-coplanar crease', () => {
     [0, 0, 1],
     0,
     [0],
-    () => {},
-    () => {},
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
+    (): void => {
+      // Intentionally empty hook; preserve the undefined return value.
+    },
   );
   expect(r.valid).toBe(true);
   if (r.valid) expect(r.faces).toEqual([0]);
@@ -218,8 +252,12 @@ it('rejects an opposed winding face on the supporting plane', () => {
       [0, 0, 1],
       0,
       [0],
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toMatchObject({ valid: false, reason: 'OPPOSED_INTERFACE_ORIENTATION' });
 });
@@ -237,8 +275,12 @@ it('refuses completion beyond the unchanged8192 original-face bound', () => {
       [0, 0, 1],
       0,
       [0],
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toMatchObject({ valid: false, reason: 'INTERFACE_FACE_CAP' });
 });
@@ -255,7 +297,9 @@ it('checks cancellation during adjacency completion and preserves source', () =>
       () => {
         if (++checkpoints === 3) throw Error('completion cancelled');
       },
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toThrow('completion cancelled');
   expect(g.positions).toEqual(before);
@@ -280,8 +324,12 @@ it('never bridges a spatial gap smaller than plane correspondence', () => {
       [0, 0, 1],
       0,
       [0, 1],
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toMatchObject({ valid: false, reason: 'DISCONNECTED_MEMBERSHIP_DELTA' });
 });
@@ -309,8 +357,12 @@ it('rejects ambiguous original adjacency even when the extra face leaves the pla
       [0, 0, 1],
       0,
       [0, 1],
-      () => {},
-      () => {},
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
+      (): void => {
+        // Intentionally empty hook; preserve the undefined return value.
+      },
     ),
   ).toMatchObject({ valid: false, reason: 'AMBIGUOUS_SOURCE_ADJACENCY' });
 });

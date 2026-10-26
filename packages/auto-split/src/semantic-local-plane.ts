@@ -1,3 +1,10 @@
+import {
+  planOwnershipCompletion,
+  admitOwnershipCompletion,
+  completionSourceConnected,
+  type OwnershipCompletionPlan,
+} from './semantic-ownership-representative-completion';
+import { ownershipCompleteness } from './semantic-ownership-completeness';
 import type { NormalizedGeometry } from './geometry';
 import { semanticExecutionEligibility } from './semantic-execution-eligibility';
 import { sameSemanticPlane } from './semantic-native';
@@ -89,15 +96,15 @@ export function bindRepresentativeRefinement(
       let first: Vec3 | undefined;
       for (let edge = 0; edge < 3; edge++) {
         const next = (edge + 1) % 3,
-          a = distances[edge]!,
-          b = distances[next]!;
+          a = requiredValue(distances[edge]),
+          b = requiredValue(distances[next]);
         if (a >= 0 === b >= 0) continue;
-        const point = points[edge]!.map(
-          (x, i) => x + (a / (a - b)) * (points[next]![i]! - x),
+        const point = requiredValue(points[edge]).map(
+          (x, i) => x + (a / (a - b)) * (requiredValue(requiredValue(points[next])[i]) - x),
         ) as unknown as Vec3;
         if (!first) first = point;
         else {
-          length += Math.hypot(...point.map((x, i) => x - first![i]!));
+          length += Math.hypot(...point.map((x, i) => x - requiredValue(requiredValue(first)[i])));
           break;
         }
       }
@@ -218,6 +225,10 @@ interface Score {
   }[];
 }
 export interface LocalPlaneProposal {
+  readonly representativeCompletion?: OwnershipCompletionPlan & {
+    readonly admittedOffsets: readonly number[];
+    readonly selectedOffset?: number;
+  };
   readonly structuralOwnership?: StructuralOwnershipCardinality;
   readonly boundaryAmbiguity?: BoundaryAmbiguity;
   readonly groundedTargetScope?: GroundedTargetScopeEvidence;
@@ -1024,6 +1035,7 @@ export function synthesizeSemanticPlane(
     sources: PLANE_NORMAL_SOURCES.filter((_s, j) => (normalMasks[i] ?? 0) & (1 << j)),
   }));
   trace.phase = 'NO_ELIGIBLE_CANDIDATE';
+  const generatedOffsetLedger: { normal: Vec3; offsets: readonly number[] }[] = [];
   const candidates: Candidate[] = [],
     bins = LOCAL_PLANE_LIMITS.offsets,
     channels = 5 + evidence.peers.length + (evidence.peers.length === 0 || groundedScope ? 1 : 0);
@@ -1265,6 +1277,7 @@ export function synthesizeSemanticPlane(
           : 0) +
         6 * channels * Uint32Array.BYTES_PER_ELEMENT,
     );
+    generatedOffsetLedger.push({ normal, offsets: [...offsets] });
     for (const [offsetIndex, d] of offsets.entries()) {
       checkpoint();
       const bin = Math.min(bins - 1, Math.max(0, Math.floor(((d - lo) / (hi - lo)) * bins))),
@@ -1655,6 +1668,7 @@ export function synthesizeSemanticPlane(
   let boundaryAmbiguity: BoundaryAmbiguity | undefined;
   let ownershipResolved = false;
   let structuralOwnership: StructuralOwnershipCardinality | undefined;
+  let representativeCompletion: LocalPlaneProposal['representativeCompletion'];
   const original = winner && confirmedOrigins.get(winner);
   const winningRefinement = winner && confirmedRefinements.get(winner);
   if (
@@ -1724,6 +1738,8 @@ export function synthesizeSemanticPlane(
       ownership.scratchBytes,
     );
     trace.interfaceOwnership = {
+      evidenceLevel: ownership.evidenceLevel,
+      wholeCertificate: ownership.wholeCertificate,
       ownership: ownership.ownership,
       targetPixels: ownership.targetPixels,
       bodyPixels: ownership.bodyPixels,
@@ -1751,9 +1767,11 @@ export function synthesizeSemanticPlane(
     structuralOwnership = ownershipAudit.cardinality;
     ownership = ownershipAudit.primaryOwnership ?? ownership;
     trace.ownershipCardinality = structuralOwnership;
-    if (trace.interfaceOwnership) {
+    if (hasInterfaceOwnership(trace.interfaceOwnership)) {
       trace.interfaceOwnership = {
         ...trace.interfaceOwnership,
+        evidenceLevel: ownership.evidenceLevel,
+        wholeCertificate: ownership.wholeCertificate,
         ownership: ownership.ownership,
         targetPixels: ownership.targetPixels,
         bodyPixels: ownership.bodyPixels,
@@ -1765,7 +1783,9 @@ export function synthesizeSemanticPlane(
     const region = ownership.materialInterface;
     if (
       region &&
-      structuralOwnership.ownershipCompleteness?.state === 'COMPLETE' &&
+      (structuralOwnership.ownershipCompleteness?.state === 'COMPLETE' ||
+        (structuralOwnership.state === 'TWO_WAY_UNRESOLVED' &&
+          structuralOwnership.ownershipCompleteness?.inventoryComplete)) &&
       structuralOwnership.state !== 'MULTIWAY_UNRESOLVED' &&
       structuralOwnership.state !== 'INSUFFICIENT_EVIDENCE'
     ) {
@@ -1823,7 +1843,7 @@ export function synthesizeSemanticPlane(
           c.targetScope?.state !== 'TARGET_SCOPE_SUPPORTED'
         )
           continue;
-        if (trace.interfaceOwnership) {
+        if (hasInterfaceOwnership(trace.interfaceOwnership)) {
           trace.interfaceOwnership.ownershipComparisons++;
           trace.interfaceOwnership.clippedOperations += region.faces.length;
         }
@@ -1846,6 +1866,170 @@ export function synthesizeSemanticPlane(
         )
           representatives.set(signature.ownership, c);
       }
+      if (
+        representatives.size === 0 &&
+        structuralOwnership.state === 'IDENTIFIED' &&
+        winningSeam.reason === 'STABLE_SECTION_STEP' &&
+        isExecutableState(trace.semanticExecutionEligibility.state) &&
+        originalAdmitted &&
+        !ownership.conflict
+      ) {
+        const ledger = generatedOffsetLedger.filter((row) =>
+          [1, -1].some((sign) =>
+            row.normal.every(
+              (n, i) =>
+                Math.abs(n - sign * requiredValue(winningRefinement.profileNormal[i])) <= 1e-7,
+            ),
+          ),
+        );
+        const existingOffsetCount = Math.max(0, ...ledger.map((row) => row.offsets.length));
+        const plan = planOwnershipCompletion(
+          prepared.geometry,
+          ownershipAudit,
+          trace.semanticExecutionEligibility.state,
+          winningRefinement,
+          representatives.size,
+          existingOffsetCount,
+          [...candidates, ...confirmed].map(cut),
+          checkpoint,
+          charge,
+        );
+        if (plan) {
+          const scored = new Map<number, LocalPlaneProposal | undefined>();
+          const completed = new Map<number, Candidate>();
+          const previous = proposal(
+            original,
+            evidence,
+            part,
+            candidates,
+            answer,
+            checkpoint,
+            charge,
+          );
+          const scorer = semanticPlaneScorer(prepared, answer, part, previous, checkpoint, context);
+          const offset = (plane: LocalPlaneProposal['cut']): number =>
+            dot(plane.normal, plane.origin);
+          const rows = requiredValue(ownershipAudit.resolvedInterfaces);
+          const memberships = (
+            plane: LocalPlaneProposal['cut'],
+          ): ('BODY_SIDE' | 'TARGET_SIDE' | 'INTERMEDIATE')[] =>
+            rows
+              .filter((row) => row.resolution !== 'PROVEN_IRRELEVANT')
+              .map(
+                (row) =>
+                  interfaceMembershipSignature(
+                    prepared.geometry,
+                    row.region,
+                    plane,
+                    checkpoint,
+                    charge,
+                  ).ownership,
+              );
+          const accepted = admitOwnershipCompletion(
+            plan,
+            {
+              semantic: (plane) => {
+                const result = scorer(plane);
+                scored.set(offset(plane), result);
+                return !!result;
+              },
+              direct: (plane) => {
+                const d = offset(plane),
+                  score = directScore(evidence, plane.normal, d, checkpoint, context);
+                if (!score) return false;
+                const targetScope = scored.get(d)?.targetScope;
+                completed.set(d, {
+                  normal: plane.normal,
+                  offset: d,
+                  score,
+                  section: original.section,
+                  ...(original.normalSourceMask !== undefined
+                    ? { normalSourceMask: original.normalSourceMask }
+                    : {}),
+                  offsetSource: 'SEMANTIC_TRANSITION',
+                  ...(targetScope ? { targetScope } : {}),
+                });
+                return true;
+              },
+              assembly: (plane) => {
+                const c = completed.get(offset(plane));
+                return (
+                  !!c && assemblyEligible(evidence, answer, part, c, candidates, checkpoint, charge)
+                );
+              },
+              peer: (plane) => scored.get(offset(plane))?.ownership.admitted === true,
+              scope: (plane) =>
+                completed.get(offset(plane))?.targetScope?.state === 'TARGET_SCOPE_SUPPORTED',
+              connectivity: (plane) =>
+                completionSourceConnected(prepared.geometry, plane, checkpoint, charge),
+              seam: (plane) =>
+                seamSupportsPlane(
+                  winningRefinement,
+                  plane,
+                  structuralSeamEvidence(winningRefinement, checkpoint),
+                ),
+              membership: (plane) =>
+                memberships(plane).every(
+                  (m, i) =>
+                    m ===
+                    requiredValue(rows.filter((r) => r.resolution !== 'PROVEN_IRRELEVANT')[i])
+                      .ownership,
+                ),
+              key: (plane) => memberships(plane).join('|') === plan.semanticKey,
+              completeness: () =>
+                ownershipCompleteness(
+                  rows.map((row) => ({
+                    offset: row.region.offset,
+                    faces: row.region.faces.length,
+                    resolution: row.resolution,
+                  })),
+                ).state === 'COMPLETE',
+              source: () => {
+                const proof = structuralOwnership?.sourceComponentResolution;
+                return (
+                  !!proof?.proven &&
+                  rows.every((row) =>
+                    row.region.faces.every(
+                      (f) => prepared.labelling.faceRank[f] === proof.component,
+                    ),
+                  )
+                );
+              },
+            },
+            checkpoint,
+            charge,
+          );
+          const admittedOffsets: number[] = [];
+          for (const item of accepted) {
+            const c = requiredValue(completed.get(offset(item.plane)));
+            const signature = interfaceMembershipSignature(
+              prepared.geometry,
+              region,
+              cut(c),
+              checkpoint,
+              charge,
+            );
+            if (signature.ownership === 'INTERMEDIATE') continue;
+            admittedOffsets.push(c.offset);
+            const changes = unrelated(c),
+              prior = representatives.get(signature.ownership);
+            distances.set(c, changes);
+            if (
+              !prior ||
+              changes < (distances.get(prior) ?? Infinity) ||
+              (changes === distances.get(prior) &&
+                Math.abs(c.offset - original.offset) < Math.abs(prior.offset - original.offset))
+            )
+              representatives.set(signature.ownership, c);
+          }
+          representativeCompletion = { ...plan, admittedOffsets };
+          const withCompletion = { ...structuralOwnership, representativeCompletion };
+          structuralOwnership = withCompletion;
+          trace.ownershipCardinality = withCompletion;
+          context.telemetry.offsets += plan.proposals.length;
+          trace.offsetCandidates += plan.proposals.length;
+        }
+      }
       const included = representatives.get('TARGET_SIDE'),
         excluded = representatives.get('BODY_SIDE');
       if (ownership.conflict || !originalAdmitted) winner = undefined;
@@ -1853,6 +2037,15 @@ export function synthesizeSemanticPlane(
         const selected = ownership.ownership === 'TARGET_SIDE' ? included : excluded;
         if (selected) {
           winner = selected;
+          if (representativeCompletion) {
+            representativeCompletion = {
+              ...representativeCompletion,
+              selectedOffset: selected.offset,
+            };
+            const withCompletion = { ...structuralOwnership, representativeCompletion };
+            structuralOwnership = withCompletion;
+            trace.ownershipCardinality = withCompletion;
+          }
           ownershipResolved = true;
           // A confirmed representative already owns a complete profile. A raw
           // representative must bind its actual section instead of inheriting the
@@ -1971,7 +2164,11 @@ export function synthesizeSemanticPlane(
     }
     trace.ownershipCardinality = structuralOwnership;
     if (
-      structuralOwnership.ownershipCompleteness?.state !== 'COMPLETE' ||
+      !(
+        structuralOwnership.ownershipCompleteness?.state === 'COMPLETE' ||
+        (structuralOwnership.state === 'TWO_WAY_UNRESOLVED' &&
+          structuralOwnership.ownershipCompleteness?.inventoryComplete)
+      ) ||
       (structuralOwnership.state !== 'IDENTIFIED' &&
         structuralOwnership.state !== 'TWO_WAY_UNRESOLVED')
     )
@@ -2062,6 +2259,7 @@ export function synthesizeSemanticPlane(
     ? {
         ...proposal(winner, evidence, part, candidates, answer, checkpoint, charge),
         ...(structuralOwnership ? { structuralOwnership } : {}),
+        ...(representativeCompletion ? { representativeCompletion } : {}),
         ...(boundaryAmbiguity ? { boundaryAmbiguity } : {}),
         ...(peerlessRefinement ? { peerlessRefinement } : {}),
         compatibilityReserve: reserve,
@@ -2404,4 +2602,24 @@ export function majorSiblingConsistencyScorer(
     cache.set(key, result);
     return result;
   };
+}
+
+function isExecutableState(
+  state: ReturnType<typeof semanticExecutionEligibility>['state'],
+): boolean {
+  return state === 'EXECUTABLE';
+}
+
+/** Bounds, cardinality or membership is established by the caller's exact invariant.
+ * Missing evidence aborts; it never supplies a geometric or semantic default. */
+function requiredValue<T>(value: T): NonNullable<T> {
+  if (value === undefined || value === null) throw Error('Required invariant value is missing.');
+  return value;
+}
+
+/** Read the shared trace at the existing check; callbacks may observe it through context. */
+function hasInterfaceOwnership(
+  value: PlaneSynthesisTrace['interfaceOwnership'],
+): value is NonNullable<PlaneSynthesisTrace['interfaceOwnership']> {
+  return Boolean(value);
 }

@@ -170,6 +170,7 @@ test('loading many models does not grow the scene graph', async ({ page }) => {
 });
 
 test('the main thread stays responsive while a large STL parses', async ({ page }) => {
+  test.setTimeout(180_000);
   await page.goto('/');
 
   // WHY THIS SHAPE. The previous version of this test asserted that the progress

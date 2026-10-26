@@ -1,4 +1,8 @@
 import {
+  certifyWholeInterface,
+  type WholeInterfaceCertificate,
+} from './semantic-whole-interface-certificate';
+import {
   collectMaterialInterface,
   interfaceMembershipSignature,
   interfaceCorrespondsToPoint,
@@ -16,6 +20,15 @@ import type { SuggestedPlane } from './suggestions';
 import type { Checkpoint } from './checkpoint';
 import type { InterfaceOwnership } from './semantic-boundary-confirmation';
 
+export type InterfaceEvidenceLevel =
+  | 'WHOLE_INTERFACE_TARGET_PROVEN'
+  | 'WHOLE_INTERFACE_BODY_PROVEN'
+  | 'LOCAL_TARGET_ASSOCIATION'
+  | 'LOCAL_BODY_ASSOCIATION'
+  | 'PROVEN_IRRELEVANT'
+  | 'UNKNOWN'
+  | 'CONFLICT';
+
 export interface InterfaceObservationSupport {
   readonly view: (typeof VIEW_NAMES)[number];
   readonly visiblePixels: number;
@@ -24,13 +37,15 @@ export interface InterfaceObservationSupport {
   readonly unknownPixels: number;
 }
 
-/** Whole-interface proof needs exhaustive direct coverage or independent observations.
+/** Whole-interface proof requires exhaustive direct evidence and a complete continuous certificate.
  * The existing grounded-boundary pixel floor counts observations, not coverage fractions.
  * An unlabeled observation supplies neither BODY evidence nor a contradiction. */
 export function classifyInterfaceOwnershipSupport(
   observations: readonly InterfaceObservationSupport[],
   positiveFrontierProof: boolean,
+  wholeCertificate?: Pick<WholeInterfaceCertificate, 'complete' | 'conflict'>,
 ): {
+  readonly evidenceLevel: InterfaceEvidenceLevel;
   readonly ownership: InterfaceOwnership;
   readonly conflict: boolean;
   readonly category:
@@ -58,18 +73,30 @@ export function classifyInterfaceOwnershipSupport(
     );
   const targetAxes = axes('targetPixels'),
     bodyAxes = axes('bodyPixels');
-  const conflict = (target > 0 || positiveFrontierProof) && body > 0;
+  const conflict =
+    wholeCertificate?.conflict === true || ((target > 0 || positiveFrontierProof) && body > 0);
   const exhaustive = unknown === 0 && (target > 0 || body > 0);
   const directTarget = target > 0 && (exhaustive || targetAxes.length >= 2);
   const directBody = body > 0 && (exhaustive || bodyAxes.length >= 2);
-  const ownership: InterfaceOwnership = conflict
-    ? 'AMBIGUOUS'
-    : positiveFrontierProof || directTarget
+  const evidenceLevel: InterfaceEvidenceLevel = conflict
+    ? 'CONFLICT'
+    : wholeCertificate?.complete && exhaustive && target > 0
+      ? 'WHOLE_INTERFACE_TARGET_PROVEN'
+      : wholeCertificate?.complete && exhaustive && body > 0
+        ? 'WHOLE_INTERFACE_BODY_PROVEN'
+        : positiveFrontierProof || directTarget
+          ? 'LOCAL_TARGET_ASSOCIATION'
+          : directBody
+            ? 'LOCAL_BODY_ASSOCIATION'
+            : 'UNKNOWN';
+  const ownership: InterfaceOwnership =
+    evidenceLevel === 'WHOLE_INTERFACE_TARGET_PROVEN'
       ? 'TARGET_SIDE'
-      : directBody
+      : evidenceLevel === 'WHOLE_INTERFACE_BODY_PROVEN'
         ? 'BODY_SIDE'
         : 'AMBIGUOUS';
   return {
+    evidenceLevel,
     ownership,
     conflict,
     targetAxes,
@@ -89,6 +116,8 @@ export function classifyInterfaceOwnershipSupport(
 }
 
 export interface InterfaceOwnershipEvidence {
+  readonly evidenceLevel?: InterfaceEvidenceLevel;
+  readonly wholeCertificate?: WholeInterfaceCertificate;
   readonly observations?: readonly InterfaceObservationSupport[];
   readonly support?: ReturnType<typeof classifyInterfaceOwnershipSupport>;
   readonly interfaceSelectedAlternative: 0 | 1 | null;
@@ -164,8 +193,8 @@ export function interfaceOwnershipEvidence(
       }
     }
   }
-  // With parallel hypotheses, preserving a corroborated positive target frontier behind EVERY
-  // changed interface vertex forces that interface into the target halfspace. Use the actual cut
+  // Existing frontier collection is retained verbatim. A corroborated positive target frontier
+  // supplies LOCAL association only; it never forces whole-interface ownership. Use the actual cut
   // direction and the complete projected interface interval, including its angular spread.
   // Missing silhouette coverage supplies no converse BODY proof.
   const inspectFrontier =
@@ -180,14 +209,14 @@ export function interfaceOwnershipEvidence(
     ? collectGroundedBoundaryWitnesses(
         prepared,
         target,
-        [region!.normal],
+        [requiredValue(region).normal],
         checkpoint,
         chargeVisit,
         (point, normal) =>
           signed({ normal, origin: [0, 0, 0] }, point) < interfaceLow - pixelUncertainty - 1e-8 &&
           interfaceCorrespondsToPoint(
             geometry,
-            region!,
+            requiredValue(region),
             point,
             pixelUncertainty,
             checkpoint,
@@ -243,8 +272,29 @@ export function interfaceOwnershipEvidence(
     });
   }
   checkpoint();
-  const support = classifyInterfaceOwnershipSupport(observations, positiveFrontierProof);
+  const consistentExhaustive =
+    unknownPixels === 0 &&
+    ((targetPixels > 0 && bodyPixels === 0) ||
+      (bodyPixels > 0 && targetPixels === 0 && !positiveFrontierProof));
+  const wholeCertificate =
+    region && consistentExhaustive
+      ? certifyWholeInterface(
+          prepared,
+          region,
+          targetPixels > 0 ? [target] : peers,
+          checkpoint,
+          charge,
+          targetPixels > 0 ? peers : [target],
+        )
+      : undefined;
+  const support = classifyInterfaceOwnershipSupport(
+    observations,
+    positiveFrontierProof,
+    wholeCertificate,
+  );
   return {
+    evidenceLevel: support.evidenceLevel,
+    ...(wholeCertificate ? { wholeCertificate } : {}),
     observations,
     support,
     interfaceSelectedAlternative: selectedBy.size === 1 ? (selectedBy.has(0) ? 0 : 1) : null,
@@ -259,6 +309,7 @@ export function interfaceOwnershipEvidence(
     // The corroborated-frontier collector also owns one reusable raster visitation mask.
     scratchBytes:
       faces.byteLength +
+      (wholeCertificate?.scratchBytes ?? 0) +
       (region?.scratchBytes ?? 0) +
       (inspectFrontier ? Math.max(0, ...prepared.rasters.map((r) => r.face.length)) : 0),
     conflict: support.conflict,
@@ -277,4 +328,11 @@ export function interfaceOwnershipEvidence(
         }
       : {}),
   };
+}
+
+/** Bounds, cardinality or membership is established by the caller's exact invariant.
+ * Missing evidence aborts; it never supplies a geometric or semantic default. */
+function requiredValue<T>(value: T): NonNullable<T> {
+  if (value === undefined || value === null) throw Error('Required invariant value is missing.');
+  return value;
 }

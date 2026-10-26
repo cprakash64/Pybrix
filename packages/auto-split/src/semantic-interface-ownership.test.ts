@@ -114,7 +114,11 @@ it('uses corroborated positive longitudinal support behind an unannotated should
   const result = interfaceOwnershipEvidence(prepared, target, [], alternatives, () => undefined);
   expect(result.targetPixels).toBe(0);
   expect(result.positiveFrontierProof).toBe(true);
-  expect(result.ownership).toBe('TARGET_SIDE');
+  expect(result).toMatchObject({
+    evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+    ownership: 'AMBIGUOUS',
+  });
+  expect(result.wholeCertificate).toBeUndefined();
 });
 it('cancels without modifying the source geometry', () => {
   const before = prepared.geometry.positions.slice();
@@ -197,6 +201,10 @@ it('corroborates the same longitudinal ownership evidence after rotation', async
     );
     expect(result.targetPixels).toBe(0);
     expect(result.positiveFrontierProof).toBe(true);
-    expect(result.ownership).toBe('TARGET_SIDE');
+    expect(result).toMatchObject({
+      evidenceLevel: 'LOCAL_TARGET_ASSOCIATION',
+      ownership: 'AMBIGUOUS',
+    });
+    expect(result.wholeCertificate).toBeUndefined();
   }
 });
