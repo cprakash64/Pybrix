@@ -20,6 +20,15 @@ interface Bounds {
 }
 type Node = Bounds & { ids?: readonly number[]; left?: Node; right?: Node };
 type IntegerPoint = readonly [bigint, bigint, bigint];
+interface TargetPredicate {
+  readonly triangle: ExactProjectedTriangle;
+  readonly points: readonly IntegerPoint[];
+  readonly edges: (readonly [bigint, bigint] | undefined)[];
+  winding: bigint | undefined;
+}
+// One retained target (three points, three edge pairs and a winding); replacement
+// staging fits the existing point scratch allowance. No per-source records grow.
+const TARGET_PREDICATE_BYTES = 2048;
 class VisibilityBuildLimit extends Error {}
 export const EXACT_VISIBILITY_LIMITS = Object.freeze({
   sourceTriangles: 262144,
@@ -40,6 +49,7 @@ export class ExactVisibilityAcceleration {
   private checkpoint: () => void;
   private tree: Node | undefined;
   private points = new Map<ExactProjectedPoint, IntegerPoint>();
+  private target: TargetPredicate | undefined;
   private readonly scale = 1n << 149n;
   private building = false;
   private disposed = false;
@@ -328,7 +338,10 @@ export class ExactVisibilityAcceleration {
     this.op();
     if (this.points.size < EXACT_VISIBILITY_LIMITS.pointEntries) {
       this.guard(
-        this.pointBytes + 448 + EXACT_VISIBILITY_LIMITS.pointScratchBytes <=
+        this.pointBytes +
+          448 +
+          (this.target ? TARGET_PREDICATE_BYTES : 0) +
+          EXACT_VISIBILITY_LIMITS.pointScratchBytes <=
           EXACT_VISIBILITY_LIMITS.pointBytes,
       );
       this.pointBytes += 448;
@@ -347,29 +360,79 @@ export class ExactVisibilityAcceleration {
     this.checkpoint();
     if (this.disposed) return false;
     try {
-      const a = triangle.vs.map((p) => this.point(p)),
+      // The certificate constructs immutable projected triangles once per view.
+      // Its inner candidate loop repeats this target. Identity changes replace
+      // the entire record; exceptions cannot publish partially converted points.
+      this.op();
+      let target = this.target;
+      if (target?.triangle !== triangle) {
+        const points = triangle.vs.map((p) => this.point(p));
+        this.guard(
+          this.pointBytes + TARGET_PREDICATE_BYTES + EXACT_VISIBILITY_LIMITS.pointScratchBytes <=
+            EXACT_VISIBILITY_LIMITS.pointBytes,
+        );
+        this.op();
+        target = {
+          triangle,
+          points,
+          edges: new Array<readonly [bigint, bigint] | undefined>(3),
+          winding: undefined,
+        };
+        this.target = target;
+      }
+      const a = target.points,
         b = source.vs.map((p) => this.point(p));
       for (const [polygon, opposite] of [
         [a, b],
         [b, a],
       ]) {
-        const winding = this.side(
-          requiredValue(requiredValue(polygon)[0]),
-          requiredValue(requiredValue(polygon)[1]),
-          requiredValue(requiredValue(polygon)[2]),
-        );
+        const isTarget = polygon === a;
+        let winding: bigint;
+        if (isTarget) {
+          this.op();
+          if (target.winding === undefined) {
+            const value = this.side(
+              requiredValue(requiredValue(polygon)[0]),
+              requiredValue(requiredValue(polygon)[1]),
+              requiredValue(requiredValue(polygon)[2]),
+            );
+            this.op();
+            target.winding = value;
+          }
+          winding = target.winding;
+        } else {
+          winding = this.side(
+            requiredValue(requiredValue(polygon)[0]),
+            requiredValue(requiredValue(polygon)[1]),
+            requiredValue(requiredValue(polygon)[2]),
+          );
+        }
         this.op();
         if (!winding) return false;
         for (let i = 0; i < 3; i++) {
           this.op();
+          let edge: readonly [bigint, bigint] | undefined;
+          if (isTarget) {
+            this.op();
+            edge = target.edges[i];
+            if (!edge) {
+              const start = requiredValue(requiredValue(polygon)[i]),
+                end = requiredValue(requiredValue(polygon)[(i + 1) % 3]);
+              edge = [this.sub(end[0], start[0]), this.sub(end[1], start[1])];
+              this.op();
+              target.edges[i] = edge;
+            }
+          }
           let exterior = true;
           for (const point of requiredValue(opposite)) {
             this.op();
-            const side = this.side(
-              requiredValue(requiredValue(polygon)[i]),
-              requiredValue(requiredValue(polygon)[(i + 1) % 3]),
-              point,
-            );
+            const start = requiredValue(requiredValue(polygon)[i]);
+            const side = edge
+              ? this.sub(
+                  this.mul(edge[0], this.sub(point[1], start[1])),
+                  this.mul(edge[1], this.sub(point[0], start[0])),
+                )
+              : this.side(start, requiredValue(requiredValue(polygon)[(i + 1) % 3]), point);
             this.op();
             if (winding > 0n ? !this.atMost(side, 0n) : !this.atLeast(side, 0n)) {
               exterior = false;
@@ -396,6 +459,7 @@ export class ExactVisibilityAcceleration {
     sortScratchBytes: number;
     retainedTreeBytes: number;
     pointRecords: number;
+    cachedTargetBytes: number;
     pointBytes: number;
     peakPointBytes: number;
     pointScratchBytes: number;
@@ -414,6 +478,7 @@ export class ExactVisibilityAcceleration {
       sortScratchBytes: this.sortScratchBytes,
       retainedTreeBytes: this.tree ? this.nodes * 256 : 0,
       pointRecords: this.points.size,
+      cachedTargetBytes: this.target ? TARGET_PREDICATE_BYTES : 0,
       pointBytes: this.pointBytes,
       peakPointBytes: this.peakPointBytes,
       pointScratchBytes: EXACT_VISIBILITY_LIMITS.pointScratchBytes,
@@ -428,6 +493,7 @@ export class ExactVisibilityAcceleration {
   dispose(): void {
     this.tree = undefined;
     this.points.clear();
+    this.target = undefined;
     this.triangles = [];
     this.faces = [];
     this.nodes = 0;
