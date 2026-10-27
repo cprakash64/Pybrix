@@ -915,11 +915,12 @@ export function createViewport(
   controls.addEventListener('change', render);
 
   /*
-   * ONE FRAME FOR THE SPLIT OVERLAYS, not one per call. A split preview lands
-   * as a model swap followed by the plane, the outline and the piece tints in
-   * the same effect flush; drawing a 500k-triangle scene once per call stacked
-   * several software-rendered frames into one main-thread gap. These three
-   * schedule instead, and the next animation frame draws them together.
+   * A split result arrives as model, active-part, highlight, plane, outline
+   * and tint updates in one effect flush. Mutate the scene synchronously, then
+   * draw their complete final state once. Immediate intermediate model and
+   * selection draws queue redundant full-scene GPU work before presentation,
+   * even when only the last scene is visible. Apply still owns a fully validated
+   * worker candidate; this coalesces drawing, never geometry or transactions.
    */
   let scheduledFrame = 0;
   const scheduleRender = (): void => {
@@ -1178,7 +1179,7 @@ export function createViewport(
     canvas.setAttribute('aria-label', 'Loaded 3D model. Drag to orbit, scroll to zoom.');
 
     applyPartTints();
-    if (keepView) render();
+    if (keepView) scheduleRender();
     else fitView();
   };
 
@@ -1224,7 +1225,7 @@ export function createViewport(
     applyHiddenParts();
 
     placeActivePartGroup();
-    render();
+    scheduleRender();
   };
 
   const setEditPlane = (plane: ViewportEditPlane | undefined): void => {
@@ -1454,11 +1455,11 @@ export function createViewport(
     const positions = activePartPositions();
     if (data === undefined || positions === undefined || data.revision !== currentModel?.revision) {
       faceHighlight.setFaces(undefined, undefined);
-      render();
+      scheduleRender();
       return;
     }
     faceHighlight.setFaces(data.faces, positions);
-    render();
+    scheduleRender();
   };
 
   const setHoleFillOverlays = (data: ViewportHoleFillData | undefined): void => {
