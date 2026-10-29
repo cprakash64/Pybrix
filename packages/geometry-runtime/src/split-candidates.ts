@@ -66,6 +66,12 @@ interface Entry {
 
 /** Two-piece specialization of the Stage 7 worker-resident candidate transaction. */
 export class SplitCandidateStore {
+  // Worker replacement can repeat every source/ticket counter. Namespace the
+  // executable Map key with local cryptographic identity for this store lifetime.
+  // Keep the platform boundary structural: this package has no DOM dependency.
+  private readonly runtimeId = (
+    globalThis as typeof globalThis & { crypto: { randomUUID(): string } }
+  ).crypto.randomUUID();
   private readonly candidates = new Map<string, Entry>();
   private readonly active = new Map<DocumentId, string>();
   private nextId = 1;
@@ -160,7 +166,7 @@ export class SplitCandidateStore {
       throw modelUnavailable('The split became stale during validation.');
     const handle: SplitCandidateHandle = {
       ...ticket,
-      candidateId: `split-candidate-${String(this.nextId++)}`,
+      candidateId: `${this.runtimeId}:split-candidate-${String(this.nextId++)}`,
     };
     const canonicalBytes = meshByteLength(result.pieceA) + meshByteLength(result.pieceB),
       triangles = documentTriangleCount(document),
