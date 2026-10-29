@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { act, cleanup, renderHook, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { createOperationId, invalidState } from '@cadfixer/shared';
-import { PROTOCOL_CHANNEL } from '@cadfixer/geometry-runtime';
+import { PROTOCOL_CHANNEL, type GeometryCoordinator } from '@cadfixer/geometry-runtime';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
 import type {
   DocumentHandle,
@@ -812,6 +812,7 @@ async function boundaryTransport(
   outcome: 'success' | 'reject' | 'pending' = 'success',
 ): Promise<{
   counts: { attempted: number; accepted: number; returned: number };
+  pending: () => number;
   reply: () => void;
 }> {
   const original = s.commit.getMockImplementation();
@@ -856,6 +857,8 @@ async function boundaryTransport(
   });
   return {
     counts,
+    pending: (): number =>
+      (s.client as unknown as { coordinator: GeometryCoordinator }).coordinator.pendingCount,
     reply: (): void => {
       reply();
     },
@@ -886,6 +889,7 @@ it.each(['CONFIRMED', 'AUTOMATIC_IDENTIFIED', 'boundary'] as const)(
       await frame();
       await frame();
       expect(transport.counts).toEqual({ attempted: attempt, accepted: 0, returned: 0 });
+      expect(transport.pending()).toBe(0);
       expect(s.result.current.preview).toBe(before);
       expect(s.result.current.preview?.semanticQualification?.scopeConfirmation).toBe(
         before?.semanticQualification?.scopeConfirmation,
@@ -902,6 +906,7 @@ it.each(['CONFIRMED', 'AUTOMATIC_IDENTIFIED', 'boundary'] as const)(
     await frame();
     await frame();
     expect(transport.counts).toEqual({ attempted: 3, accepted: 1, returned: 1 });
+    expect(transport.pending()).toBe(0);
     expect(s.result.current.preview).toBeUndefined();
     expect(s.result.current.applied).toBeDefined();
     expect(s.result.current.failedSemanticApply).toBeUndefined();

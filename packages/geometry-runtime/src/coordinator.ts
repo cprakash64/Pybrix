@@ -175,19 +175,28 @@ export class GeometryCoordinator {
     if (signal !== undefined) this.signals.set(id, signal);
 
     this.pending.set(id, settle);
-    this.endpoint.postMessage(
-      {
-        channel: PROTOCOL_CHANNEL,
-        kind: 'request',
-        id,
-        operation,
-        payload,
-        // SHARED, never transferred: a SharedArrayBuffer in a transfer list
-        // would detach the sender's view of the flag it has to set.
-        ...(signal === undefined ? {} : { cancellation: signal.buffer }),
-      },
-      options.transfer ?? [],
-    );
+    try {
+      this.endpoint.postMessage(
+        {
+          channel: PROTOCOL_CHANNEL,
+          kind: 'request',
+          id,
+          operation,
+          payload,
+          // SHARED, never transferred: a SharedArrayBuffer in a transfer list
+          // would detach the sender's view of the flag it has to set.
+          ...(signal === undefined ? {} : { cancellation: signal.buffer }),
+        },
+        options.transfer ?? [],
+      );
+    } catch (error) {
+      // Register before submission so re-entrant responses can find the request.
+      // A throwing submission returns no handle: remove its settlement owners
+      // without rejecting an inaccessible promise, then preserve the exact error.
+      this.pending.delete(id);
+      this.signals.delete(id);
+      throw error;
+    }
 
     return {
       id,
