@@ -60,6 +60,7 @@ interface Entry {
   authorizeCommit?: () => void;
   readonly handle: SplitCandidateHandle;
   readonly document: GeometryDocument;
+  readonly resultIdentity: object;
   readonly summary: SplitCandidateSummary;
 }
 
@@ -191,9 +192,18 @@ export class SplitCandidateStore {
         outlineTruncated: result.cutA.outlineTruncated,
       },
     };
-    this.candidates.set(handle.candidateId, { handle, document, summary });
+    this.candidates.set(handle.candidateId, {
+      handle,
+      document,
+      summary,
+      resultIdentity: Object.freeze({}),
+    });
     this.active.set(ticket.documentId, handle.candidateId);
     return summary;
+  }
+  /** Opaque identity of this validated immutable result; holds no geometry buffers. */
+  public resultIdentity(handle: SplitCandidateHandle): object {
+    return this.require(handle).resultIdentity;
   }
   /** Trusted worker policy attached to this exact immutable result; never supplied by a client. */
   public authorizeCommit(handle: SplitCandidateHandle, authorize: () => void): void {

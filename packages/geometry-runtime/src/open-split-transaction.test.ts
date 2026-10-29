@@ -71,6 +71,10 @@ it('trusted semantic authorization is rechecked and consumed before any commit a
     source = resident.commit(doc);
   const result = splitOpenSurface(mesh, { origin: [0, 0, 0], normal: [1, 0, 0] }, uncancellable);
   const preview = store.resolve(store.begin(source, partId('part-1')), result, uncancellable);
+  const identity = store.resultIdentity(preview.candidate);
+  expect(Object.keys(identity)).toHaveLength(0);
+  expect(Object.isFrozen(identity)).toBe(true);
+  expect(store.resultIdentity(preview.candidate)).toBe(identity);
   let confirmed = false,
     consumed = false;
   store.authorizeCommit(preview.candidate, () => {
@@ -87,5 +91,8 @@ it('trusted semantic authorization is rechecked and consumed before any commit a
   expect(() => store.commit(preview.candidate, source, partId('part-1'), (d) => d)).toThrow(
     'missing or consumed authority',
   );
+  const replacement = store.resolve(store.begin(source, partId('part-1')), result, uncancellable);
+  expect(store.resultIdentity(replacement.candidate)).not.toBe(identity);
+  expect(() => store.resultIdentity(preview.candidate)).toThrow();
   expect(resident.resolve(source)).toBe(doc);
 });

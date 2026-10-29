@@ -213,8 +213,12 @@ export function semanticScopeBinding(
   )
     throw invalidState('Find parts again before checking this cut.');
   const identified = registry.identified.get(identity.candidateId);
+  const meshIdentity = new WeakRef(mesh);
   return {
-    current: () => current === registry && registry.mesh.deref() === mesh,
+    current: () =>
+      current === registry &&
+      meshIdentity.deref() !== undefined &&
+      registry.mesh.deref() === meshIdentity.deref(),
     automatic:
       !!identified &&
       JSON.stringify(semanticPlaneIdentity(identified)) ===

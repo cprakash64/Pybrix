@@ -208,13 +208,15 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
     semanticQualification: { ...payload.semanticQualification, ...metrics },
   };
   const registry = semanticScopeBinding(payload, part.mesh, qualified.plane);
-  const physical = splitCandidates.preview(preview.candidate, (document) => document);
+  const physical = splitCandidates.resultIdentity(preview.candidate);
+  const sourcePartIdentity = new WeakRef(part);
   const authority = issueScopeReceipt(preview, physical, {
     automatic: registry.automatic,
     current: () =>
       registry.current() &&
       residentDocuments.has(payload.source) &&
-      residentDocuments.resolvePart(payload.source, partId(payload.partId)) === part,
+      residentDocuments.resolvePart(payload.source, partId(payload.partId)) ===
+        sourcePartIdentity.deref(),
   });
   splitCandidates.authorizeCommit(preview.candidate, authority.authorizeCommit);
   return { ...value, value: { ...preview, semanticQualification: authority.proof } };
@@ -241,7 +243,7 @@ export const splitConfirmScopeHandler: OperationHandler<'split/confirm-scope'> =
   context.throwIfCancelled();
   const receiptId = readScopeReceiptId(payload);
   const confirmed = confirmScopeReceipt(receiptId, (candidate) =>
-    splitCandidates.preview(candidate, (document) => document),
+    splitCandidates.resultIdentity(candidate),
   );
   recordBoundaryPreview(confirmed.candidate, false);
   return Promise.resolve({

@@ -959,33 +959,36 @@ describe('physical scope confirmation controls', () => {
   });
   it('withdraws the inspected result when its worker receipt expires', async () => {
     const s = await suggestedScope();
-    const preview = physicalPreview('REQUIRED');
-    const proof = preview.semanticQualification;
-    if (!proof) throw Error('Missing fixture proof');
-    s.createSplit.mockReturnValue({
-      promise: Promise.resolve({
-        ...preview,
-        semanticQualification: {
-          ...proof,
-          scopeConfirmation: {
-            receiptId: 'expiring',
-            state: 'REQUIRED',
-            expiresAt: Date.now() + 100,
+    vi.useFakeTimers();
+    try {
+      const preview = physicalPreview('REQUIRED');
+      const proof = preview.semanticQualification;
+      if (!proof) throw Error('Missing fixture proof');
+      s.createSplit.mockReturnValue({
+        promise: Promise.resolve({
+          ...preview,
+          semanticQualification: {
+            ...proof,
+            scopeConfirmation: {
+              receiptId: 'expiring',
+              state: 'REQUIRED',
+              expiresAt: Date.now() + 1000,
+            },
           },
-        },
-      }),
-      cancel: (): void => undefined,
-    });
-    click('auto-preview-head');
-    await settle();
-    expect(screen.getByTestId('auto-scope-confirm-head')).toBeVisible();
-    await act(async () => {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 130);
+        }),
+        cancel: (): void => undefined,
       });
-    });
-    expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
-    expect(screen.queryByTestId('split-apply')).toBeNull();
-    expect(s.commitSplit).not.toHaveBeenCalled();
+      click('auto-preview-head');
+      await settle();
+      expect(screen.getByTestId('auto-scope-confirm-head')).toBeVisible();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1001);
+      });
+      expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
+      expect(screen.queryByTestId('split-apply')).toBeNull();
+      expect(s.commitSplit).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

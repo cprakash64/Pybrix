@@ -16,10 +16,10 @@ After a successful current native Preview and winner registration, the trusted w
 - preparation and semantic candidate/alternative in the worker proof;
 - source mesh identity and semantic candidate-set generation through the registered worker object identity and live mesh reference;
 - exact binary-rational hyperplane and oriented positive physical side;
-- exact native ticket/generation and immutable stored result document, containing piece A, piece B and boundary;
+- exact native ticket/generation and opaque immutable native-store result identity for the document containing piece A, piece B and boundary;
 - current-source, confirmation, cancellation, expiry and consumption state.
 
-The physical identity is the immutable worker-owned result object, not a client-supplied hash and not another result at a numerically similar plane. No mesh copies are stored in the authority record. Legacy plane-setting tolerance only selects among existing registered planes; receipt authority uses the actual registered winner and exact physical identity.
+The physical identity is the immutable worker-owned result-entry identity, not a client-supplied hash and not another result at a numerically similar plane. No mesh copies or strong geometry references are stored in the authority record; source identity uses weak references, and the native store owns the geometry. Legacy plane-setting tolerance only selects among existing registered planes; receipt authority uses the actual registered winner and exact physical identity.
 
 The receipt is attached to the same native ticket with a trusted commit-policy closure. Therefore removing semantic metadata from a commit request, forging READY, or clearing/replacing a semantic registry cannot downgrade this ticket into a manual transaction. The semantic registry object itself is the candidate-set generation: replacement invalidates old records without changing geometry.
 
