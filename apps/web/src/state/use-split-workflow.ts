@@ -952,9 +952,12 @@ export function useSplitWorkflow(): SplitControls {
       try {
         await afterPaint();
         if (action.current !== token) return;
+        const operation = client.commitSplit(current.candidate, model.handle, part.partId);
+        // A returned handle follows synchronous transport submission. A throw
+        // before return leaves this Preview retryable; later outcomes may have
+        // consumed Worker authority and must retain fail-closed recovery.
         dispatched = true;
-        const result = await client.commitSplit(current.candidate, model.handle, part.partId)
-          .promise;
+        const result = await operation.promise;
         {
           if (
             !store.applySplitResult(result, {

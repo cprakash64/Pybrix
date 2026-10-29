@@ -924,6 +924,41 @@ describe('physical scope confirmation controls', () => {
     });
     return s;
   }
+  it('C2AK: preserves actual session READY on synchronous non-submission, then retires on returned-operation rejection', async () => {
+    const s = await suggestedScope();
+    click('auto-preview-head');
+    await settle();
+    s.confirmSplitScope.mockReturnValue({
+      promise: Promise.resolve({
+        candidate: physicalPreview('CONFIRMED').candidate,
+        semanticQualification: physicalPreview('CONFIRMED').semanticQualification,
+      }),
+      cancel: (): void => undefined,
+    });
+    click('auto-scope-confirm-head');
+    await settle();
+    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Ready');
+    s.commitSplit.mockImplementationOnce(() => {
+      throw invalidState('Not submitted. Retry Apply.');
+    });
+    click('split-apply');
+    await settle();
+    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Ready');
+    expect(screen.getByTestId('split-apply')).toBeEnabled();
+    expect(document.body).toHaveTextContent('Not submitted. Retry Apply.');
+    expect(s.createSplit).toHaveBeenCalledTimes(1);
+    expect(s.confirmSplitScope).toHaveBeenCalledTimes(1);
+    s.commitSplit.mockImplementationOnce(() => ({
+      promise: Promise.reject(invalidState('Accepted operation failed.')),
+      cancel: (): void => undefined,
+    }));
+    click('split-apply');
+    await settle();
+    expect(s.commitSplit).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('auto-row-status-head')).toBeNull();
+    expect(screen.queryByTestId('split-apply')).toBeNull();
+    expect(document.body).toHaveTextContent('Accepted operation failed.');
+  });
   it('shows confirm only after physical Preview, keeps Apply disabled, and reuses the receipt', async () => {
     const s = await suggestedScope();
     expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();

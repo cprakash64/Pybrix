@@ -730,7 +730,8 @@ export function useAutoSplit(
       tab === 'auto' &&
       selected !== undefined &&
       splitError !== undefined &&
-      !split.errorIsResourceLimit,
+      !split.errorIsResourceLimit &&
+      !split.errorIsOperationFailure,
     cutNeedsMoreRoom:
       tab === 'auto' &&
       selected !== undefined &&

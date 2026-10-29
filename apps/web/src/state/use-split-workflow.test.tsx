@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { act, cleanup, renderHook, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { createOperationId } from '@cadfixer/shared';
+import { createOperationId, invalidState } from '@cadfixer/shared';
+import { PROTOCOL_CHANNEL } from '@cadfixer/geometry-runtime';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
 import type {
   DocumentHandle,
@@ -19,13 +20,21 @@ import { SplitPhase, type SplitControls } from './use-split-workflow';
 import { SplitControlsProvider, useSplitControls } from './workflow-controllers';
 import { SplitWorkspace } from '../components/SplitWorkspace';
 import { ShellLayoutProvider } from '../components/shell/shell-layout';
-const paint = vi.hoisted(() => ({ frames: [] as (() => void)[] }));
+const paint = vi.hoisted(() => ({
+  frames: [] as (() => void)[],
+  failure: undefined as Error | undefined,
+}));
 vi.mock('./after-paint', () => ({
-  afterPaint: (): Promise<void> => new Promise<void>((resolve) => paint.frames.push(resolve)),
+  afterPaint: (): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      if (paint.failure) reject(paint.failure);
+      else paint.frames.push(resolve);
+    }),
 }));
 afterEach(() => {
   cleanup();
   paint.frames = [];
+  paint.failure = undefined;
 });
 function part(partId: string, zMax = 104): PartDescriptor {
   return {
@@ -94,6 +103,8 @@ interface TestSetup {
   readonly create: MockInstance<GeometryClient['createSplit']>;
   readonly commit: MockInstance<GeometryClient['commitSplit']>;
   readonly undo: MockInstance<GeometryClient['undoRepair']>;
+  readonly discard: MockInstance<GeometryClient['discardSplit']>;
+  readonly adopt: MockInstance<WorkspaceStore['applySplitResult']>;
   readonly status: MockInstance<WorkspaceStore['pushStatus']>;
 }
 function setup(): TestSetup {
@@ -127,13 +138,13 @@ function setup(): TestSetup {
   const undo = vi
     .spyOn(client, 'undoRepair')
     .mockReturnValue({ promise: Promise.resolve({}) } as ReturnType<GeometryClient['undoRepair']>);
-  vi.spyOn(client, 'discardSplit').mockReturnValue({
+  const discard = vi.spyOn(client, 'discardSplit').mockReturnValue({
     id: createOperationId(),
     interruptible: true,
     cancel: vi.fn(),
     promise: Promise.resolve({ released: true }),
   });
-  vi.spyOn(store, 'applySplitResult').mockReturnValue(true);
+  const adopt = vi.spyOn(store, 'applySplitResult').mockReturnValue(true);
   vi.spyOn(store, 'applyUndoResult').mockReturnValue(true);
   const status = vi.spyOn(store, 'pushStatus');
   const hook = renderHook(() => useSplitControls(), {
@@ -150,7 +161,7 @@ function setup(): TestSetup {
       </WorkspaceProvider>
     ),
   });
-  return { ...hook, create, commit, undo, status, client, store };
+  return { ...hook, create, commit, undo, discard, adopt, status, client, store };
 }
 async function frame(): Promise<void> {
   await act(async () => {
@@ -793,3 +804,314 @@ it.each(['CONFIRMED', 'AUTOMATIC_IDENTIFIED'] as const)(
     expect(s.result.current.applied).toBeDefined();
   },
 );
+
+/** The real client/coordinator, with only the transport acceptance/response controlled. */
+async function boundaryTransport(
+  s: TestSetup,
+  synchronousFailures: number,
+  outcome: 'success' | 'reject' | 'pending' = 'success',
+): Promise<{
+  counts: { attempted: number; accepted: number; returned: number };
+  reply: () => void;
+}> {
+  const original = s.commit.getMockImplementation();
+  const preview = s.result.current.preview;
+  const model = s.store.getSnapshot().model;
+  if (!original || !preview || !model) throw Error('Missing transport fixture');
+  const success = await original(preview.candidate, model.handle, 'A').promise;
+  s.commit.mockRestore();
+  const commit = s.client.commitSplit.bind(s.client);
+  const counts = { attempted: 0, accepted: 0, returned: 0 };
+  // Observe successful handle return without replacing the dispatch implementation.
+  vi.spyOn(s.client, 'commitSplit').mockImplementation((...args) => {
+    const operation = commit(...args);
+    counts.returned++;
+    return operation;
+  });
+  const worker = (s.client as unknown as { worker: Worker }).worker;
+  let reply = (): void => undefined;
+  vi.spyOn(worker, 'postMessage').mockImplementation((value: unknown) => {
+    const message = value as { operation?: string; id: string };
+    if (message.operation !== 'split/commit') return;
+    counts.attempted++;
+    if (synchronousFailures-- > 0) throw invalidState('Apply was not submitted. Try again.');
+    counts.accepted++;
+    reply = (): void => {
+      worker.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            channel: PROTOCOL_CHANNEL,
+            id: message.id,
+            ...(outcome === 'success'
+              ? { kind: 'result', value: success }
+              : {
+                  kind: 'error',
+                  error: invalidState('Accepted commit failed.').toSerializable(),
+                }),
+          },
+        }),
+      );
+    };
+    if (outcome !== 'pending') queueMicrotask(reply);
+  });
+  return {
+    counts,
+    reply: (): void => {
+      reply();
+    },
+  };
+}
+
+it.each(['CONFIRMED', 'AUTOMATIC_IDENTIFIED', 'boundary'] as const)(
+  'C2AK: preserves %s Preview through two real pre-dispatch throws, then accepts one retry',
+  async (state) => {
+    const s = setup();
+    await recoveryPreview(
+      s,
+      state === 'AUTOMATIC_IDENTIFIED' ? state : 'CONFIRMED',
+      state === 'boundary',
+    );
+    act(() => {
+      s.result.current.updatePreview();
+    });
+    await frame();
+    await frame();
+    const before = s.result.current.preview;
+    const discardedBefore = s.discard.mock.calls.length;
+    const transport = await boundaryTransport(s, 2);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      act(() => {
+        s.result.current.apply();
+      });
+      await frame();
+      await frame();
+      expect(transport.counts).toEqual({ attempted: attempt, accepted: 0, returned: 0 });
+      expect(s.result.current.preview).toBe(before);
+      expect(s.result.current.preview?.semanticQualification?.scopeConfirmation).toBe(
+        before?.semanticQualification?.scopeConfirmation,
+      );
+      expect(s.result.current.failedSemanticApply).toBeUndefined();
+      expect(s.result.current.phase).toBe(SplitPhase.Preview);
+      expect(s.result.current.error).toBe('Apply was not submitted. Try again.');
+      expect(s.discard.mock.calls.length).toBe(discardedBefore);
+      expect(screen.getByTestId('split-apply')).toBeEnabled();
+    }
+    act(() => {
+      s.result.current.apply();
+    });
+    await frame();
+    await frame();
+    expect(transport.counts).toEqual({ attempted: 3, accepted: 1, returned: 1 });
+    expect(s.result.current.preview).toBeUndefined();
+    expect(s.result.current.applied).toBeDefined();
+    expect(s.result.current.failedSemanticApply).toBeUndefined();
+    act(() => {
+      s.result.current.undo();
+    });
+    await frame();
+    await frame();
+    expect(s.undo).toHaveBeenCalledTimes(1);
+  },
+);
+
+it('C2AK: REQUIRED blocks the real commit transport and preserves the unconfirmed Preview', async () => {
+  const s = setup();
+  await recoveryPreview(s, 'REQUIRED');
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  const before = s.result.current.preview;
+  const transport = await boundaryTransport(s, 0);
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  expect(transport.counts).toEqual({ attempted: 0, accepted: 0, returned: 0 });
+  expect(s.result.current.preview).toBe(before);
+  expect(s.result.current.preview?.semanticQualification?.scopeConfirmation?.state).toBe(
+    'REQUIRED',
+  );
+  expect(s.result.current.failedSemanticApply).toBeUndefined();
+  expect(screen.getByTestId('split-apply')).toBeDisabled();
+});
+
+it.each([
+  'reject',
+  'adoption-refuse',
+  'adoption-throw',
+  'cleanup-reject',
+  'cleanup-throw',
+  'cancel-after-acceptance',
+] as const)('C2AK: real accepted transport remains terminal for %s', async (kind) => {
+  const s = setup();
+  await recoveryPreview(s, 'CONFIRMED');
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  const transport = await boundaryTransport(
+    s,
+    0,
+    kind.startsWith('adoption')
+      ? 'success'
+      : kind === 'cancel-after-acceptance'
+        ? 'pending'
+        : 'reject',
+  );
+  if (kind === 'adoption-refuse') s.adopt.mockReturnValue(false);
+  if (kind === 'adoption-throw')
+    s.adopt.mockImplementation(() => {
+      throw invalidState('Adoption failed.');
+    });
+  if (kind === 'cleanup-reject')
+    s.discard.mockReturnValue({
+      promise: Promise.reject(invalidState('Cleanup failed.')),
+    } as ReturnType<GeometryClient['discardSplit']>);
+  if (kind === 'cleanup-throw')
+    s.discard.mockImplementation(() => {
+      throw invalidState('Cleanup failed.');
+    });
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  if (kind === 'cancel-after-acceptance') {
+    act(() => {
+      s.result.current.cancel();
+    });
+    await act(async () => {
+      transport.reply();
+      await Promise.resolve();
+    });
+  }
+  await frame();
+  expect(transport.counts).toEqual({ attempted: 1, accepted: 1, returned: 1 });
+  expect(s.result.current.preview).toBeUndefined();
+  expect(s.result.current.failedSemanticApply).toBeDefined();
+  expect(s.result.current.phase).toBe(SplitPhase.Idle);
+  expect(s.result.current.error).toContain(
+    kind === 'adoption-refuse'
+      ? 'model changed'
+      : kind === 'adoption-throw'
+        ? 'Adoption failed'
+        : 'Accepted commit failed',
+  );
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  expect(transport.counts.accepted).toBe(1);
+  expect(s.discard).toHaveBeenCalled();
+});
+
+it('C2AK: a before-call paint rejection preserves authority without submitting or discarding', async () => {
+  const s = setup();
+  await recoveryPreview(s, 'CONFIRMED');
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  const before = s.result.current.preview;
+  const discardedBefore = s.discard.mock.calls.length;
+  const transport = await boundaryTransport(s, 0);
+  // A requestAnimationFrame exception in afterPaint's Promise executor rejects
+  // before submission. Normal supported browser scheduling has no explicit rejection.
+  paint.failure = invalidState('Paint could not be scheduled.');
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  paint.failure = undefined;
+  expect(transport.counts).toEqual({ attempted: 0, accepted: 0, returned: 0 });
+  expect(s.result.current.preview).toBe(before);
+  expect(s.result.current.phase).toBe(SplitPhase.Preview);
+  expect(s.result.current.error).toBe('Paint could not be scheduled.');
+  expect(s.result.current.failedSemanticApply).toBeUndefined();
+  expect(s.discard.mock.calls.length).toBe(discardedBefore);
+});
+
+it.each(['part', 'source', 'supersession'] as const)(
+  'C2AK: independent %s invalidation still retires a pre-dispatch retryable Preview',
+  async (kind) => {
+    const s = setup();
+    await recoveryPreview(s, 'CONFIRMED');
+    act(() => {
+      s.result.current.updatePreview();
+    });
+    await frame();
+    await frame();
+    const transport = await boundaryTransport(s, 1);
+    act(() => {
+      s.result.current.apply();
+    });
+    await frame();
+    await frame();
+    expect(s.result.current.preview).toBeDefined();
+    act(() => {
+      if (kind === 'part') s.store.selectPart('B');
+      else if (kind === 'source') load(s.store, 'millimeter', [part('new-source')]);
+      else s.result.current.discardPreview();
+    });
+    act(() => {
+      s.result.current.apply();
+    });
+    await frame();
+    expect(s.result.current.preview).toBeUndefined();
+    expect(transport.counts.accepted).toBe(0);
+    expect(s.result.current.failedSemanticApply).toBeUndefined();
+  },
+);
+
+it('C2AK: Cancel while Applying retains the existing guarded queued-commit behavior', async () => {
+  const s = setup();
+  await recoveryPreview(s, 'CONFIRMED');
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  const transport = await boundaryTransport(s, 0);
+  act(() => {
+    s.result.current.apply();
+  });
+  act(() => {
+    s.result.current.cancel();
+  });
+  await frame();
+  await frame();
+  expect(transport.counts.accepted).toBe(1);
+  expect(s.result.current.applied).toBeDefined();
+  expect(s.result.current.failedSemanticApply).toBeUndefined();
+});
+
+it('C2AK: ordinary manual Preview remains retryable on a real synchronous transport failure', async () => {
+  const s = setup();
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  const before = s.result.current.preview;
+  expect(before?.semanticQualification).toBeUndefined();
+  const transport = await boundaryTransport(s, 1);
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(transport.counts.accepted).toBe(0);
+  expect(s.result.current.preview).toBe(before);
+  expect(s.result.current.error).toBe('Apply was not submitted. Try again.');
+  expect(s.result.current.failedSemanticApply).toBeUndefined();
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(transport.counts.accepted).toBe(1);
+  expect(s.result.current.applied).toBeDefined();
+});
