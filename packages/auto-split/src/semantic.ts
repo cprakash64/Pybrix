@@ -1078,6 +1078,11 @@ export function decomposeSemantic(
     )
       reason = 'Material interface ownership is not independently established';
     const s: Suggestion = {
+      ...(operation === SuggestionOperation.Plane &&
+      plane &&
+      localPlane?.structuralOwnership?.state === 'IDENTIFIED'
+        ? { semanticScopeAuthority: { state: 'STRUCTURAL_IDENTIFIED' as const, plane } }
+        : {}),
       semanticExecutionEligibility: executionEligibility,
       id: part.id,
       family: 'semantic',

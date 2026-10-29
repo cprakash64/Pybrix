@@ -524,6 +524,12 @@ export class GeometryClient {
     );
   }
 
+  public confirmSplitScope(
+    receiptId: string,
+  ): OperationHandle<Pick<SplitCreateResult, 'candidate' | 'semanticQualification'>> {
+    return this.coordinator.dispatch('split/confirm-scope', { receiptId }, {});
+  }
+
   public commitSplit(
     candidate: SplitCandidateHandle,
     expectedSource: DocumentHandle,

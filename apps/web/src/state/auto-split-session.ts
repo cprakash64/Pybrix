@@ -10,6 +10,7 @@ import {
 import {
   AUTO_SPLIT_TOO_DETAILED,
   sameSemanticPlane,
+  semanticPlaneIdentity,
   type ComponentSummary,
   type Suggestion,
 } from '@cadfixer/auto-split';
@@ -585,12 +586,46 @@ export class AutoSplitSession {
     const result = this.snapshot.result;
     if (!result || this.snapshot.stale || this.snapshot.selectedId !== proof.candidateId) return;
     const target = result.suggestions.find((s) => s.id === proof.candidateId);
+    if (result.mode === 'semantic' && target?.family === 'semantic') {
+      const scope = proof.scopeConfirmation;
+      if (!scope?.receiptId || target.semanticPreparationId !== proof.preparationId) return;
+      if (scope.state === 'REQUIRED') {
+        if (target.operation === 'PLANE')
+          this.set({
+            result: {
+              ...result,
+              suggestions: result.suggestions.map((s) =>
+                s.id === target.id
+                  ? { ...s, quality: 'NEEDS_SCOPE_CONFIRMATION' as const, plane: proof.plane }
+                  : s,
+              ),
+            },
+          });
+        return;
+      }
+      switch (scope.state) {
+        case 'CONFIRMED':
+          break;
+        case 'AUTOMATIC_IDENTIFIED':
+          if (
+            target.semanticScopeAuthority?.state !== 'STRUCTURAL_IDENTIFIED' ||
+            JSON.stringify(semanticPlaneIdentity(target.semanticScopeAuthority.plane)) !==
+              JSON.stringify(semanticPlaneIdentity(proof.plane))
+          )
+            return;
+          break;
+        default:
+          return;
+      }
+    }
     this.set({
       result: {
         ...result,
         suggestions: result.suggestions.map((s) =>
           (s.id === proof.candidateId ||
-            (target?.sharedBoundary && s.sharedBoundary?.key === target.sharedBoundary.key)) &&
+            (result.mode !== 'semantic' &&
+              target?.sharedBoundary &&
+              s.sharedBoundary?.key === target.sharedBoundary.key)) &&
           s.semanticPreparationId === proof.preparationId &&
           (s.boundaryConfirmation
             ? proof.boundaryChoice === 'CONFIRM' &&

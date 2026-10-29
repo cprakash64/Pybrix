@@ -34,7 +34,12 @@ import {
   autoSplitRenderHandler,
   autoSplitSuggestHandler,
 } from './auto-split-handlers';
-import { splitCommitHandler, splitCreateHandler, splitDiscardHandler } from './split-handlers';
+import {
+  splitCommitHandler,
+  splitCreateHandler,
+  splitDiscardHandler,
+  splitConfirmScopeHandler,
+} from './split-handlers';
 import {
   textureCreateHandler,
   textureLayoutHandler,
@@ -98,6 +103,7 @@ host.register('edit/preview', editPreviewHandler);
 host.register('edit/commit', editCommitHandler);
 host.register('edit/discard', editDiscardHandler);
 host.register('split/create', splitCreateHandler);
+host.register('split/confirm-scope', splitConfirmScopeHandler);
 host.register('split/commit', splitCommitHandler);
 host.register('split/discard', splitDiscardHandler);
 // Auto Split, local half: two reads and one CANDIDATE. None of them commits; Apply is `split/commit`.

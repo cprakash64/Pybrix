@@ -228,7 +228,19 @@ describe('explicit boundary confirmation plan', () => {
       },
       request: { plane: required(planes[1]), connector: { kind: 'none' as const } },
     };
-    expect(planFor(request, mesh).planes).toEqual([planes[1]]);
+    expect(() => planFor(request, mesh)).toThrow('Choose a boundary');
+    expect(
+      planFor(
+        {
+          ...request,
+          semanticQualification: {
+            ...request.semanticQualification,
+            boundaryChoice: 'PREVIEW' as const,
+          },
+        },
+        mesh,
+      ).planes,
+    ).toEqual([planes[1]]);
     expect(() => planFor({ ...request, request: payload().request }, mesh)).toThrow();
     expect(recordSemanticNativeWinner(request, required(planes[1]))).toBe(true);
   });
@@ -250,4 +262,25 @@ describe('explicit boundary confirmation plan', () => {
     };
     expect(() => planFor(withConnector, mesh)).toThrow();
   });
+});
+
+it('scope authority never treats confidence, complementary peers, or a different refined plane as IDENTIFIED', async () => {
+  const { semanticScopeBinding } = await import('./semantic-native-finalists');
+  const mesh = box([-1, -1, -1], [1, 1, 1]);
+  const base = required(suggestions[0]);
+  const plane = required(planes[0]);
+  registerSemanticNativeFinalists(source, 'part', mesh, 7, [
+    { ...base, semanticConfidence: 1, geometryConfidence: 1 },
+  ]);
+  expect(semanticScopeBinding(payload(), mesh, plane).automatic).toBe(false);
+  registerSemanticNativeFinalists(source, 'part', mesh, 7, [
+    { ...base, semanticScopeAuthority: { state: 'STRUCTURAL_IDENTIFIED', plane } },
+  ]);
+  expect(semanticScopeBinding(payload(), mesh, plane).automatic).toBe(true);
+  expect(
+    semanticScopeBinding(payload(), mesh, {
+      ...plane,
+      origin: [plane.origin[0], plane.origin[1], plane.origin[2] + 1e-10],
+    }).automatic,
+  ).toBe(false);
 });

@@ -56,3 +56,36 @@ it('fallback Preview, failed validation, failed Apply and Undo preserve the exac
   if (isAppError(restored)) throw restored;
   expect(resident.resolve(restored)).toBe(doc);
 });
+
+it('trusted semantic authorization is rechecked and consumed before any commit attempt, while manual retry is unchanged', () => {
+  const positions = createPositionArray(9),
+    indices = createIndexArray(3);
+  positions.set([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
+  indices.set([0, 1, 2]);
+  const mesh = { positions, indices, metadata: { sourceFormat: 'stl' } },
+    doc = singlePartDocument(mesh);
+  const resident = new ResidentDocumentStore(),
+    history = new RepairHistoryStore(),
+    edits = new GeometryEditStore(resident, history),
+    store = new SplitCandidateStore(resident, history, edits),
+    source = resident.commit(doc);
+  const result = splitOpenSurface(mesh, { origin: [0, 0, 0], normal: [1, 0, 0] }, uncancellable);
+  const preview = store.resolve(store.begin(source, partId('part-1')), result, uncancellable);
+  let confirmed = false,
+    consumed = false;
+  store.authorizeCommit(preview.candidate, () => {
+    if (!confirmed || consumed) throw Error('missing or consumed authority');
+    consumed = true;
+  });
+  expect(() => store.commit(preview.candidate, source, partId('part-1'), (d) => d)).toThrow(
+    'missing or consumed authority',
+  );
+  expect(resident.resolve(source)).toBe(doc);
+  confirmed = true;
+  expect(() => store.commit(preview.candidate, source, partId('wrong-part'), (d) => d)).toThrow();
+  expect(consumed).toBe(true);
+  expect(() => store.commit(preview.candidate, source, partId('part-1'), (d) => d)).toThrow(
+    'missing or consumed authority',
+  );
+  expect(resident.resolve(source)).toBe(doc);
+});

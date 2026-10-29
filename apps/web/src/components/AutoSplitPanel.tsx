@@ -637,6 +637,11 @@ function Row({
           {AUTO_SPLIT_COPY.edit}
         </button>
       </PanelSection>
+      {auto.scopePreview?.candidateId === row.id ? (
+        <p data-testid={`auto-scope-context-${row.id}`}>
+          Confirm that Piece A is the complete {row.label} you intended. Piece B stays separate.
+        </p>
+      ) : null}
       <div className="auto-row__actions">
         {row.suggestion.boundaryConfirmation ? (
           <>
@@ -670,6 +675,26 @@ function Row({
                 Choose this option
               </button>
             ) : null}
+          </>
+        ) : auto.scopePreview?.candidateId === row.id ? (
+          <>
+            <button
+              type="button"
+              className="primary-action auto-row__button"
+              onClick={auto.confirmScope}
+              disabled={auto.busy || auto.stale || !auto.confirmScope}
+              data-testid={`auto-scope-confirm-${row.id}`}
+            >
+              Choose Piece A
+            </button>
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={auto.reset}
+              data-testid={`auto-scope-cancel-${row.id}`}
+            >
+              None of these
+            </button>
           </>
         ) : (
           <button

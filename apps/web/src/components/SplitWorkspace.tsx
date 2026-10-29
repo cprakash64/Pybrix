@@ -212,7 +212,8 @@ export function SplitWorkspace(): ReactNode {
           hidden={
             (split.preview !== undefined || (split.applied !== undefined && !splitAgain)) &&
             !adjustCut &&
-            auto.boundaryPreview === undefined
+            auto.boundaryPreview === undefined &&
+            auto.scopePreview === undefined
           }
         >
           {model === undefined || split.part === undefined ? (
@@ -1050,7 +1051,8 @@ function SplitFooter({
     </ActionFooterLine>
   ) : split.phase === SplitPhase.Preview ? (
     <ActionFooterLine testId="split-preview-ready" title={SPLIT_COPY.previewReady}>
-      {split.preview?.semanticQualification?.boundaryChoice === 'PREVIEW'
+      {split.preview?.semanticQualification?.boundaryChoice === 'PREVIEW' ||
+      split.preview?.semanticQualification?.scopeConfirmation?.state === 'REQUIRED'
         ? 'Review the geometry, then choose this option.'
         : SPLIT_COPY.previewReady}
     </ActionFooterLine>
@@ -1143,7 +1145,8 @@ function SplitFooter({
                 disabled={
                   split.phase === SplitPhase.Applying ||
                   pendingPhysical ||
-                  split.preview?.semanticQualification?.boundaryChoice === 'PREVIEW'
+                  split.preview?.semanticQualification?.boundaryChoice === 'PREVIEW' ||
+                  split.preview?.semanticQualification?.scopeConfirmation?.state === 'REQUIRED'
                 }
                 aria-busy={split.phase === SplitPhase.Applying}
                 onClick={split.apply}

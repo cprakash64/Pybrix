@@ -189,6 +189,7 @@ export interface SplitControls {
   readonly completePreparedPreview: () => void;
   readonly updatePreview: () => void;
   readonly discardPreview: () => void;
+  readonly confirmScope?: () => void;
   readonly assemblyEditing?: boolean;
   readonly beginNextSplit?: () => void;
   readonly automaticUnitPrompt?: boolean;
@@ -349,7 +350,7 @@ export function useSplitWorkflow(): SplitControls {
     | { readonly recordId: string; readonly state: SplitExportState; readonly message?: string }
     | undefined
   >(undefined);
-  const running = useRef<OperationHandle<SplitCreateResult> | undefined>(undefined);
+  const running = useRef<OperationHandle<unknown> | undefined>(undefined);
   const previewRef = useRef<SplitCreateResult | undefined>(undefined);
   const action = useRef<{ phase: SplitPhase } | undefined>(undefined);
   const semanticIntent = useRef<
@@ -845,10 +846,43 @@ export function useSplitWorkflow(): SplitControls {
     [setPhase, setError, store],
   );
 
+  const confirmScope = useCallback((): void => {
+    const current = previewRef.current;
+    const receipt = current?.semanticQualification?.scopeConfirmation;
+    if (!client || !current || receipt?.state !== 'REQUIRED' || action.current) return;
+    const token = { phase: SplitPhase.Computing };
+    action.current = token;
+    setPhase(SplitPhase.Computing, 'Confirming physical piece…');
+    const operation = client.confirmSplitScope(receipt.receiptId);
+    running.current = operation;
+    void operation.promise
+      .then((result) => {
+        if (action.current !== token || previewRef.current !== current) return;
+        running.current = undefined;
+        const confirmed = { ...current, ...result };
+        previewRef.current = confirmed;
+        setPreviewState({ key: session, result: confirmed });
+        setPhase(SplitPhase.Preview);
+      })
+      .catch((cause: unknown) => {
+        if (action.current !== token) return;
+        running.current = undefined;
+        setError(messageOf(cause, 'Preview this piece again before choosing it.'));
+        setPhase(SplitPhase.Preview);
+      })
+      .finally(() => {
+        if (action.current === token) action.current = undefined;
+      });
+  }, [client, session, setError, setPhase]);
+
   const apply = useCallback((): void => {
     if (client === undefined || model === undefined || part === undefined) return;
     const current = previewRef.current;
-    if (current === undefined || current.semanticQualification?.boundaryChoice === 'PREVIEW')
+    if (
+      current === undefined ||
+      current.semanticQualification?.boundaryChoice === 'PREVIEW' ||
+      current.semanticQualification?.scopeConfirmation?.state === 'REQUIRED'
+    )
       return;
     if (
       semanticIntent.current?.key === partKey &&
@@ -1087,6 +1121,7 @@ export function useSplitWorkflow(): SplitControls {
     completePreparedPreview,
     updatePreview,
     discardPreview: invalidate,
+    confirmScope,
     assemblyEditing,
     beginNextSplit: (): void => {
       setAssemblyEditing(true);

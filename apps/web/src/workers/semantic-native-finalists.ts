@@ -1,4 +1,5 @@
-import { sameSemanticPlane as samePlane } from '@cadfixer/auto-split';
+import { releaseScopeReceipt } from './semantic-scope-authority';
+import { semanticPlaneIdentity, sameSemanticPlane as samePlane } from '@cadfixer/auto-split';
 import { semanticNativePolicy, SEMANTIC_NATIVE_LIMITS } from '@cadfixer/auto-split';
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
 import type { Suggestion } from '@cadfixer/auto-split';
@@ -20,10 +21,12 @@ let current:
       winners: Map<string, NonNullable<Suggestion['plane']>>;
       parts: Set<string>;
       attempts: number;
+      identified: Map<string, NonNullable<Suggestion['plane']>>;
       policy: ReturnType<typeof semanticNativePolicy>;
     }
   | undefined;
 export const clearSemanticNativeFinalists = (): void => {
+  releaseScopeReceipt();
   current = undefined;
 };
 export function registerSemanticNativeFinalists(
@@ -37,6 +40,7 @@ export function registerSemanticNativeFinalists(
     partIds: [],
   },
 ): void {
+  releaseScopeReceipt();
   current = {
     key: key(source, part),
     mesh: new WeakRef(mesh),
@@ -66,6 +70,13 @@ export function registerSemanticNativeFinalists(
     winners: new Map(),
     parts: new Set(spent.partIds),
     attempts: spent.attempts,
+    identified: new Map(
+      suggestions.flatMap((s) =>
+        s.semanticScopeAuthority?.state === 'STRUCTURAL_IDENTIFIED'
+          ? [[s.id, s.semanticScopeAuthority.plane] as const]
+          : [],
+      ),
+    ),
     policy: semanticNativePolicy(mesh.indices.length / 3),
   };
 }
@@ -93,8 +104,8 @@ export function semanticNativePlan(
       c.preparationId !== identity.preparationId ||
       !alternative ||
       !samePlane(alternative.plane, payload.request.plane) ||
-      (identity.boundaryChoice !== 'PREVIEW' && identity.boundaryChoice !== 'CONFIRM') ||
-      (identity.boundaryChoice === 'PREVIEW' && payload.request.connector.kind !== 'none')
+      identity.boundaryChoice !== 'PREVIEW' ||
+      payload.request.connector.kind !== 'none'
     )
       throw invalidState('Choose a boundary option before checking this cut.');
     return {
@@ -176,9 +187,37 @@ export function requireConfirmedBoundary(candidate: SplitCandidateHandle): void 
     throw invalidState('Choose a boundary option before applying this cut.');
 }
 export function releaseBoundaryPreview(documentId: string): void {
+  releaseScopeReceipt(documentId);
   unconfirmedPreviews.delete(documentId);
 }
 
 function oppositePlane(p: NonNullable<Suggestion['plane']>): NonNullable<Suggestion['plane']> {
   return { normal: [-p.normal[0], -p.normal[1], -p.normal[2]], origin: p.origin };
+}
+
+/** The registry object itself is a generation identity. Replacement invalidates all old receipts. */
+export function semanticScopeBinding(
+  payload: SplitCreatePayload,
+  mesh: CanonicalMesh,
+  plane: NonNullable<Suggestion['plane']>,
+): { readonly current: () => boolean; readonly automatic: boolean } {
+  const registry = current,
+    identity = payload.semanticQualification;
+  if (
+    !registry ||
+    !identity ||
+    registry.mesh.deref() !== mesh ||
+    registry.key !== key(payload.source, payload.partId) ||
+    registry.preparationId !== identity.preparationId ||
+    !registry.groups.has(identity.candidateId)
+  )
+    throw invalidState('Find parts again before checking this cut.');
+  const identified = registry.identified.get(identity.candidateId);
+  return {
+    current: () => current === registry && registry.mesh.deref() === mesh,
+    automatic:
+      !!identified &&
+      JSON.stringify(semanticPlaneIdentity(identified)) ===
+        JSON.stringify(semanticPlaneIdentity(plane)),
+  };
 }

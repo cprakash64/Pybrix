@@ -29,5 +29,6 @@ export interface SemanticCandidate {
     | 'UNSAFE'
     | 'LOW_CONFIDENCE'
     | 'STALE'
-    | 'NEEDS_BOUNDARY_CONFIRMATION';
+    | 'NEEDS_BOUNDARY_CONFIRMATION'
+    | 'NEEDS_SCOPE_CONFIRMATION';
 }

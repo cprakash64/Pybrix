@@ -87,7 +87,8 @@ export interface Suggestion {
     | 'UNSAFE'
     | 'LOW_CONFIDENCE'
     | 'STALE'
-    | 'NEEDS_BOUNDARY_CONFIRMATION';
+    | 'NEEDS_BOUNDARY_CONFIRMATION'
+    | 'NEEDS_SCOPE_CONFIRMATION';
   /** Worker-only pending evidence; never an executable or native-qualified claim. */
   readonly boundaryAmbiguity?: BoundaryAmbiguity;
   readonly boundaryConfirmation?: BoundaryConfirmation;
@@ -101,6 +102,11 @@ export interface Suggestion {
     readonly primaryId: string;
     readonly complementId: string;
     readonly side: 'PRIMARY' | 'COMPLEMENT';
+  };
+  /** Trusted projection of the existing IDENTIFIED certificate, not a new certificate. */
+  readonly semanticScopeAuthority?: {
+    readonly state: 'STRUCTURAL_IDENTIFIED';
+    readonly plane: SuggestedPlane;
   };
   readonly semanticPreparationId?: number;
   readonly instanceCount?: number;

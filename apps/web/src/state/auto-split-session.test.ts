@@ -881,3 +881,78 @@ describe('semantic final READY lifecycle', () => {
     expect(r.session.getSnapshot().result?.suggestions[0]?.quality).not.toBe('READY');
   });
 });
+
+describe('semantic physical scope READY receipts', () => {
+  async function pending(identified = false): Promise<Rig> {
+    const r = rig();
+    ready(r, ModelKind.Automatic);
+    r.session.analyze(target());
+    r.render.resolve(VIEWS);
+    await flush();
+    r.transport.resolve(okHuman());
+    await flush();
+    const plane = { normal: [0, 0, 1] as const, origin: [0, 0, 1.2] as const };
+    r.suggest.resolve({
+      ...suggestResult('human', [
+        {
+          ...HEAD,
+          family: 'semantic',
+          quality: 'SUGGESTED',
+          semanticPreparationId: 7,
+          ...(identified
+            ? { semanticScopeAuthority: { state: 'STRUCTURAL_IDENTIFIED' as const, plane } }
+            : {}),
+        },
+      ]),
+      mode: 'semantic',
+    });
+    await flush();
+    r.session.select('head');
+    return r;
+  }
+  const proof = {
+    preparationId: 7,
+    candidateId: 'head',
+    plane: { normal: [0, 0, 1] as const, origin: [0, 0, 1.2] as const },
+    attempts: 1,
+    failures: 0,
+    winnerIndex: 0,
+    milliseconds: 1,
+  };
+  it('ordinary native success cannot promote READY without the worker receipt choice', async () => {
+    const r = await pending();
+    r.session.nativeQualified(proof);
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('SUGGESTED');
+    r.session.nativeQualified({
+      ...proof,
+      scopeConfirmation: { receiptId: 'opaque', state: 'REQUIRED' },
+    });
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe(
+      'NEEDS_SCOPE_CONFIRMATION',
+    );
+    r.session.nativeQualified({
+      ...proof,
+      scopeConfirmation: { receiptId: 'opaque', state: 'AUTOMATIC_IDENTIFIED' },
+    });
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).not.toBe('READY');
+    r.session.nativeQualified({
+      ...proof,
+      scopeConfirmation: { receiptId: 'opaque', state: 'CONFIRMED' },
+    });
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('READY');
+    r.session.reset();
+    r.session.nativeQualified({
+      ...proof,
+      scopeConfirmation: { receiptId: 'opaque', state: 'CONFIRMED' },
+    });
+    expect(r.session.getSnapshot().result).toBeUndefined();
+  });
+  it('retains automatic native READY only for the explicit IDENTIFIED projection', async () => {
+    const r = await pending(true);
+    r.session.nativeQualified({
+      ...proof,
+      scopeConfirmation: { receiptId: 'opaque', state: 'AUTOMATIC_IDENTIFIED' },
+    });
+    expect(r.session.getSnapshot().result?.suggestions[0]?.quality).toBe('READY');
+  });
+});

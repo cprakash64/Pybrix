@@ -159,6 +159,7 @@ interface Spies {
   readonly createSplit: ReturnType<typeof vi.fn>;
   readonly createComponentSplit: ReturnType<typeof vi.fn>;
   readonly commitSplit: ReturnType<typeof vi.fn>;
+  readonly confirmSplitScope: ReturnType<typeof vi.fn>;
   readonly requests: AnalyzeRequest[];
   readonly signals: AbortSignal[];
 }
@@ -254,6 +255,7 @@ function mount(options: Options = {}): Spies {
   );
   const createComponentSplit = vi.fn(never);
   const commitSplit = vi.fn(never);
+  const confirmSplitScope = vi.fn(never);
   const client = Object.assign(new GeometryClient({ onDiagnostic: (): void => undefined }), {
     renderAutoSplitViews: render,
     suggestAutoSplit: suggest,
@@ -268,6 +270,7 @@ function mount(options: Options = {}): Spies {
     createSplit,
     createComponentSplit,
     commitSplit,
+    confirmSplitScope,
   });
   let n = 0;
   render_(store, client, transport, () => `req-test-${String((n += 1)).padStart(4, '0')}`);
@@ -279,6 +282,7 @@ function mount(options: Options = {}): Spies {
     createSplit,
     createComponentSplit,
     commitSplit,
+    confirmSplitScope,
     requests,
     signals,
   };
@@ -871,5 +875,117 @@ describe('a split the worker declines for resources', () => {
     await settle();
     expect(screen.getByTestId('auto-unsafe')).toHaveTextContent(AUTO_SPLIT_COPY.unsafeCut);
     expect(screen.queryByTestId('auto-needs-room')).toBeNull();
+  });
+});
+
+describe('physical scope confirmation controls', () => {
+  function physicalPreview(state: 'REQUIRED' | 'CONFIRMED'): SplitCreateResult {
+    return {
+      candidate: {
+        documentId: 'doc-1',
+        sourceRevision: 1,
+        partId: PART_ID,
+        generation: 1,
+        candidateId: 'physical-ticket',
+      },
+      render: { parts: [] },
+      parts: [],
+      pieceAId: 'a',
+      pieceBId: 'b',
+      metrics: { pieceAFinalVolume: 1, pieceBFinalVolume: 1, volumeRelativeError: 0 },
+      section: { area: 1, loopCount: 1 },
+      connector: { kind: 'none' },
+      semanticQualification: {
+        preparationId: 7,
+        candidateId: 'head',
+        plane: HEAD.plane,
+        attempts: 1,
+        failures: 0,
+        winnerIndex: 0,
+        milliseconds: 1,
+        scopeConfirmation: { receiptId: 'opaque-receipt', state },
+      },
+    } as unknown as SplitCreateResult;
+  }
+  async function suggestedScope(): Promise<Spies> {
+    const s = mount({
+      suggestions: [
+        { ...HEAD, family: 'semantic', quality: 'SUGGESTED', semanticPreparationId: 7 },
+      ],
+    });
+    await openAuto();
+    click('auto-disclosure-continue');
+    await settle();
+    click('auto-analyze');
+    await settle();
+    s.createSplit.mockReturnValue({
+      promise: Promise.resolve(physicalPreview('REQUIRED')),
+      cancel: (): void => undefined,
+    });
+    return s;
+  }
+  it('shows confirm only after physical Preview, keeps Apply disabled, and reuses the receipt', async () => {
+    const s = await suggestedScope();
+    expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
+    click('auto-preview-head');
+    await settle();
+    expect(screen.getByTestId('auto-scope-confirm-head')).toBeVisible();
+    expect(screen.getByTestId('split-apply')).toBeDisabled();
+    s.confirmSplitScope.mockReturnValue({
+      promise: Promise.resolve({
+        candidate: physicalPreview('CONFIRMED').candidate,
+        semanticQualification: physicalPreview('CONFIRMED').semanticQualification,
+      }),
+      cancel: (): void => undefined,
+    });
+    click('auto-scope-confirm-head');
+    await settle();
+    expect(s.confirmSplitScope).toHaveBeenCalledWith('opaque-receipt');
+    expect(s.createSplit).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Ready');
+    expect(screen.getByTestId('split-apply')).toBeEnabled();
+    expect(s.commitSplit).not.toHaveBeenCalled();
+  });
+  it('None clears the inspected result and offers no Apply or confirmation', async () => {
+    const s = await suggestedScope();
+    click('auto-preview-head');
+    await settle();
+    click('auto-scope-cancel-head');
+    await settle();
+    expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
+    expect(s.confirmSplitScope).not.toHaveBeenCalled();
+    expect(s.commitSplit).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('split-apply')).toBeNull();
+  });
+  it('withdraws the inspected result when its worker receipt expires', async () => {
+    const s = await suggestedScope();
+    const preview = physicalPreview('REQUIRED');
+    const proof = preview.semanticQualification;
+    if (!proof) throw Error('Missing fixture proof');
+    s.createSplit.mockReturnValue({
+      promise: Promise.resolve({
+        ...preview,
+        semanticQualification: {
+          ...proof,
+          scopeConfirmation: {
+            receiptId: 'expiring',
+            state: 'REQUIRED',
+            expiresAt: Date.now() + 100,
+          },
+        },
+      }),
+      cancel: (): void => undefined,
+    });
+    click('auto-preview-head');
+    await settle();
+    expect(screen.getByTestId('auto-scope-confirm-head')).toBeVisible();
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 130);
+      });
+    });
+    expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
+    expect(screen.queryByTestId('split-apply')).toBeNull();
+    expect(s.commitSplit).not.toHaveBeenCalled();
   });
 });

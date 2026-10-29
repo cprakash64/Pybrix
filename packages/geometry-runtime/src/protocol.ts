@@ -232,6 +232,10 @@ export interface OperationMap {
   'edit/commit': { payload: EditCommitPayload; result: EditCommitResult };
   'edit/discard': { payload: EditDiscardPayload; result: EditDiscardResult };
   'split/create': { payload: SplitCreatePayload; result: SplitCreateResult };
+  'split/confirm-scope': {
+    payload: { readonly receiptId: string };
+    result: Pick<SplitCreateResult, 'candidate' | 'semanticQualification'>;
+  };
   'split/commit': { payload: SplitCommitPayload; result: SplitCommitResult };
   'split/discard': { payload: SplitDiscardPayload; result: SplitDiscardResult };
   /**
@@ -313,6 +317,11 @@ export interface SplitCreateResult extends SplitCandidateSummary {
     readonly failures: number;
     readonly winnerIndex: number;
     readonly milliseconds: number;
+    readonly scopeConfirmation?: {
+      readonly receiptId: string;
+      readonly expiresAt?: number;
+      readonly state: 'REQUIRED' | 'CONFIRMED' | 'AUTOMATIC_IDENTIFIED';
+    };
   };
   readonly render: DocumentRenderSnapshot;
   readonly parts: readonly PartDescriptor[];

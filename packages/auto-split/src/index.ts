@@ -29,3 +29,4 @@ export {
 } from './semantic-native';
 
 export * from './semantic-execution-eligibility';
+export { semanticPlaneIdentity } from './semantic-plane-identity';

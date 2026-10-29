@@ -118,6 +118,8 @@ export interface AutoSplitControls {
   readonly toggleShown: (id: string) => void;
   /** Loads the suggestion into Manual Split's controls and asks for its preview. */
   readonly preview: (id: string) => void;
+  readonly scopePreview?: { readonly candidateId: string };
+  readonly confirmScope?: () => void;
   readonly previewBoundary?: (id: string, alternativeId: string, confirm?: boolean) => void;
   readonly boundaryPreview?: { readonly candidateId: string; readonly alternativeId: string };
   /** Loads the suggestion into Manual Split's controls for editing; no preview is made. */
@@ -165,6 +167,7 @@ export function useAutoSplit(
     preparePreview,
     completePreparedPreview,
     discardPreview,
+    confirmScope,
     phase: splitPhase,
     error: splitError,
   } = split;
@@ -250,6 +253,21 @@ export function useAutoSplit(
     [result, snap.selectedId, snap.shownId, stale, splitPhase],
   );
   const selected = rows.find((row) => row.selected);
+  const scopeReceipt = split.preview?.semanticQualification?.scopeConfirmation;
+  useEffect(() => {
+    if (scopeReceipt?.expiresAt === undefined) return;
+    const timer = setTimeout(
+      () => {
+        session.reset();
+        discardPreview();
+      },
+      Math.max(0, scopeReceipt.expiresAt - Date.now()),
+    );
+    return (): void => {
+      clearTimeout(timer);
+    };
+  }, [scopeReceipt?.receiptId, scopeReceipt?.expiresAt, session, discardPreview]);
+
   useEffect(() => {
     const proof = split.preview?.semanticQualification;
     if (splitPhase === SplitPhase.Preview && proof) session.nativeQualified(proof);
@@ -423,15 +441,18 @@ export function useAutoSplit(
           !sameSemanticPlane(proof.plane, alternative.plane))
       )
         return;
+      if (confirm) {
+        confirmScope?.();
+        return;
+      }
       preparePreview(() => {
-        if (confirm) session.select(id);
-        else session.previewBoundary(id, alternativeId);
+        session.previewBoundary(id, alternativeId);
         setApproximate(false);
         const loaded = loadSuggestedPlane(alternative.plane, row.label, {
           preparationId,
           candidateId: id,
           boundaryAlternativeId: alternativeId,
-          boundaryChoice: confirm ? 'CONFIRM' : 'PREVIEW',
+          boundaryChoice: 'PREVIEW',
         });
         if (loaded?.exact) setPreviewTick((tick) => tick + 1);
       });
@@ -443,6 +464,7 @@ export function useAutoSplit(
       splitPhase,
       rows,
       split.preview,
+      confirmScope,
       preparePreview,
       session,
       loadSuggestedPlane,
@@ -667,6 +689,14 @@ export function useAutoSplit(
     toggleShown,
     preview,
     previewBoundary,
+    ...(split.preview?.semanticQualification?.scopeConfirmation?.state === 'REQUIRED'
+      ? {
+          scopePreview: { candidateId: split.preview.semanticQualification.candidateId },
+          confirmScope: (): void => {
+            split.confirmScope?.();
+          },
+        }
+      : {}),
     ...(split.preview?.semanticQualification?.boundaryChoice === 'PREVIEW' &&
     split.preview.semanticQualification.boundaryAlternativeId !== undefined
       ? {

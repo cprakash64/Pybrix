@@ -1,3 +1,10 @@
+import {
+  issueScopeReceipt,
+  confirmScopeReceipt,
+  cancelScopeReceipt,
+  releaseScopeReceipt,
+} from './semantic-scope-authority';
+import { semanticScopeBinding } from './semantic-native-finalists';
 import { qualifySemanticFinalists } from '@cadfixer/auto-split';
 import {
   semanticNativePlan,
@@ -79,6 +86,7 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
   context.throwIfCancelled();
   const sourcePart = residentDocuments.resolvePart(payload.source, partId(payload.partId));
   if (!isPart(sourcePart)) throw sourcePart;
+  releaseScopeReceipt(payload.source.documentId);
   const ticket = splitCandidates.begin(payload.source, sourcePart.id);
   let booleanIndex = 0;
   try {
@@ -195,16 +203,50 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
     splitCandidates.discard(value.value.candidate);
     throw invalidState('Find parts again before checking this cut.');
   }
-  return {
-    ...value,
-    value: {
-      ...value.value,
-      semanticQualification: {
-        ...payload.semanticQualification,
-        ...metrics,
-      },
-    },
+  const preview = {
+    ...value.value,
+    semanticQualification: { ...payload.semanticQualification, ...metrics },
   };
+  const registry = semanticScopeBinding(payload, part.mesh, qualified.plane);
+  const physical = splitCandidates.preview(preview.candidate, (document) => document);
+  const authority = issueScopeReceipt(preview, physical, {
+    automatic: registry.automatic,
+    current: () =>
+      registry.current() &&
+      residentDocuments.has(payload.source) &&
+      residentDocuments.resolvePart(payload.source, partId(payload.partId)) === part,
+  });
+  splitCandidates.authorizeCommit(preview.candidate, authority.authorizeCommit);
+  return { ...value, value: { ...preview, semanticQualification: authority.proof } };
+};
+
+function readScopeReceiptId(payload: unknown): string {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+    throw invalidState('Choose the current physical preview.');
+  const data = payload as Record<string, unknown>;
+  if (
+    Object.keys(data).length !== 1 ||
+    !Object.hasOwn(data, 'receiptId') ||
+    typeof data.receiptId !== 'string' ||
+    data.receiptId.length > 96
+  )
+    throw invalidState('Choose the current physical preview.');
+  return data.receiptId;
+}
+
+export const splitConfirmScopeHandler: OperationHandler<'split/confirm-scope'> = (
+  payload,
+  context,
+) => {
+  context.throwIfCancelled();
+  const receiptId = readScopeReceiptId(payload);
+  const confirmed = confirmScopeReceipt(receiptId, (candidate) =>
+    splitCandidates.preview(candidate, (document) => document),
+  );
+  recordBoundaryPreview(confirmed.candidate, false);
+  return Promise.resolve({
+    value: { candidate: confirmed.candidate, semanticQualification: confirmed.proof },
+  });
 };
 
 export const splitCommitHandler: OperationHandler<'split/commit'> = (payload, context) => {
@@ -233,8 +275,10 @@ export const splitCommitHandler: OperationHandler<'split/commit'> = (payload, co
   return Promise.resolve({ value, transfer: documentRenderTransferables(value.render) });
 };
 
-export const splitDiscardHandler: OperationHandler<'split/discard'> = (payload) =>
-  Promise.resolve({ value: { released: splitCandidates.discard(payload.candidate) } });
+export const splitDiscardHandler: OperationHandler<'split/discard'> = (payload) => {
+  cancelScopeReceipt(payload.candidate);
+  return Promise.resolve({ value: { released: splitCandidates.discard(payload.candidate) } });
+};
 
 function defined<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');

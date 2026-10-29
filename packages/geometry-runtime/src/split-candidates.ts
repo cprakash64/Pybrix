@@ -57,6 +57,7 @@ export interface SplitCandidateSummary {
   };
 }
 interface Entry {
+  authorizeCommit?: () => void;
   readonly handle: SplitCandidateHandle;
   readonly document: GeometryDocument;
   readonly summary: SplitCandidateSummary;
@@ -194,6 +195,10 @@ export class SplitCandidateStore {
     this.active.set(ticket.documentId, handle.candidateId);
     return summary;
   }
+  /** Trusted worker policy attached to this exact immutable result; never supplied by a client. */
+  public authorizeCommit(handle: SplitCandidateHandle, authorize: () => void): void {
+    this.require(handle).authorizeCommit = authorize;
+  }
   public preview<T>(
     handle: SplitCandidateHandle,
     build: (document: GeometryDocument, summary: SplitCandidateSummary) => T,
@@ -208,6 +213,7 @@ export class SplitCandidateStore {
     build: (document: GeometryDocument, summary: SplitCandidateSummary) => T,
   ): { handle: DocumentHandle; recordId: string; value: T; summary: SplitCandidateSummary } {
     const e = this.require(handle);
+    e.authorizeCommit?.();
     if (
       expected.documentId !== handle.documentId ||
       expected.revision !== handle.sourceRevision ||
