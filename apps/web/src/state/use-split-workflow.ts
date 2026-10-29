@@ -856,27 +856,49 @@ export function useSplitWorkflow(): SplitControls {
     const token = { phase: SplitPhase.Computing };
     action.current = token;
     setPhase(SplitPhase.Computing, 'Confirming physical piece…');
-    const operation = client.confirmSplitScope(receipt.receiptId);
-    running.current = operation;
-    void operation.promise
-      .then((result) => {
+    setError(undefined);
+    void (async (): Promise<void> => {
+      let submitted = false;
+      try {
+        // A synchronous throw means no handle exists and this REQUIRED Preview remains retryable.
+        const operation = client.confirmSplitScope(receipt.receiptId);
+        submitted = true;
+        running.current = operation;
+        const result = await operation.promise;
         if (action.current !== token || previewRef.current !== current) return;
-        running.current = undefined;
         const confirmed = { ...current, ...result };
         previewRef.current = confirmed;
         setPreviewState({ key: session, result: confirmed });
         setPhase(SplitPhase.Preview);
-      })
-      .catch((cause: unknown) => {
+      } catch (cause: unknown) {
         if (action.current !== token) return;
-        running.current = undefined;
-        setError(messageOf(cause, 'Preview this piece again before choosing it.'));
-        setPhase(SplitPhase.Preview);
-      })
-      .finally(() => {
-        if (action.current === token) action.current = undefined;
-      });
-  }, [client, session, setError, setPhase]);
+        if (submitted) {
+          // Confirmation is one-use: the Worker may have confirmed before its response was lost.
+          // Withdraw locally first; even failed release cannot make ambiguous authority retryable.
+          previewRef.current = undefined;
+          setPreviewState(undefined);
+          setFailedSemanticApply(current.semanticQualification);
+          try {
+            store.clearSplitPreview();
+          } catch {
+            /* Local authority is already withdrawn; finish recovery even if presentation fails. */
+          }
+          try {
+            client.discardSplit(current.candidate).promise.catch(() => undefined);
+          } catch {
+            /* Preserve the original confirmation error if ticket release also fails. */
+          }
+        }
+        setError(messageOf(cause, 'Preview this piece again before choosing it.'), true);
+        setPhase(submitted ? SplitPhase.Idle : SplitPhase.Preview);
+      } finally {
+        if (action.current === token) {
+          running.current = undefined;
+          action.current = undefined;
+        }
+      }
+    })();
+  }, [client, session, setError, setPhase, store]);
 
   const apply = useCallback((): void => {
     if (client === undefined || model === undefined || part === undefined) return;

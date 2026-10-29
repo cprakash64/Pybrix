@@ -35,7 +35,7 @@ import { WorkspaceStore } from '../state/workspace-store';
 import { WorkflowId } from '../state/workflows';
 import type { LoadedModel } from '../state/model';
 import { AUTO_SPLIT_COPY } from '../state/auto-split-presentation';
-import { invalidState, resourceLimitExceeded } from '@cadfixer/shared';
+import { createOperationId, invalidState, resourceLimitExceeded } from '@cadfixer/shared';
 
 /**
  * AUTO SPLIT AT COMPONENT LEVEL: the flow a person actually goes through, with the geometry worker and
@@ -152,6 +152,7 @@ const GONE: Suggestion = {
 };
 
 interface Spies {
+  readonly client: GeometryClient;
   readonly store: WorkspaceStore;
   readonly transport: ReturnType<typeof vi.fn<AnalysisTransport['analyze']>>;
   readonly render: ReturnType<typeof vi.fn>;
@@ -275,6 +276,7 @@ function mount(options: Options = {}): Spies {
   let n = 0;
   render_(store, client, transport, () => `req-test-${String((n += 1)).padStart(4, '0')}`);
   return {
+    client,
     store,
     transport,
     render,
@@ -959,6 +961,84 @@ describe('physical scope confirmation controls', () => {
     expect(screen.queryByTestId('split-apply')).toBeNull();
     expect(document.body).toHaveTextContent('Accepted operation failed.');
   });
+  it.each(['retry', 'cancel', 'reject'] as const)(
+    'C2AO: real confirmation submission error keeps physical controls visible for %s',
+    async (next) => {
+      const s = await suggestedScope();
+      click('auto-preview-head');
+      await settle();
+      const worker = (s.client as unknown as { worker: Worker }).worker;
+      let attempts = 0;
+      let accepted = 0;
+      s.client.confirmSplitScope = GeometryClient.prototype.confirmSplitScope.bind(s.client);
+      const discard = vi.spyOn(s.client, 'discardSplit').mockReturnValue({
+        promise: Promise.resolve({ released: true }),
+        id: createOperationId(),
+        interruptible: true,
+        cancel: vi.fn(),
+      });
+      vi.spyOn(worker, 'postMessage').mockImplementation((value: unknown) => {
+        const message = value as { operation?: string; channel: string; id: string };
+        if (message.operation !== 'split/confirm-scope') return;
+        if (++attempts === 1) throw invalidState('Confirmation transport unavailable.');
+        accepted++;
+        queueMicrotask(() => {
+          worker.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                channel: message.channel,
+                id: message.id,
+                ...(next === 'reject'
+                  ? {
+                      kind: 'error',
+                      error: invalidState('Confirmation response lost.').toSerializable(),
+                    }
+                  : {
+                      kind: 'result',
+                      value: {
+                        candidate: physicalPreview('CONFIRMED').candidate,
+                        semanticQualification: physicalPreview('CONFIRMED').semanticQualification,
+                      },
+                    }),
+              },
+            }),
+          );
+        });
+      });
+      click('auto-scope-confirm-head');
+      await settle();
+      expect(accepted).toBe(0);
+      expect(discard).not.toHaveBeenCalled();
+      expect(screen.getByTestId('auto-scope-confirm-head')).toBeVisible();
+      expect(screen.getByTestId('auto-scope-confirm-head')).toBeEnabled();
+      expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Suggested cut');
+      expect(document.body).toHaveTextContent('Confirmation transport unavailable.');
+      expect(screen.getByTestId('split-apply')).toBeDisabled();
+      if (next === 'retry') {
+        click('auto-scope-confirm-head');
+        await settle();
+        expect(accepted).toBe(1);
+        expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Ready');
+        expect(screen.getByTestId('split-apply')).toBeEnabled();
+        expect(s.createSplit).toHaveBeenCalledTimes(1);
+      } else if (next === 'reject') {
+        click('auto-scope-confirm-head');
+        await settle();
+        expect(accepted).toBe(1);
+        expect(discard).toHaveBeenCalledTimes(1);
+        expect(document.body).toHaveTextContent('Confirmation response lost.');
+        expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
+        expect(screen.queryByTestId('split-apply')).toBeNull();
+      } else {
+        click('auto-scope-cancel-head');
+        await settle();
+        expect(discard).toHaveBeenCalledTimes(1);
+        expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
+        expect(screen.queryByTestId('split-apply')).toBeNull();
+        expect(accepted).toBe(0);
+      }
+    },
+  );
   it('shows confirm only after physical Preview, keeps Apply disabled, and reuses the receipt', async () => {
     const s = await suggestedScope();
     expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
@@ -992,7 +1072,7 @@ describe('physical scope confirmation controls', () => {
     expect(s.commitSplit).not.toHaveBeenCalled();
     expect(screen.queryByTestId('split-apply')).toBeNull();
   });
-  it('withdraws the inspected result when its worker receipt expires', async () => {
+  it.each([false, true])('withdraws expired receipt after failed submission=%s', async (failed) => {
     const s = await suggestedScope();
     vi.useFakeTimers();
     try {
@@ -1016,6 +1096,18 @@ describe('physical scope confirmation controls', () => {
       click('auto-preview-head');
       await settle();
       expect(screen.getByTestId('auto-scope-confirm-head')).toBeVisible();
+      if (failed) {
+        s.client.confirmSplitScope = GeometryClient.prototype.confirmSplitScope.bind(s.client);
+        const worker = (s.client as unknown as { worker: Worker }).worker;
+        vi.spyOn(worker, 'postMessage').mockImplementation((value: unknown) => {
+          if ((value as { operation?: string }).operation === 'split/confirm-scope')
+            throw invalidState('Confirmation not submitted before expiry.');
+        });
+        click('auto-scope-confirm-head');
+        await settle();
+        expect(screen.getByTestId('auto-scope-confirm-head')).toBeEnabled();
+        expect(document.body).toHaveTextContent('Confirmation not submitted before expiry.');
+      }
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1001);
       });

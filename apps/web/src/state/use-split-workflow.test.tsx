@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { act, cleanup, renderHook, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import type * as ScopeAuthority from '../workers/semantic-scope-authority';
 import { createOperationId, invalidState } from '@cadfixer/shared';
 import { PROTOCOL_CHANNEL, type GeometryCoordinator } from '@cadfixer/geometry-runtime';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
@@ -1119,4 +1120,404 @@ it('C2AK: ordinary manual Preview remains retryable on a real synchronous transp
   await frame();
   expect(transport.counts.accepted).toBe(1);
   expect(s.result.current.applied).toBeDefined();
+});
+
+interface ConfirmationFixture extends TestSetup {
+  readonly preview: SplitCreateResult;
+  readonly physical: object;
+  readonly receiptId: string;
+  readonly issued: ReturnType<typeof ScopeAuthority.issueScopeReceipt>;
+  readonly counts: {
+    attempted: number;
+    accepted: number;
+    returned: number;
+    workerConfirmed: number;
+  };
+  readonly coordinator: GeometryCoordinator;
+  readonly worker: Worker;
+  readonly setMode: (mode: 'success' | 'reject' | 'lost' | 'pending' | 'adoption-throw') => void;
+  readonly finish: () => void;
+  readonly stale: () => void;
+  readonly confirm: () => Promise<void>;
+  readonly release: () => void;
+  readonly reconfirm: () => unknown;
+}
+
+/** No native geometry: actual receipt authority and actual client/coordinator over controlled transport. */
+async function confirmationFixture(failures = 0): Promise<ConfirmationFixture> {
+  const authority = await import('../workers/semantic-scope-authority');
+  const s = setup();
+  await recoveryPreview(s, 'REQUIRED');
+  const op = s.create.getMockImplementation()?.({} as never, '', {} as never);
+  if (!op) throw Error('Missing preview');
+  const base = await op.promise;
+  const physical = {};
+  let current = true;
+  const candidate = {
+    documentId: 'doc-1',
+    sourceRevision: 1,
+    partId: 'A',
+    generation: 1,
+    candidateId: crypto.randomUUID(),
+  } as SplitCreateResult['candidate'];
+  const issued = authority.issueScopeReceipt({ ...base, candidate }, physical, {
+    automatic: false,
+    current: () => current,
+  });
+  const preview = { ...base, candidate, semanticQualification: issued.proof };
+  const receiptId = issued.proof.scopeConfirmation?.receiptId;
+  if (!receiptId) throw Error('Missing receipt');
+  s.create.mockReturnValue({ ...op, promise: Promise.resolve(preview) });
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  const worker = (s.client as unknown as { worker: Worker }).worker;
+  const coordinator = (s.client as unknown as { coordinator: GeometryCoordinator }).coordinator;
+  const counts = { attempted: 0, accepted: 0, returned: 0, workerConfirmed: 0 };
+  let mode: 'success' | 'reject' | 'lost' | 'pending' | 'adoption-throw' = 'success';
+  let finish = (): void => undefined;
+  const confirm = s.client.confirmSplitScope.bind(s.client);
+  vi.spyOn(s.client, 'confirmSplitScope').mockImplementation((...args) => {
+    const handle = confirm(...args);
+    counts.returned++;
+    return handle;
+  });
+  s.discard.mockImplementation((handle) => {
+    authority.cancelScopeReceipt(handle);
+    return {
+      id: createOperationId(),
+      interruptible: true,
+      cancel: vi.fn(),
+      promise: Promise.resolve({ released: true }),
+    };
+  });
+  vi.spyOn(worker, 'postMessage').mockImplementation((value: unknown) => {
+    const message = value as { operation?: string; id: string; payload: { receiptId: string } };
+    if (message.operation !== 'split/confirm-scope') return;
+    counts.attempted++;
+    if (failures-- > 0) throw invalidState('Confirmation was not submitted. Try again.');
+    counts.accepted++;
+    let result: Pick<SplitCreateResult, 'candidate' | 'semanticQualification'> | undefined;
+    let error: ReturnType<typeof invalidState> | undefined;
+    try {
+      const confirmed = authority.confirmScopeReceipt(message.payload.receiptId, () => physical);
+      counts.workerConfirmed++;
+      result = { candidate: confirmed.candidate, semanticQualification: confirmed.proof };
+      if (mode === 'adoption-throw')
+        Object.defineProperty(result, 'semanticQualification', {
+          enumerable: true,
+          get: () => {
+            throw invalidState('Confirmation adoption failed.');
+          },
+        });
+    } catch (cause) {
+      error = cause as ReturnType<typeof invalidState>;
+    }
+    finish = (): void => {
+      if (mode === 'lost') {
+        worker.dispatchEvent(new ErrorEvent('error', { message: 'Controlled Worker loss' }));
+        return;
+      }
+      worker.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            channel: PROTOCOL_CHANNEL,
+            id: message.id,
+            ...(error || mode === 'reject'
+              ? {
+                  kind: 'error',
+                  error: (error ?? invalidState('Accepted confirmation failed.')).toSerializable(),
+                }
+              : { kind: 'result', value: result }),
+          },
+        }),
+      );
+    };
+    if (mode !== 'pending') queueMicrotask(finish);
+  });
+  return {
+    ...s,
+    preview,
+    physical,
+    receiptId,
+    issued,
+    counts,
+    coordinator,
+    worker,
+    setMode: (next: typeof mode): void => {
+      mode = next;
+    },
+    finish: (): void => {
+      finish();
+    },
+    stale: (): void => {
+      current = false;
+    },
+    confirm: async (): Promise<void> => {
+      act(() => {
+        s.result.current.confirmScope?.();
+      });
+      await frame();
+    },
+    release: authority.releaseScopeReceipt,
+    reconfirm: (): unknown => authority.confirmScopeReceipt(receiptId, () => physical),
+  };
+}
+function expectConfirmationResources(f: Awaited<ReturnType<typeof confirmationFixture>>): void {
+  expect(f.coordinator.pendingCount).toBe(0);
+  expect(f.coordinator.liveCancellationSignals).toBe(0);
+}
+function expectRetryableConfirmation(f: Awaited<ReturnType<typeof confirmationFixture>>): void {
+  expect(f.result.current.phase).toBe(SplitPhase.Preview);
+  expect(f.result.current.preview).toBe(f.preview);
+  expect(f.result.current.preview?.semanticQualification?.scopeConfirmation?.state).toBe(
+    'REQUIRED',
+  );
+  expect(f.result.current.error).toBe('Confirmation was not submitted. Try again.');
+  expect(f.result.current.errorIsOperationFailure).toBe(true);
+  expectConfirmationResources(f);
+}
+it('C2AO: unsubmitted confirmation preserves the exact Preview and retries once through real dispatch', async () => {
+  const f = await confirmationFixture(1);
+  await f.confirm();
+  expectRetryableConfirmation(f);
+  expect(f.counts).toEqual({ attempted: 1, accepted: 0, returned: 0, workerConfirmed: 0 });
+  await f.confirm();
+  expect(f.counts).toEqual({ attempted: 2, accepted: 1, returned: 1, workerConfirmed: 1 });
+  expect(f.result.current.preview?.candidate).toBe(f.preview.candidate);
+  expect(f.result.current.preview?.render).toBe(f.preview.render);
+  expect(f.result.current.preview?.semanticQualification?.scopeConfirmation?.state).toBe(
+    'CONFIRMED',
+  );
+  expect(f.result.current.phase).toBe(SplitPhase.Preview);
+  expect(f.result.current.error).toBeUndefined();
+  expect(f.create).toHaveBeenCalledTimes(1);
+  expectConfirmationResources(f);
+  f.release();
+});
+it('C2AO: 50 unsubmitted confirmations leave no orphan operations even on later Worker loss', async () => {
+  const f = await confirmationFixture(50);
+  for (let i = 1; i <= 50; i++) {
+    await f.confirm();
+    expectRetryableConfirmation(f);
+    expect(f.counts).toEqual({ attempted: i, accepted: 0, returned: 0, workerConfirmed: 0 });
+  }
+  f.worker.dispatchEvent(new ErrorEvent('error', { message: 'Controlled Worker loss' }));
+  await frame();
+  expectConfirmationResources(f);
+  f.release();
+});
+it('C2AO: two unsubmitted confirmations then success accept exactly one operation', async () => {
+  const f = await confirmationFixture(2);
+  await f.confirm();
+  expectRetryableConfirmation(f);
+  await f.confirm();
+  expectRetryableConfirmation(f);
+  await f.confirm();
+  expect(f.counts).toEqual({ attempted: 3, accepted: 1, returned: 1, workerConfirmed: 1 });
+  expect(f.result.current.preview?.semanticQualification?.scopeConfirmation?.state).toBe(
+    'CONFIRMED',
+  );
+  expectConfirmationResources(f);
+  f.release();
+});
+it.each(['success', 'reject', 'lost', 'adoption-throw'] as const)(
+  'C2AO: accepted confirmation %s clears ownership and follows the one-use receipt contract',
+  async (mode) => {
+    const f = await confirmationFixture();
+    f.setMode(mode);
+    await f.confirm();
+    expect(f.counts).toEqual({ attempted: 1, accepted: 1, returned: 1, workerConfirmed: 1 });
+    expect(f.result.current.phase).toBe(mode === 'success' ? SplitPhase.Preview : SplitPhase.Idle);
+    if (mode === 'success') {
+      expect(f.result.current.preview?.semanticQualification?.scopeConfirmation?.state).toBe(
+        'CONFIRMED',
+      );
+      expect(f.result.current.preview?.render).toBe(f.preview.render);
+      expect(() => f.reconfirm()).toThrow();
+    } else {
+      expect(f.result.current.preview).toBeUndefined();
+      expect(f.result.current.failedSemanticApply).toBe(f.preview.semanticQualification);
+      expect(f.result.current.error).toBeTruthy();
+      expect(f.discard).toHaveBeenCalledWith(f.preview.candidate);
+      await f.confirm();
+      expect(f.counts.accepted).toBe(1);
+    }
+    expectConfirmationResources(f);
+    f.release();
+  },
+);
+it('C2AO: concurrent confirmation clicks submit once; later discard does not cancel a completed handle', async () => {
+  const f = await confirmationFixture();
+  f.setMode('pending');
+  act(() => {
+    f.result.current.confirmScope?.();
+    f.result.current.confirmScope?.();
+  });
+  expect(f.counts.accepted).toBe(1);
+  expect(f.coordinator.pendingCount).toBe(1);
+  expect(f.result.current.phase).toBe(SplitPhase.Computing);
+  await act(async () => {
+    f.finish();
+    await Promise.resolve();
+  });
+  await frame();
+  const post = vi.spyOn(f.worker, 'postMessage');
+  post.mockClear();
+  act(() => {
+    f.result.current.discardPreview();
+  });
+  // A completed confirmation's running handle must have been cleared.
+  expect(post.mock.calls.some(([v]) => (v as { kind?: string }).kind === 'cancel')).toBe(false);
+  expectConfirmationResources(f);
+  f.release();
+});
+it.each(['cancel', 'discard', 'unmount', 'source', 'part', 'supersession'] as const)(
+  'C2AO: in-flight confirmation retired by %s cannot resurrect on late success',
+  async (kind) => {
+    const f = await confirmationFixture();
+    f.setMode('pending');
+    act(() => {
+      f.result.current.confirmScope?.();
+    });
+    expect(f.counts.workerConfirmed).toBe(1);
+    act(() => {
+      if (kind === 'cancel') f.result.current.cancel();
+      else if (kind === 'unmount') f.unmount();
+      else if (kind === 'source') load(f.store, 'millimeter', [part('new-source')]);
+      else if (kind === 'part') f.store.selectPart('B');
+      else f.result.current.discardPreview();
+    });
+    await act(async () => {
+      f.finish();
+      await Promise.resolve();
+    });
+    await frame();
+    if (kind !== 'unmount') {
+      expect(f.result.current.preview).toBeUndefined();
+      expect(f.result.current.phase).not.toBe(SplitPhase.Computing);
+    }
+    expectConfirmationResources(f);
+    f.release();
+  },
+);
+it.each([
+  'cancel',
+  'expiry',
+  'supersession',
+  'source',
+  'part',
+  'worker-restart',
+  'source-binding',
+  'preparation-binding',
+] as const)('C2AO: failed confirmation does not override %s invalidation', async (kind) => {
+  const f = await confirmationFixture(1);
+  await f.confirm();
+  expectRetryableConfirmation(f);
+  if (kind === 'expiry') {
+    const now = performance.now();
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(now + 240_001);
+    await f.confirm();
+    clock.mockRestore();
+  } else if (kind === 'source-binding' || kind === 'preparation-binding') {
+    f.stale();
+    await f.confirm();
+  } else if (kind === 'worker-restart') {
+    // A replacement Worker has no module-local receipt from its predecessor.
+    f.release();
+    await f.confirm();
+  } else {
+    act(() => {
+      if (kind === 'cancel') f.result.current.cancel();
+      else if (kind === 'source') load(f.store, 'millimeter', [part('new-source')]);
+      else if (kind === 'part') f.store.selectPart('B');
+      else f.result.current.discardPreview();
+    });
+    await f.confirm();
+  }
+  expect(f.counts.workerConfirmed).toBe(0);
+  expect(f.result.current.preview).toBeUndefined();
+  expect(f.result.current.phase).not.toBe(SplitPhase.Computing);
+  expectConfirmationResources(f);
+  f.release();
+});
+
+it.each(['throw', 'reject'] as const)(
+  'C2AO: ambiguous confirmation preserves original error if release %s',
+  async (kind) => {
+    const f = await confirmationFixture();
+    f.setMode('reject');
+    f.discard.mockImplementation(() => {
+      if (kind === 'throw') throw invalidState('Release failed.');
+      return {
+        id: createOperationId(),
+        interruptible: true,
+        cancel: vi.fn(),
+        promise: Promise.reject(invalidState('Release failed.')),
+      };
+    });
+    await f.confirm();
+    expect(f.result.current.preview).toBeUndefined();
+    expect(f.result.current.error).toBe('Accepted confirmation failed.');
+    expect(f.result.current.phase).toBe(SplitPhase.Idle);
+    expectConfirmationResources(f);
+    f.release();
+  },
+);
+it('C2AO: old confirmation completion cannot overwrite a newer physical Preview', async () => {
+  const f = await confirmationFixture();
+  f.setMode('pending');
+  act(() => {
+    f.result.current.confirmScope?.();
+  });
+  act(() => {
+    f.result.current.discardPreview();
+  });
+  const next = { ...f.preview, candidate: { ...f.preview.candidate, candidateId: 'new-ticket' } };
+  f.create.mockReturnValue({
+    id: createOperationId(),
+    interruptible: true,
+    cancel: vi.fn(),
+    promise: Promise.resolve(next),
+  });
+  act(() => {
+    f.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  expect(f.result.current.preview).toBe(next);
+  await act(async () => {
+    f.finish();
+    await Promise.resolve();
+  });
+  await frame();
+  expect(f.result.current.preview).toBe(next);
+  expect(f.result.current.preview?.semanticQualification?.scopeConfirmation?.state).toBe(
+    'REQUIRED',
+  );
+  expectConfirmationResources(f);
+  f.release();
+});
+it('C2AO: late confirmation rejection after reset cannot resurrect its error or Preview', async () => {
+  const f = await confirmationFixture();
+  f.setMode('pending');
+  act(() => {
+    f.result.current.confirmScope?.();
+  });
+  act(() => {
+    f.result.current.discardPreview();
+  });
+  f.setMode('reject');
+  await act(async () => {
+    f.finish();
+    await Promise.resolve();
+  });
+  await frame();
+  expect(f.result.current.preview).toBeUndefined();
+  expect(f.result.current.error).toBeUndefined();
+  expect(f.result.current.phase).toBe(SplitPhase.Idle);
+  expectConfirmationResources(f);
+  f.release();
 });
