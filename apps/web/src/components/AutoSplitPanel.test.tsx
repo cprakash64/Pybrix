@@ -1005,10 +1005,10 @@ describe('physical scope confirmation controls', () => {
     click('auto-scope-confirm-head');
     await settle();
     expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Ready');
-    s.commitSplit.mockReturnValue({
+    s.commitSplit.mockImplementation(() => ({
       promise: Promise.reject(Error('original commit failure')),
       cancel: (): void => undefined,
-    });
+    }));
     click('split-apply');
     await settle();
     expect(screen.queryByTestId('auto-row-status-head')).toBeNull();
@@ -1020,4 +1020,157 @@ describe('physical scope confirmation controls', () => {
     await settle();
     expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Suggested');
   });
+  it.each(['different-candidate', 'different-preparation'] as const)(
+    'handles two failure cycles and isolates %s',
+    async (kind) => {
+      const s = await suggestedScope();
+      click('auto-preview-head');
+      await settle();
+      s.confirmSplitScope.mockReturnValue({
+        promise: Promise.resolve({
+          candidate: physicalPreview('CONFIRMED').candidate,
+          semanticQualification: physicalPreview('CONFIRMED').semanticQualification,
+        }),
+        cancel: (): void => undefined,
+      });
+      click('auto-scope-confirm-head');
+      await settle();
+      s.commitSplit.mockImplementation(() => ({
+        promise: Promise.reject(Error('cycle one')),
+        cancel: (): void => undefined,
+      }));
+      click('split-apply');
+      await settle();
+      expect(screen.queryByTestId('split-apply')).toBeNull();
+      click('auto-analyze');
+      await settle();
+      const id = 'head';
+      const prep = 7;
+      const operation = s.suggest.mock.results[0]?.value as {
+        promise: Promise<AutoSplitSuggestResult>;
+        cancel: () => void;
+      };
+      const old = await operation.promise;
+      s.suggest.mockReturnValue({
+        ...operation,
+        promise: Promise.resolve({
+          ...old,
+          suggestions: [
+            { ...HEAD, id, family: 'semantic', quality: 'SUGGESTED', semanticPreparationId: prep },
+          ],
+        }),
+      });
+      click('auto-reanalyze-fresh');
+      await settle();
+      const prev = physicalPreview('REQUIRED');
+      const proof = prev.semanticQualification;
+      if (!proof) throw Error('proof');
+      const fresh = {
+        ...prev,
+        candidate: { ...prev.candidate, candidateId: 'fresh-ticket' },
+        semanticQualification: {
+          ...proof,
+          candidateId: id,
+          preparationId: prep,
+          scopeConfirmation: { receiptId: 'fresh-receipt', state: 'REQUIRED' as const },
+        },
+      };
+      s.createSplit.mockReturnValue({
+        promise: Promise.resolve(fresh),
+        cancel: (): void => undefined,
+      });
+      click('auto-preview-' + id);
+      await settle();
+      expect(screen.getByTestId('auto-scope-confirm-' + id)).toBeVisible();
+      s.confirmSplitScope.mockReturnValue({
+        promise: Promise.resolve({
+          candidate: fresh.candidate,
+          semanticQualification: {
+            ...fresh.semanticQualification,
+            scopeConfirmation: { receiptId: 'fresh-receipt', state: 'CONFIRMED' },
+          },
+        }),
+        cancel: (): void => undefined,
+      });
+      click('auto-scope-confirm-' + id);
+      await settle();
+      expect(screen.getByTestId('auto-row-status-' + id)).toHaveTextContent('Ready');
+      vi.spyOn(s.store, 'applySplitResult').mockReturnValue(false);
+      s.commitSplit.mockReturnValue({
+        promise: Promise.resolve({}),
+        cancel: (): void => undefined,
+      });
+      click('split-apply');
+      await settle();
+      expect(screen.queryByTestId('auto-row-status-' + id)).toBeNull();
+      expect(screen.queryByTestId('split-apply')).toBeNull();
+      expect(document.body).toHaveTextContent('model changed');
+      expect(s.commitSplit).toHaveBeenCalledTimes(2);
+      click('auto-analyze');
+      await settle();
+      expect(screen.getByTestId('auto-row-status-' + id)).toHaveTextContent('Suggested');
+      const nextId = kind === 'different-candidate' ? 'candidate-b' : id;
+      const nextPrep = kind === 'different-preparation' ? 8 : prep;
+      s.suggest.mockReturnValue({
+        ...operation,
+        promise: Promise.resolve({
+          ...old,
+          suggestions: [
+            {
+              ...HEAD,
+              id: nextId,
+              family: 'semantic',
+              quality: 'SUGGESTED',
+              semanticPreparationId: nextPrep,
+            },
+          ],
+        }),
+      });
+      click('auto-reanalyze-fresh');
+      await settle();
+      const next = {
+        ...fresh,
+        candidate: { ...fresh.candidate, candidateId: 'third-ticket' },
+        semanticQualification: {
+          ...fresh.semanticQualification,
+          candidateId: nextId,
+          preparationId: nextPrep,
+          scopeConfirmation: { receiptId: 'third-receipt', state: 'REQUIRED' as const },
+        },
+      };
+      s.createSplit.mockReturnValue({ promise: Promise.resolve(next), cancel: () => undefined });
+      click('auto-preview-' + nextId);
+      await settle();
+      s.confirmSplitScope.mockReturnValue({
+        promise: Promise.resolve({
+          candidate: next.candidate,
+          semanticQualification: {
+            ...next.semanticQualification,
+            scopeConfirmation: { receiptId: 'third-receipt', state: 'CONFIRMED' },
+          },
+        }),
+        cancel: () => undefined,
+      });
+      click('auto-scope-confirm-' + nextId);
+      await settle();
+      expect(screen.getByTestId('auto-row-status-' + nextId)).toHaveTextContent('Ready');
+      vi.spyOn(s.store, 'applySplitResult').mockReturnValue(true);
+      s.commitSplit.mockReturnValue({
+        promise: Promise.resolve({
+          pieceAId: 'A',
+          pieceBId: 'B',
+          recordId: 'fresh-record',
+          metrics: { pieceAFinalVolume: 1, pieceBFinalVolume: 1, volumeRelativeError: 0 },
+          section: { area: 1, loopCount: 1 },
+          connector: { kind: 'none' },
+        }),
+        cancel: (): void => undefined,
+      });
+      click('split-apply');
+      await settle();
+      expect(s.commitSplit).toHaveBeenCalledTimes(3);
+      expect(screen.queryByTestId('split-apply')).toBeNull();
+      expect(document.body).toHaveTextContent('Split applied');
+    },
+  );
 });

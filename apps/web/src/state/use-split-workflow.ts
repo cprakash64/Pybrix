@@ -905,7 +905,49 @@ export function useSplitWorkflow(): SplitControls {
     flushSync(() => {
       setPhase(SplitPhase.Applying);
     });
+    const scopeAuthority = current.semanticQualification?.scopeConfirmation;
+    const semanticAuthorized =
+      scopeAuthority?.state === 'CONFIRMED' || scopeAuthority?.state === 'AUTOMATIC_IDENTIFIED';
     let dispatched = false;
+    // Only completed local adoption lets a dispatched semantic lifecycle survive.
+    let successfullyAdopted = false;
+    let failureMessage = 'The split could not be applied. Preview the piece again.';
+    const withdrawFailedSemanticApply = (): void => {
+      const safely = (effect: () => void): void => {
+        try {
+          effect();
+        } catch {
+          /* Cleanup cannot revive the old capability. */
+        }
+      };
+      if (previewRef.current === current) {
+        previewRef.current = undefined;
+        safely(() => {
+          setPreviewState(undefined);
+        });
+        safely(() => {
+          store.clearSplitPreview();
+        });
+      }
+      safely(() => {
+        setFailedSemanticApply(current.semanticQualification);
+      });
+      if (action.current === token || action.current === undefined)
+        safely(() => {
+          setPhase(SplitPhase.Idle);
+        });
+      safely(() => {
+        setError(failureMessage, true);
+      });
+      safely(() => {
+        store.pushStatus(StatusSeverity.Error, failureMessage);
+      });
+      try {
+        void client.discardSplit(current.candidate).promise.catch(() => undefined);
+      } catch {
+        /* Best effort only. */
+      }
+    };
     void (async (): Promise<void> => {
       try {
         await afterPaint();
@@ -924,8 +966,11 @@ export function useSplitWorkflow(): SplitControls {
                 : {}),
             })
           ) {
-            setPhase(SplitPhase.Preview);
-            setError('The model changed before the split could be applied.');
+            failureMessage = 'The model changed before the split could be applied.';
+            if (!semanticAuthorized) {
+              setPhase(SplitPhase.Preview);
+              setError(failureMessage);
+            }
             return;
           }
           previewRef.current = undefined;
@@ -944,27 +989,17 @@ export function useSplitWorkflow(): SplitControls {
           store.pushStatus(StatusSeverity.Success, 'Split applied. Piece A and Piece B are ready.');
           await afterPaint();
           if (action.current === token) setPhase(SplitPhase.Idle);
+          successfullyAdopted = true;
         }
       } catch (cause: unknown) {
-        const message = messageOf(cause, 'The split could not be applied.');
-        const authority = current.semanticQualification?.scopeConfirmation;
-        if (dispatched && authority && authority.state !== 'REQUIRED') {
-          if (previewRef.current === current) {
-            previewRef.current = undefined;
-            setPreviewState(undefined);
-            store.clearSplitPreview();
-          }
-          setFailedSemanticApply(current.semanticQualification);
-          setPhase(SplitPhase.Idle);
-          try {
-            void client.discardSplit(current.candidate).promise.catch(() => undefined);
-          } catch {
-            /* Local withdrawal is independent of best-effort worker cleanup. */
-          }
-        } else setPhase(SplitPhase.Preview);
-        setError(message, true);
-        store.pushStatus(StatusSeverity.Error, message);
+        failureMessage = messageOf(cause, 'The split could not be applied.');
+        if (!dispatched || !semanticAuthorized) {
+          setPhase(SplitPhase.Preview);
+          setError(failureMessage, true);
+          store.pushStatus(StatusSeverity.Error, failureMessage);
+        }
       } finally {
+        if (dispatched && semanticAuthorized && !successfullyAdopted) withdrawFailedSemanticApply();
         if (action.current === token) action.current = undefined;
       }
     })();

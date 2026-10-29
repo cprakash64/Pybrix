@@ -87,6 +87,8 @@ function load(store: WorkspaceStore, unit: string | undefined, parts = [part('p1
 }
 
 interface TestSetup {
+  readonly unmount: () => void;
+  readonly store: WorkspaceStore;
   readonly client: GeometryClient;
   readonly result: { current: SplitControls };
   readonly create: MockInstance<GeometryClient['createSplit']>;
@@ -148,7 +150,7 @@ function setup(): TestSetup {
       </WorkspaceProvider>
     ),
   });
-  return { ...hook, create, commit, undo, status, client };
+  return { ...hook, create, commit, undo, status, client, store };
 }
 async function frame(): Promise<void> {
   await act(async () => {
@@ -358,9 +360,12 @@ it('C2AD: a failed authorized semantic Apply must withdraw consumed authority be
       },
     }),
   });
-  s.commit.mockReturnValue({
-    promise: Promise.reject(Error('Authorized commit failed after consumption')),
-  } as ReturnType<GeometryClient['commitSplit']>);
+  s.commit.mockImplementation(
+    () =>
+      ({
+        promise: Promise.reject(Error('Authorized commit failed after consumption')),
+      }) as ReturnType<GeometryClient['commitSplit']>,
+  );
   act(() => {
     s.result.current.updatePreview();
   });
@@ -432,13 +437,16 @@ it.each([
     kind === 'AUTOMATIC_IDENTIFIED' ? 'AUTOMATIC_IDENTIFIED' : 'CONFIRMED',
     kind === 'boundary',
   );
-  s.commit.mockReturnValue({ promise: Promise.reject(Error(kind)) } as ReturnType<
-    GeometryClient['commitSplit']
-  >);
+  s.commit.mockImplementation(
+    () => ({ promise: Promise.reject(Error(kind)) }) as ReturnType<GeometryClient['commitSplit']>,
+  );
   if (kind === 'discard-reject')
-    vi.spyOn(s.client, 'discardSplit').mockReturnValue({
-      promise: Promise.reject(Error('cleanup')),
-    } as ReturnType<GeometryClient['discardSplit']>);
+    vi.spyOn(s.client, 'discardSplit').mockImplementation(
+      () =>
+        ({ promise: Promise.reject(Error('cleanup')) }) as ReturnType<
+          GeometryClient['discardSplit']
+        >,
+    );
   if (kind === 'discard-throw')
     vi.spyOn(s.client, 'discardSplit').mockImplementation(() => {
       throw Error('cleanup');
@@ -465,9 +473,12 @@ it.each([
 });
 it('keeps a manual Preview retryable after commit failure', async () => {
   const s = setup();
-  s.commit.mockReturnValue({ promise: Promise.reject(Error('retryable')) } as ReturnType<
-    GeometryClient['commitSplit']
-  >);
+  s.commit.mockImplementation(
+    () =>
+      ({ promise: Promise.reject(Error('retryable')) }) as ReturnType<
+        GeometryClient['commitSplit']
+      >,
+  );
   act(() => {
     s.result.current.updatePreview();
   });
@@ -518,9 +529,221 @@ it.each(['CONFIRMED', 'AUTOMATIC_IDENTIFIED'] as const)(
     const commitImpl = s.commit.getMockImplementation();
     if (!commitImpl) throw Error('Missing fixture');
     const success = commitImpl({} as never, {} as never, '');
-    s.commit.mockReturnValue({ promise: Promise.reject(Error('first failure')) } as ReturnType<
-      GeometryClient['commitSplit']
-    >);
+    s.commit.mockImplementation(
+      () =>
+        ({ promise: Promise.reject(Error('first failure')) }) as ReturnType<
+          GeometryClient['commitSplit']
+        >,
+    );
+    act(() => {
+      s.result.current.updatePreview();
+    });
+    await frame();
+    await frame();
+    act(() => {
+      s.result.current.apply();
+    });
+    await frame();
+    await frame();
+    act(() => {
+      s.result.current.apply();
+    });
+    await frame();
+    expect(s.commit).toHaveBeenCalledTimes(1);
+    const createImpl = s.create.getMockImplementation();
+    if (!createImpl) throw Error('Missing fixture');
+    const op = createImpl({} as never, '', {} as never);
+    const old = await op.promise;
+    const proof = old.semanticQualification;
+    if (!proof) throw Error('Missing proof');
+    s.create.mockReturnValue({
+      ...op,
+      promise: Promise.resolve({
+        ...old,
+        candidate: { ...old.candidate, candidateId: 'fresh-ticket' },
+        semanticQualification: {
+          ...proof,
+          scopeConfirmation: { receiptId: 'fresh-worker-receipt', state },
+        },
+      }),
+    });
+    s.commit.mockReturnValue(success);
+    act(() => {
+      s.result.current.updatePreview();
+    });
+    await frame();
+    await frame();
+    expect(s.create).toHaveBeenCalledTimes(2);
+    expect(s.result.current.preview?.candidate.candidateId).toBe('fresh-ticket');
+    act(() => {
+      s.result.current.apply();
+    });
+    await frame();
+    await frame();
+    expect(s.commit).toHaveBeenCalledTimes(2);
+    expect(s.result.current.applied).toBeDefined();
+  },
+);
+
+it('C2AF: local adoption refusal after successful semantic commit kills the consumed Preview', async () => {
+  const s = setup();
+  await recoveryPreview(s, 'CONFIRMED');
+  vi.spyOn(s.store, 'applySplitResult').mockReturnValue(false);
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(s.commit).toHaveBeenCalledTimes(1);
+  expect(s.result.current.error).toContain('model changed');
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(s.commit).toHaveBeenCalledTimes(1);
+  expect(s.result.current.preview).toBeUndefined();
+});
+
+it.each([
+  'CONFIRMED',
+  'AUTOMATIC_IDENTIFIED',
+  'boundary',
+  'discard-reject',
+  'discard-throw',
+  'local-clear-throw',
+  'processing-throw',
+  'status-throw',
+  'applied-transition-throw',
+] as const)('centralizes post-dispatch adoption failure %s', async (kind) => {
+  const s = setup();
+  await recoveryPreview(
+    s,
+    kind === 'AUTOMATIC_IDENTIFIED' ? 'AUTOMATIC_IDENTIFIED' : 'CONFIRMED',
+    kind === 'boundary',
+  );
+  if (kind === 'processing-throw')
+    vi.spyOn(s.store, 'applySplitResult').mockImplementation(() => {
+      throw Error('processing failure');
+    });
+  else vi.spyOn(s.store, 'applySplitResult').mockReturnValue(kind === 'applied-transition-throw');
+  if (kind === 'discard-reject')
+    vi.spyOn(s.client, 'discardSplit').mockImplementation(
+      () =>
+        ({ promise: Promise.reject(Error('cleanup')) }) as ReturnType<
+          GeometryClient['discardSplit']
+        >,
+    );
+  if (kind === 'discard-throw')
+    vi.spyOn(s.client, 'discardSplit').mockImplementation(() => {
+      throw Error('cleanup');
+    });
+
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  if (kind === 'status-throw' || kind === 'applied-transition-throw')
+    s.status.mockImplementation(() => {
+      throw Error('status failure');
+    });
+  const clearSpy =
+    kind === 'local-clear-throw'
+      ? vi.spyOn(s.store, 'clearSplitPreview').mockImplementation(() => {
+          throw Error('local cleanup');
+        })
+      : undefined;
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(s.result.current.preview).toBeUndefined();
+  expect(s.result.current.phase).toBe(SplitPhase.Idle);
+  expect(s.result.current.failedSemanticApply).toBeDefined();
+  expect(s.result.current.error).toContain(
+    kind === 'processing-throw'
+      ? 'processing failure'
+      : kind === 'applied-transition-throw'
+        ? 'status failure'
+        : 'model changed',
+  );
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  expect(s.commit).toHaveBeenCalledTimes(1);
+  clearSpy?.mockRestore();
+});
+it('preserves manual adoption-refusal behavior', async () => {
+  const s = setup();
+  vi.spyOn(s.store, 'applySplitResult').mockReturnValue(false);
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(s.result.current.preview).toBeDefined();
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(s.commit).toHaveBeenCalledTimes(2);
+});
+it('unmount after semantic dispatch already retires the operative Preview', async () => {
+  const s = setup();
+  await recoveryPreview(s, 'CONFIRMED');
+  let resolve:
+    ((v: Awaited<ReturnType<GeometryClient['commitSplit']>['promise']>) => void) | undefined;
+  const impl = s.commit.getMockImplementation();
+  if (!impl) throw Error('fixture');
+  const success = await impl({} as never, {} as never, '').promise;
+  s.commit.mockReturnValue({
+    promise: new Promise((r) => {
+      resolve = r;
+    }),
+  } as ReturnType<GeometryClient['commitSplit']>);
+  act(() => {
+    s.result.current.updatePreview();
+  });
+  await frame();
+  await frame();
+  act(() => {
+    s.result.current.apply();
+  });
+  await frame();
+  s.unmount();
+  if (!resolve) throw Error('resolver');
+  resolve(success);
+  await frame();
+  await frame();
+  act(() => {
+    s.result.current.apply();
+  });
+  expect(s.commit).toHaveBeenCalledTimes(1);
+});
+
+it.each(['CONFIRMED', 'AUTOMATIC_IDENTIFIED'] as const)(
+  'allows fresh %s success after local adoption refusal',
+  async (state) => {
+    const s = setup();
+    await recoveryPreview(s, state);
+    const commitImpl = s.commit.getMockImplementation();
+    if (!commitImpl) throw Error('Missing fixture');
+    const success = commitImpl({} as never, {} as never, '');
+    vi.spyOn(s.store, 'applySplitResult').mockReturnValueOnce(false);
     act(() => {
       s.result.current.updatePreview();
     });
