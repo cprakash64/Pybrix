@@ -189,6 +189,7 @@ export interface SplitControls {
   readonly completePreparedPreview: () => void;
   readonly updatePreview: () => void;
   readonly discardPreview: () => void;
+  readonly failedSemanticApply?: NonNullable<SplitCreateResult['semanticQualification']>;
   readonly confirmScope?: () => void;
   readonly assemblyEditing?: boolean;
   readonly beginNextSplit?: () => void;
@@ -352,6 +353,8 @@ export function useSplitWorkflow(): SplitControls {
   >(undefined);
   const running = useRef<OperationHandle<unknown> | undefined>(undefined);
   const previewRef = useRef<SplitCreateResult | undefined>(undefined);
+  const [failedSemanticApply, setFailedSemanticApply] =
+    useState<SplitCreateResult['semanticQualification']>();
   const action = useRef<{ phase: SplitPhase } | undefined>(undefined);
   const semanticIntent = useRef<
     | {
@@ -902,10 +905,12 @@ export function useSplitWorkflow(): SplitControls {
     flushSync(() => {
       setPhase(SplitPhase.Applying);
     });
+    let dispatched = false;
     void (async (): Promise<void> => {
       try {
         await afterPaint();
         if (action.current !== token) return;
+        dispatched = true;
         const result = await client.commitSplit(current.candidate, model.handle, part.partId)
           .promise;
         {
@@ -942,7 +947,21 @@ export function useSplitWorkflow(): SplitControls {
         }
       } catch (cause: unknown) {
         const message = messageOf(cause, 'The split could not be applied.');
-        setPhase(SplitPhase.Preview);
+        const authority = current.semanticQualification?.scopeConfirmation;
+        if (dispatched && authority && authority.state !== 'REQUIRED') {
+          if (previewRef.current === current) {
+            previewRef.current = undefined;
+            setPreviewState(undefined);
+            store.clearSplitPreview();
+          }
+          setFailedSemanticApply(current.semanticQualification);
+          setPhase(SplitPhase.Idle);
+          try {
+            void client.discardSplit(current.candidate).promise.catch(() => undefined);
+          } catch {
+            /* Local withdrawal is independent of best-effort worker cleanup. */
+          }
+        } else setPhase(SplitPhase.Preview);
         setError(message, true);
         store.pushStatus(StatusSeverity.Error, message);
       } finally {
@@ -1121,6 +1140,7 @@ export function useSplitWorkflow(): SplitControls {
     completePreparedPreview,
     updatePreview,
     discardPreview: invalidate,
+    ...(failedSemanticApply ? { failedSemanticApply } : {}),
     confirmScope,
     assemblyEditing,
     beginNextSplit: (): void => {

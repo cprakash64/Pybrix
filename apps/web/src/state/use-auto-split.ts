@@ -195,6 +195,19 @@ export function useAutoSplit(
     [session],
   );
   const snap = useSyncExternalStore(session.subscribe, session.getSnapshot);
+  const failedApply = split.failedSemanticApply;
+  const handledFailedApply = useRef<typeof failedApply>(undefined);
+  useEffect(() => {
+    if (!failedApply || handledFailedApply.current === failedApply) return;
+    handledFailedApply.current = failedApply;
+    if (
+      snap.result?.suggestions.some(
+        (s) =>
+          s.id === failedApply.candidateId && s.semanticPreparationId === failedApply.preparationId,
+      )
+    )
+      session.reset();
+  }, [failedApply, snap.result, session]);
 
   const part = model?.parts.find((candidate) => candidate.partId === activePartId);
   const target: AutoSplitTarget | undefined = useMemo(

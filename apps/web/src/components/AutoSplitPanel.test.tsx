@@ -991,4 +991,33 @@ describe('physical scope confirmation controls', () => {
       vi.useRealTimers();
     }
   });
+  it('withdraws session READY and old choice after a confirmed Apply failure', async () => {
+    const s = await suggestedScope();
+    click('auto-preview-head');
+    await settle();
+    s.confirmSplitScope.mockReturnValue({
+      promise: Promise.resolve({
+        candidate: physicalPreview('CONFIRMED').candidate,
+        semanticQualification: physicalPreview('CONFIRMED').semanticQualification,
+      }),
+      cancel: (): void => undefined,
+    });
+    click('auto-scope-confirm-head');
+    await settle();
+    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Ready');
+    s.commitSplit.mockReturnValue({
+      promise: Promise.reject(Error('original commit failure')),
+      cancel: (): void => undefined,
+    });
+    click('split-apply');
+    await settle();
+    expect(screen.queryByTestId('auto-row-status-head')).toBeNull();
+    expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();
+    expect(screen.queryByTestId('split-apply')).toBeNull();
+    expect(document.body).toHaveTextContent('original commit failure');
+    expect(s.commitSplit).toHaveBeenCalledTimes(1);
+    click('auto-analyze');
+    await settle();
+    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Suggested');
+  });
 });

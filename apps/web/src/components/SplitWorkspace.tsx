@@ -278,6 +278,7 @@ export function SplitWorkspace(): ReactNode {
           </PanelSection>
         ) : null}
         {auto.tab === 'manual' ||
+        (split.failedSemanticApply !== undefined && split.error !== undefined) ||
         (auto.hasResult && auto.selected !== undefined && !split.errorIsResourceLimit) ||
         split.exportState === SplitExportState.Failed ? (
           <SplitOutcome split={split} autoMode={auto.tab === 'auto'} />
