@@ -156,6 +156,8 @@ export function describeStatus(suggestion: Suggestion, sourceReady: boolean): Su
     case SuggestionStatus.Suggested:
       if (suggestion.quality === 'NEEDS_SCOPE_CONFIRMATION')
         return { label: 'Choose physical piece', tone: 'review' };
+      if (suggestion.reviewAlternative && suggestion.quality !== 'READY')
+        return { label: 'Review possible cut', tone: 'review' };
       if (suggestion.quality === 'SUGGESTED') return { label: 'Suggested', tone: 'review' };
       if (suggestion.family === 'semantic' && suggestion.quality === 'READY')
         return { label: 'Ready', tone: 'ready' };

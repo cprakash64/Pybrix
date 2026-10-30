@@ -586,18 +586,26 @@ function Row({
                 ? 'Choose a boundary'
                 : row.suggestion.family === 'semantic' && row.suggestion.quality === 'READY'
                   ? 'Ready'
-                  : row.executable || row.suggestion.quality === 'SUGGESTED'
-                    ? 'Suggested cut'
-                    : row.suggestion.family === 'semantic' &&
-                        (row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE' ||
-                          row.suggestion.quality === 'LOW_CONFIDENCE')
-                      ? describeSemanticUnavailable(row.suggestion.diagnostic)
-                      : row.suggestion.quality === 'LOW_CONFIDENCE'
-                        ? 'Needs a closer look'
-                        : row.suggestion.quality === 'UNSAFE'
-                          ? "Can't separate this safely"
-                          : 'No separate part found'}
+                  : row.suggestion.reviewAlternative
+                    ? 'Review possible cut'
+                    : row.executable || row.suggestion.quality === 'SUGGESTED'
+                      ? 'Suggested cut'
+                      : row.suggestion.family === 'semantic' &&
+                          (row.suggestion.quality === 'RECOGNIZED_NOT_SEPARABLE' ||
+                            row.suggestion.quality === 'LOW_CONFIDENCE')
+                        ? describeSemanticUnavailable(row.suggestion.diagnostic)
+                        : row.suggestion.quality === 'LOW_CONFIDENCE'
+                          ? 'Needs a closer look'
+                          : row.suggestion.quality === 'UNSAFE'
+                            ? "Can't separate this safely"
+                            : 'No separate part found'}
       </p>
+      {row.suggestion.reviewAlternative ? (
+        <p data-testid={`auto-review-context-${row.id}`}>
+          Review this physical alternative. Its structural scope is not automatically verified.
+          Preview the geometry before choosing the piece you intend.
+        </p>
+      ) : null}
       {children}
       <PanelSection title="Details" defaultOpen={false}>
         <p className="auto-row__reason" id={reasonId}>
@@ -707,7 +715,7 @@ function Row({
             }}
             data-testid={`auto-preview-${row.id}`}
           >
-            {AUTO_SPLIT_COPY.preview}
+            {row.suggestion.reviewAlternative ? 'Review possible cut' : AUTO_SPLIT_COPY.preview}
           </button>
         )}
       </div>

@@ -103,6 +103,13 @@ export interface Suggestion {
     readonly complementId: string;
     readonly side: 'PRIMARY' | 'COMPLEMENT';
   };
+  /** Inspectable physical alternative; supplies no automatic execution authority. */
+  readonly reviewAlternative?: {
+    readonly targetId: string;
+    readonly ordinal: number;
+    readonly count: number;
+    readonly blocker: 'MISSING_STRUCTURAL_AUTO_AUTHORITY';
+  };
   /** Trusted projection of the existing IDENTIFIED certificate, not a new certificate. */
   readonly semanticScopeAuthority?: {
     readonly state: 'STRUCTURAL_IDENTIFIED';

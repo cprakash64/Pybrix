@@ -1039,6 +1039,119 @@ describe('physical scope confirmation controls', () => {
       }
     },
   );
+  it('labels review alternatives without granting READY and uses the normal physical confirmation path', async () => {
+    const s = mount({
+      suggestions: [
+        {
+          ...HEAD,
+          family: 'semantic',
+          quality: 'SUGGESTED',
+          semanticPreparationId: 7,
+          reviewAlternative: {
+            targetId: 'head',
+            ordinal: 0,
+            count: 2,
+            blocker: 'MISSING_STRUCTURAL_AUTO_AUTHORITY',
+          },
+        },
+      ],
+    });
+    await openAuto();
+    click('auto-disclosure-continue');
+    await settle();
+    click('auto-analyze');
+    await settle();
+    expect(screen.getByTestId('auto-row-status-head')).toHaveTextContent('Review possible cut');
+    expect(screen.getByTestId('auto-review-context-head')).toHaveTextContent(
+      'not automatically verified',
+    );
+    expect(screen.getByTestId('auto-preview-head')).toHaveTextContent('Review possible cut');
+    expect(screen.queryByTestId('split-apply')).toBeNull();
+    s.createSplit.mockReturnValue({
+      promise: Promise.resolve(physicalPreview('REQUIRED')),
+      cancel: vi.fn(),
+    });
+    click('auto-preview-head');
+    await settle();
+    expect(screen.getByTestId('split-apply')).toBeDisabled();
+    expect(screen.getByTestId('auto-scope-confirm-head')).toBeEnabled();
+    expect(screen.getByTestId('auto-scope-cancel-head')).toBeEnabled();
+    expect(s.confirmSplitScope).not.toHaveBeenCalled();
+  });
+  it.each(['confirmation', 'Apply'] as const)(
+    'withdraws a review alias after accepted %s failure',
+    async (kind) => {
+      const id = 'head:review:1';
+      const s = mount({
+        suggestions: [
+          {
+            ...HEAD,
+            id,
+            family: 'semantic',
+            quality: 'SUGGESTED',
+            semanticPreparationId: 7,
+            reviewAlternative: {
+              targetId: 'head',
+              ordinal: 1,
+              count: 2,
+              blocker: 'MISSING_STRUCTURAL_AUTO_AUTHORITY',
+            },
+          },
+        ],
+      });
+      await openAuto();
+      click('auto-disclosure-continue');
+      await settle();
+      click('auto-analyze');
+      await settle();
+      const physical = physicalPreview('REQUIRED');
+      const proof = physical.semanticQualification;
+      if (!proof) throw Error('Missing physical proof');
+      s.createSplit.mockReturnValue({
+        promise: Promise.resolve({
+          ...physical,
+          semanticQualification: { ...proof, candidateId: id },
+        }),
+        cancel: vi.fn(),
+      });
+      vi.spyOn(s.client, 'discardSplit').mockReturnValue({
+        id: createOperationId(),
+        interruptible: true,
+        cancel: vi.fn(),
+        promise: Promise.resolve({ released: true }),
+      });
+      click('auto-preview-' + id);
+      await settle();
+      s.confirmSplitScope.mockReturnValue({
+        promise:
+          kind === 'confirmation'
+            ? Promise.reject(invalidState('Accepted review confirmation failed.'))
+            : Promise.resolve({
+                candidate: physical.candidate,
+                semanticQualification: {
+                  ...proof,
+                  candidateId: id,
+                  scopeConfirmation: { receiptId: 'opaque-receipt', state: 'CONFIRMED' },
+                },
+              }),
+        cancel: vi.fn(),
+      });
+      click('auto-scope-confirm-' + id);
+      await settle();
+      if (kind === 'Apply') {
+        expect(screen.getByTestId('split-apply')).toBeEnabled();
+        s.commitSplit.mockReturnValue({
+          promise: Promise.reject(invalidState('Accepted review Apply failed.')),
+          cancel: vi.fn(),
+        });
+        click('split-apply');
+        await settle();
+      }
+      expect(screen.queryByTestId('auto-row-status-' + id)).toBeNull();
+      expect(screen.queryByTestId('split-apply')).toBeNull();
+      expect(document.body).toHaveTextContent('Accepted review ' + kind + ' failed.');
+    },
+  );
   it('shows confirm only after physical Preview, keeps Apply disabled, and reuses the receipt', async () => {
     const s = await suggestedScope();
     expect(screen.queryByTestId('auto-scope-confirm-head')).toBeNull();

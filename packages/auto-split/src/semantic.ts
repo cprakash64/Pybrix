@@ -1,3 +1,4 @@
+import { distinctReviewPlanes } from './semantic-review-alternatives';
 import {
   semanticExecutionEligibility,
   guardSemanticExecution,
@@ -538,6 +539,7 @@ export function decomposeSemantic(
   const answer: SemanticHierarchy = checked.value;
   const start = Date.now();
   const { geometry, labelling, rasters, visibleTotals, facts } = prepared;
+  const reviewPlanes = new Map<string, readonly NonNullable<Suggestion['plane']>[]>();
   const evidence: SemanticEvidence[] = [],
     suggestions: Suggestion[] = [];
   const partialFamilies = new Map<string, readonly number[]>();
@@ -992,6 +994,41 @@ export function decomposeSemantic(
       (!majorSiblingConsistency ||
         majorSiblingConsistency.outcome === 'CONSISTENT' ||
         majorSiblingConsistency.outcome === 'IRRELEVANT');
+    // Reuse only the existing locally confirmed beam. Missing automatic structural
+    // authority is the sole relaxed publication condition; no certificate is changed.
+    if (
+      !supportedPlane &&
+      executionEligibility.state === 'EXECUTABLE' &&
+      semanticConfidence >= SEMANTIC_WORK_LIMITS.semanticConfidence &&
+      planeSemanticConfidence >= SEMANTIC_WORK_LIMITS.semanticConfidence &&
+      localPlane?.ownership.admitted &&
+      !localPlane.structuralOwnership &&
+      decompositionIntent?.admitted === true &&
+      decompositionIntent.rule === 'STRUCTURAL_SEAM' &&
+      (!majorSiblingConsistency ||
+        majorSiblingConsistency.outcome === 'CONSISTENT' ||
+        majorSiblingConsistency.outcome === 'IRRELEVANT') &&
+      part.cut &&
+      part.importance === 'major' &&
+      part.instances === 1 &&
+      part.expectedGeometry.kind === 'solid_part'
+    ) {
+      reviewPlanes.set(
+        part.id,
+        distinctReviewPlanes(
+          (localPlane.finalists ?? [])
+            .filter(
+              (cut) =>
+                consistent(cut) &&
+                (cut.independentComplement ||
+                  (cut.capturedFraction <=
+                    SEMANTIC_INTENT_LIMITS.maximumSelectedSourceSampleShare &&
+                    seamSupportsPlane(refined, cut, seam))),
+            )
+            .map((cut) => ({ normal: cut.normal, origin: toSourcePoint(geometry, cut.origin) })),
+        ),
+      );
+    }
     let geometryConfidence =
       componentConfidence > 0 ? componentConfidence : (localPlane?.confidence ?? 0);
     if (executionEligibility.state !== 'EXECUTABLE') {
@@ -1670,13 +1707,55 @@ export function decomposeSemantic(
           }
         : s,
   );
-  const published = geometricallyPublished.map((s) =>
+  const automaticallyPublished = geometricallyPublished.map((s) =>
     guardSemanticExecution(
       s,
       s.semanticExecutionEligibility ??
         semanticExecutionEligibility(partById.get(s.id) ?? partById.get(s.parentId ?? '')),
     ),
   );
+  const published = automaticallyPublished.flatMap<Suggestion>((s) => {
+    const planes = reviewPlanes.get(s.id);
+    if (
+      !planes?.length ||
+      s.operation !== SuggestionOperation.None ||
+      s.quality !== 'RECOGNIZED_NOT_SEPARABLE' ||
+      refused.has(s.id)
+    )
+      return [s];
+    const allowed = planes.filter((plane) => {
+      faceWork += geometry.faceCount;
+      if (faceWork > SEMANTIC_WORK_LIMITS.scoredFaces)
+        throw resourceLimitExceeded(
+          'The semantic correspondence exceeds the supported work limit.',
+        );
+      const checked = checkSiblingOwnership(
+        suggestions.map((other) =>
+          other.id === s.id ? { ...other, operation: SuggestionOperation.Plane, plane } : other,
+        ),
+        initialRefused,
+      );
+      return !checked.has(s.id) && [...checked].every((id) => id === s.id || refused.has(id));
+    });
+    if (!allowed.length) return [s];
+    return allowed.map<Suggestion>((plane, ordinal) => ({
+      ...s,
+      id: ordinal === 0 ? s.id : `${s.id}:review:${String(ordinal)}`,
+      label: `${s.label.slice(0, 48)} · option ${String(ordinal + 1)}`,
+      operation: SuggestionOperation.Plane,
+      status: SuggestionStatus.Suggested,
+      reason: SuggestionReason.ReviewCut,
+      quality: 'SUGGESTED',
+      plane,
+      semanticFinalists: [plane],
+      reviewAlternative: {
+        targetId: s.id,
+        ordinal,
+        count: allowed.length,
+        blocker: 'MISSING_STRUCTURAL_AUTO_AUTHORITY',
+      },
+    }));
+  });
   const peerlessRefinement = [...planeContext.synthesis.values()].reduce(
     (sum, trace) => ({
       milliseconds: sum.milliseconds + (trace.peerless?.refinementMilliseconds ?? 0),
