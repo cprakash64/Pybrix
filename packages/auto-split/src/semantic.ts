@@ -35,6 +35,7 @@ import {
   type MajorSiblingConsistency,
   synthesizeSemanticPlane,
   planeOwnershipTelemetry,
+  planeObservationCache,
   confirmSemanticPlane,
   type LocalPlaneProposal,
 } from './semantic-local-plane';
@@ -562,6 +563,7 @@ export function decomposeSemantic(
   const planeOwnership = planeOwnershipTelemetry();
   let planeOwnershipMilliseconds = 0;
   const planeContext = {
+    observationCache: planeObservationCache(),
     synthesis: new Map<string, PlaneSynthesisTrace>(),
     telemetry: planeOwnership,
     charge: (): void => {

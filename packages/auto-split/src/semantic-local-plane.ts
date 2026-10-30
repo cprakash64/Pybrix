@@ -170,6 +170,7 @@ export interface PlaneOwnershipContext {
   readonly telemetry: PlaneOwnershipTelemetry;
   readonly charge: () => void;
   readonly synthesis?: Map<string, PlaneSynthesisTrace>;
+  readonly observationCache?: ReturnType<typeof planeObservationCache>;
 }
 interface Observation {
   point: Vec3;
@@ -191,6 +192,16 @@ interface Evidence {
   exactTarget: boolean;
   fusedTarget: boolean;
 }
+interface ObservationCacheEntry {
+  readonly prepared: PreparedSemanticGeometry;
+  readonly answer: SemanticHierarchy;
+  readonly evidence: Evidence;
+}
+/** Owned only by one synchronous analysis, never by a worker or source session. */
+export function planeObservationCache(): Map<SemanticPart, ObservationCacheEntry> {
+  return new Map<SemanticPart, ObservationCacheEntry>();
+}
+const OBSERVATION_CACHE_ENTRIES = 8;
 interface Counts {
   selected: number;
   target: number;
@@ -365,6 +376,28 @@ function observations(
       context.charge();
     }
   };
+  const cache = context?.observationCache;
+  if (cache) {
+    checkpoint();
+    charge();
+    const entry = cache.get(part);
+    if (entry?.prepared === prepared && entry.answer === answer) {
+      // Scope collectors mutate this derived witness. Each consumer starts with
+      // pristine observation records; coordinate vectors are never mutated.
+      const points = entry.evidence.points.map((p, i): Observation => {
+        if ((i & 1023) === 0) checkpoint();
+        charge();
+        return {
+          point: p.point,
+          view: p.view,
+          target: p.target,
+          rank: p.rank,
+          peerMask: p.peerMask,
+        };
+      });
+      return { ...entry.evidence, points };
+    }
+  }
   const peers = answer.parts.filter(
     (p) => p.id !== part.id && physical(p) && !ancestor(answer, p.id, part),
   );
@@ -551,13 +584,23 @@ function observations(
         peers.length * 6 * 8,
     );
   }
-  return {
+  const evidence: Evidence = {
     points: result,
     peers: grounded,
     typedBytes,
     exactTarget,
     fusedTarget: dominant >= 0 && targetOnDominant,
   };
+  if (cache) {
+    if (cache.size >= OBSERVATION_CACHE_ENTRIES) {
+      charge();
+      const oldest = cache.keys().next();
+      if (!oldest.done) cache.delete(oldest.value);
+    }
+    charge();
+    cache.set(part, { prepared, answer, evidence });
+  }
+  return evidence;
 }
 const robustHigh = (values: readonly number[]): number => {
   const sorted = [...values].sort((a, b) => b - a);
@@ -1093,6 +1136,9 @@ export function synthesizeSemanticPlane(
     }
     for (let v = 0; v < 6; v++)
       for (let c = 0; c < channels; c++) {
+        // With no peers these channels have no writers. The zero-initialized
+        // prefix is already exact; avoid constructing an all-zero prefix.
+        if (evidence.peers.length === 0 && (c === 2 || c === 3)) continue;
         checkpoint();
         let sum = 0;
         for (let bin = 0; bin < bins; bin++) {
@@ -1258,6 +1304,7 @@ export function synthesizeSemanticPlane(
         below = new Uint32Array(6 * channels);
       for (let v = 0; v < 6; v++)
         for (let c = 0; c < channels; c++) {
+          if (evidence.peers.length === 0 && (c === 2 || c === 3)) continue;
           charge();
           below[v * channels + c] = prefix[(v * channels + c) * (bins + 1) + bin] ?? 0;
         }
