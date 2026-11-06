@@ -17,6 +17,7 @@ import { reconcileComplementarySiblings } from './semantic-complementary';
 import {
   planeOwnershipTelemetry,
   synthesizeSemanticPlane,
+  semanticPlaneScorer,
   LOCAL_PLANE_LIMITS,
   type LocalPlaneProposal,
 } from './semantic-local-plane';
@@ -206,7 +207,7 @@ it.each(['supported', 'no-common-normal', 'no-common-offset', 'not-independent']
   },
 );
 
-it('bounds compact reserve diversity and cancels construction without publishing or mutating source', () => {
+it('bounds the admitted compact reserve and cancels construction without publishing or mutating source', () => {
   const part = required(answer.parts[0], 'part'),
     context = { telemetry: planeOwnershipTelemetry(), charge: (): void => undefined };
   const source = prepared.geometry.positions.slice();
@@ -230,7 +231,12 @@ it('bounds compact reserve diversity and cancels construction without publishing
   expect(required(local.compatibilityReserve, 'reserve').length).toBeLessThanOrEqual(
     LOCAL_PLANE_LIMITS.compatibilityReserve,
   );
-  expect(required(local.compatibilityReserve, 'reserve').length).toBeGreaterThan(1);
+  // A supported cross-view contradiction can leave one admissible normal family.
+  // Capacity is bounded; candidate multiplicity cannot override semantic admission.
+  expect(required(local.compatibilityReserve, 'reserve').length).toBeGreaterThan(0);
+  const score = semanticPlaneScorer(prepared, answer, part, local, () => undefined);
+  for (const cut of required(local.compatibilityReserve, 'reserve'))
+    expect(score(cut)?.ownership.rule).toBe('CLEAN_PHYSICAL_EXTENT');
   expect(
     required(local.compatibilityReserve, 'reserve').every((c) => c.independentComplement),
   ).toBe(true);

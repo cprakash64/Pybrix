@@ -628,7 +628,6 @@ function evaluate(
   context?: PlaneOwnershipContext,
   checkpoint: Checkpoint = NO_CHECKPOINT,
   trace?: PlaneSynthesisTrace,
-  preserveScope = false,
 ): Score | undefined {
   const charge = (): void => {
     if (context) {
@@ -683,8 +682,7 @@ function evaluate(
       if ((row.peer[i] ?? 0) >= 8) {
         const selectedLeakage = (row.peerSelected[i] ?? 0) / defined(row.peer[i]);
         leakage.push(selectedLeakage);
-        if (preserveScope && hasScopeContradiction(row))
-          scopeLeakage = Math.max(scopeLeakage, selectedLeakage);
+        if (hasScopeContradiction(row)) scopeLeakage = Math.max(scopeLeakage, selectedLeakage);
         axes.add(Math.floor(view / 2));
       }
     }
@@ -712,7 +710,7 @@ function evaluate(
     .map((r) => (r.hit - r.shared) / Math.max(1, r.hit + r.competing - r.shared));
   const purity = counts.reduce(
     (minimum, row) =>
-      preserveScope && hasScopeContradiction(row)
+      hasScopeContradiction(row)
         ? Math.min(minimum, (row.hit - row.shared) / (row.hit + row.competing - row.shared))
         : minimum,
     robustLow(purityViews),
@@ -735,7 +733,6 @@ function directScore(
   offset: number,
   checkpoint: Checkpoint,
   context?: PlaneOwnershipContext,
-  preserveScope = false,
 ): Score | undefined {
   const rows = emptyCounts(evidence.peers.length);
   for (const [i, p] of evidence.points.entries()) {
@@ -761,7 +758,7 @@ function directScore(
         if (inside) row.peerSelected[j] = (row.peerSelected[j] ?? 0) + 1;
       }
   }
-  return evaluate(evidence, rows, context, checkpoint, undefined, preserveScope);
+  return evaluate(evidence, rows, context, checkpoint);
 }
 interface Candidate {
   groundedScope?: GroundedTargetScopeEvidence;
@@ -2364,9 +2361,8 @@ export function semanticPlaneScorer(
     const normal = unit(cut.normal);
     if (!normal) return undefined;
     const offset = dot(cut.origin, normal),
-      // Paired/refined boundaries must retain every supported exclusive-scope
-      // constraint; synthesis keeps its existing robust search frontier.
-      score = directScore(evidence, normal, offset, checkpoint, bounded, true);
+      // Reuse the same supported exclusive-scope constraints as initial synthesis.
+      score = directScore(evidence, normal, offset, checkpoint, bounded);
     if (!score) return undefined;
     let groundedScope: GroundedTargetScopeEvidence | undefined;
     if (groundedUncertainty !== undefined) {

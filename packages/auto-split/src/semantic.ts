@@ -1640,9 +1640,22 @@ export function decomposeSemantic(
       };
     }
   const resolved = suggestions.map<Suggestion>((suggestion) => {
-    const { boundaryAmbiguity, ...withoutAmbiguity } = suggestion;
-    const s = refused.has(suggestion.id) ? withoutAmbiguity : suggestion;
+    const {
+      boundaryAmbiguity,
+      boundaryConfirmation,
+      semanticFinalists,
+      semanticScopeAuthority,
+      sharedBoundary,
+      reviewAlternative,
+      ...withoutRealization
+    } = suggestion;
+    const s = refused.has(suggestion.id) ? withoutRealization : suggestion;
     void boundaryAmbiguity;
+    void boundaryConfirmation;
+    void semanticFinalists;
+    void semanticScopeAuthority;
+    void sharedBoundary;
+    void reviewAlternative;
     return refused.has(s.id)
       ? {
           ...s,
