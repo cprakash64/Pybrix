@@ -76,6 +76,12 @@ export interface OverlayHandle {
    */
   setSamples(samples: OverlaySamples | undefined, renderPositions: Float32Array | undefined): void;
   setVisibility(visibility: OverlayVisibility): void;
+  /** Stages complete diagnostic data; returns whether the visible scene needs a frame. */
+  update(
+    samples: OverlaySamples | undefined,
+    renderPositions: Float32Array | undefined,
+    visibility?: OverlayVisibility,
+  ): boolean;
   /** Objects currently in the overlay group. For leak tests. */
   readonly objectCount: number;
   dispose(): void;
@@ -245,6 +251,15 @@ export function createOverlays(): OverlayHandle {
     setVisibility(next): void {
       visibility = next;
       for (const [key, object] of built) object.visible = next[key];
+    },
+    update(samples, renderPositions, next): boolean {
+      const wasVisible = [...built.values()].some((object) => object.visible);
+      if (next !== undefined) visibility = next;
+      rebuild(samples, renderPositions);
+      // Hidden diagnostic buffers are still complete and immediately available
+      // when the user enables them. Repainting the unchanged surface here only
+      // submits another full model to the GPU while topology is reporting.
+      return wasVisible || [...built.values()].some((object) => object.visible);
     },
     get objectCount(): number {
       return group.children.length;

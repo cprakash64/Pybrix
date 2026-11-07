@@ -765,6 +765,7 @@ export function createViewport(
   let previewMesh: Mesh<BufferGeometry, MeshStandardMaterial> | undefined;
   let currentPreview: ViewportPreview | undefined;
   let disposed = false;
+  let renderedFrames = 0;
 
   /** The mesh the preview replaces, or `undefined` when no part is active. */
   const activePartMesh = (): Mesh<BufferGeometry, MeshStandardMaterial> | undefined => {
@@ -786,6 +787,9 @@ export function createViewport(
    * stay at one no matter how many models have been loaded.
    */
   const publishRenderStats = (): void => {
+    // Cumulative submissions distinguish a scene update from an unnecessary
+    // repaint; the per-frame draw-call count alone cannot show redundant work.
+    canvas.dataset.renderedFrames = String(renderedFrames);
     canvas.dataset.drawCalls = String(renderer.info.render.calls);
     canvas.dataset.renderedTriangles = String(renderer.info.render.triangles);
     // Counted from the meshes themselves rather than from the group's child
@@ -908,6 +912,7 @@ export function createViewport(
   const render = (): void => {
     if (disposed) return;
     renderer.render(scene, camera);
+    renderedFrames += 1;
     publishRenderStats();
     publishOrientation();
   };
@@ -1326,32 +1331,22 @@ export function createViewport(
    * that everything upstream got it right.
    */
   const setOverlays = (data: ViewportOverlayData | undefined): void => {
-    if (data === undefined || currentModel === undefined) {
-      overlays.setSamples(undefined, undefined);
-      render();
-      return;
-    }
-    if (data.revision !== currentModel.revision) {
-      overlays.setSamples(undefined, undefined);
-      render();
-      return;
-    }
-
     /*
      * SAMPLES INDEX THE ACTIVE PART. Vertex ids in a topology report are local
      * to the mesh that was analysed, so resolving them against another part's
      * buffer would place markers at unrelated coordinates.
      */
-    const activePositions = activePartPositions();
-    if (activePositions === undefined) {
-      overlays.setSamples(undefined, undefined);
-      render();
-      return;
-    }
-
-    overlays.setSamples(data.samples, activePositions);
-    overlays.setVisibility(data.visibility);
-    render();
+    const current = data?.revision === currentModel?.revision ? data : undefined;
+    const activePositions = current === undefined ? undefined : activePartPositions();
+    const needsFrame = overlays.update(
+      activePositions === undefined ? undefined : current?.samples,
+      activePositions,
+      activePositions === undefined ? undefined : current?.visibility,
+    );
+    if (needsFrame) scheduleRender();
+    // Hidden buffers are staged resources, not a newly drawn model. Keep their
+    // count current without advancing the other last-rendered scene statistics.
+    else canvas.dataset.overlayObjects = String(overlays.objectCount);
   };
 
   /**
