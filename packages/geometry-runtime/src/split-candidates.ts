@@ -1,3 +1,4 @@
+import { splitMeshSHA } from './split-source-identity';
 import {
   assertGeometryDocument,
   documentTriangleCount,
@@ -58,10 +59,50 @@ export interface SplitCandidateSummary {
 }
 interface Entry {
   authorizeCommit?: () => void;
+  lockedBy?: string;
+  attempt: number;
+  readonly source: GeometryDocument;
+  readonly sourceSHA: string;
+  readonly candidateSHA: string;
   readonly handle: SplitCandidateHandle;
   readonly document: GeometryDocument;
   readonly resultIdentity: object;
   readonly summary: SplitCandidateSummary;
+}
+
+export type SplitTransactionState =
+  'UNKNOWN' | 'PREPARED' | 'APPLIED_PENDING_ADOPTION' | 'FINALIZED' | 'ABORTED';
+export interface SplitTransactionStatus {
+  readonly transactionId: string;
+  readonly state: SplitTransactionState;
+  readonly source?: DocumentHandle;
+  readonly handle?: DocumentHandle;
+  readonly candidateId?: string;
+  readonly generation?: number;
+  readonly partId?: PartId;
+  readonly sourceSHA?: string;
+  readonly recordId?: string;
+}
+interface Transaction {
+  status: SplitTransactionStatus;
+  readonly candidate: SplitCandidateHandle;
+  readonly expected: DocumentHandle;
+  readonly part: PartId;
+  readonly lock: object;
+}
+const MAX_PENDING_SPLIT_TRANSACTIONS = 32;
+const MAX_TERMINAL_SPLIT_RECEIPTS = 64;
+/** Caller can derive this BEFORE any mutating/staging request. Attempt is monotonic per candidate. */
+export function splitTransactionId(candidate: SplitCandidateHandle, attempt: number): string {
+  if (!Number.isSafeInteger(attempt) || attempt < 1)
+    throw invalidState('Invalid transaction attempt.');
+  return `${candidate.candidateId}/commit/${String(attempt)}`;
+}
+function candidateMeshSHA(document: GeometryDocument, a: PartId, b: PartId): string {
+  return document.parts
+    .filter((p) => p.id === a || p.id === b)
+    .map((p) => `${p.id}:${JSON.stringify(p.transform)}:${splitMeshSHA(p.mesh)}`)
+    .join('/');
 }
 
 /** Two-piece specialization of the Stage 7 worker-resident candidate transaction. */
@@ -75,6 +116,7 @@ export class SplitCandidateStore {
   private readonly candidates = new Map<string, Entry>();
   private readonly active = new Map<DocumentId, string>();
   private nextId = 1;
+  private readonly transactions = new Map<string, Transaction>();
   private readonly resident: ResidentDocumentStore;
   private readonly history: RepairHistoryStore;
   private readonly lifecycle: GeometryEditStore;
@@ -88,6 +130,7 @@ export class SplitCandidateStore {
     this.lifecycle = lifecycle;
   }
   public begin(source: DocumentHandle, sourcePart: PartId): GeometryEditTicket {
+    this.resident.assertMutable(source.documentId);
     const old = this.active.get(source.documentId);
     if (old) this.discardById(old);
     return this.lifecycle.begin(source, sourcePart, 'split');
@@ -203,6 +246,10 @@ export class SplitCandidateStore {
       document,
       summary,
       resultIdentity: Object.freeze({}),
+      attempt: 0,
+      source,
+      sourceSHA: splitMeshSHA(original.mesh),
+      candidateSHA: candidateMeshSHA(document, aId, bId),
     });
     this.active.set(ticket.documentId, handle.candidateId);
     return summary;
@@ -229,6 +276,7 @@ export class SplitCandidateStore {
     build: (document: GeometryDocument, summary: SplitCandidateSummary) => T,
   ): { handle: DocumentHandle; recordId: string; value: T; summary: SplitCandidateSummary } {
     const e = this.require(handle);
+    if (e.lockedBy) throw invalidState('Candidate is locked by a split transaction.');
     e.authorizeCommit?.();
     if (
       expected.documentId !== handle.documentId ||
@@ -242,28 +290,229 @@ export class SplitCandidateStore {
     if (!original) throw modelUnavailable('The selected part is no longer present.');
     assertGeometryDocument(e.document, 'split commit');
     const value = build(e.document, e.summary),
-      next = this.resident.replace(expected, e.document);
-    if (isAppError(next)) throw next;
+      next = { documentId: expected.documentId, revision: expected.revision + 1 },
+      restoreHistory = this.history.checkpoint();
+    const recordId = `${next.documentId}/${expectedPart}@${String(expected.revision)}->${String(next.revision)}#split`;
+    try {
+      this.history.record({
+        recordId,
+        kind: UndoableChangeKind.GeometryEdit,
+        source: expected,
+        part: expectedPart,
+        result: next,
+        appliedOperations: [],
+        planHash: 'split',
+        inverse: {
+          previousMesh: original.mesh,
+          sourceFaceCount: original.mesh.indices.length / 3,
+          sourceIndexCount: original.mesh.indices.length,
+          previousDocument: source,
+          byteLength: documentByteLength(source),
+        },
+      });
+      const installed = this.resident.replace(expected, e.document);
+      if (isAppError(installed)) throw installed;
+    } catch (cause) {
+      restoreHistory();
+      throw cause;
+    }
     this.candidates.delete(handle.candidateId);
     this.active.delete(handle.documentId);
-    const recordId = `${next.documentId}/${expectedPart}@${String(expected.revision)}->${String(next.revision)}#split`;
-    this.history.record({
-      recordId,
-      kind: UndoableChangeKind.GeometryEdit,
-      source: expected,
-      part: expectedPart,
-      result: next,
-      appliedOperations: [],
-      planHash: 'split',
-      inverse: {
-        previousMesh: original.mesh,
-        sourceFaceCount: original.mesh.indices.length / 3,
-        sourceIndexCount: original.mesh.indices.length,
-        previousDocument: source,
-        byteLength: documentByteLength(source),
-      },
-    });
     return { handle: next, recordId, value, summary: e.summary };
+  }
+  public commitTransactionStats(): {
+    pending: number;
+    receipts: number;
+    maxPending: number;
+    maxReceipts: number;
+  } {
+    return {
+      pending: [...this.transactions.values()].filter(
+        (t) => t.status.state === 'PREPARED' || t.status.state === 'APPLIED_PENDING_ADOPTION',
+      ).length,
+      receipts: this.transactions.size,
+      maxPending: MAX_PENDING_SPLIT_TRANSACTIONS,
+      maxReceipts: MAX_PENDING_SPLIT_TRANSACTIONS + MAX_TERMINAL_SPLIT_RECEIPTS,
+    };
+  }
+  public transactionStatus(transactionId: string): SplitTransactionStatus {
+    const status = this.transactions.get(transactionId)?.status ?? {
+      transactionId,
+      state: 'UNKNOWN' as const,
+    };
+    return Object.freeze({
+      ...status,
+      ...(status.source ? { source: Object.freeze({ ...status.source }) } : {}),
+      ...(status.handle ? { handle: Object.freeze({ ...status.handle }) } : {}),
+    });
+  }
+  public prepareCommit<T>(
+    transactionId: string,
+    handle: SplitCandidateHandle,
+    expected: DocumentHandle,
+    part: PartId,
+    build: (document: GeometryDocument, summary: SplitCandidateSummary) => T,
+  ): { handle: DocumentHandle; recordId: string; value: T; summary: SplitCandidateSummary } {
+    if (typeof transactionId !== 'string' || transactionId.length > 512)
+      throw invalidState('Invalid split transaction identity.');
+    const prior = this.transactions.get(transactionId);
+    if (prior) {
+      if (
+        JSON.stringify(prior.candidate) !== JSON.stringify(handle) ||
+        prior.expected.documentId !== expected.documentId ||
+        prior.expected.revision !== expected.revision ||
+        prior.part !== part
+      )
+        throw modelUnavailable('Transaction binding does not match.');
+      if (prior.status.state !== 'APPLIED_PENDING_ADOPTION')
+        throw invalidState('Transaction is already terminal.');
+      const e = this.require(handle);
+      this.checkTransactionSource(e, expected, part);
+      return this.preparedValue(e, expected, build);
+    }
+    if (this.transactions.size >= MAX_PENDING_SPLIT_TRANSACTIONS + MAX_TERMINAL_SPLIT_RECEIPTS)
+      throw invalidState('Split transaction receipts need reconciliation.');
+    const e = this.require(handle),
+      prefix = `${handle.candidateId}/commit/`,
+      attempt = Number(transactionId.slice(prefix.length));
+    if (
+      !transactionId.startsWith(prefix) ||
+      transactionId !== splitTransactionId(handle, attempt) ||
+      attempt !== e.attempt + 1
+    )
+      throw invalidState('Transaction identity is stale or belongs to another candidate.');
+    if (e.lockedBy) throw invalidState('Candidate is locked by a split transaction.');
+    this.checkTransactionSource(e, expected, part);
+    if (
+      [...this.transactions.values()].filter(
+        (t) => t.status.state === 'APPLIED_PENDING_ADOPTION' || t.status.state === 'PREPARED',
+      ).length >= MAX_PENDING_SPLIT_TRANSACTIONS
+    )
+      throw invalidState('Too many unresolved split transactions.');
+    e.authorizeCommit?.();
+    const lock = Object.freeze({});
+    this.resident.lockMutation(expected, lock);
+    e.lockedBy = transactionId;
+    e.attempt = attempt;
+    const transaction: Transaction = {
+      candidate: { ...handle },
+      expected: { ...expected },
+      part,
+      lock,
+      status: {
+        transactionId,
+        state: 'PREPARED',
+        source: { ...expected },
+        candidateId: handle.candidateId,
+        generation: handle.generation,
+        partId: part,
+        sourceSHA: e.sourceSHA,
+      },
+    };
+    this.transactions.set(transactionId, transaction);
+    try {
+      const value = this.preparedValue(e, expected, build);
+      transaction.status = {
+        ...transaction.status,
+        state: 'APPLIED_PENDING_ADOPTION',
+        handle: value.handle,
+        recordId: value.recordId,
+      };
+      return value;
+    } catch (cause) {
+      this.abortCommit(transactionId);
+      throw cause;
+    }
+  }
+  private preparedValue<T>(
+    e: Entry,
+    expected: DocumentHandle,
+    build: (d: GeometryDocument, s: SplitCandidateSummary) => T,
+  ): { handle: DocumentHandle; recordId: string; value: T; summary: SplitCandidateSummary } {
+    const handle = { documentId: expected.documentId, revision: expected.revision + 1 };
+    return {
+      handle,
+      recordId: `${handle.documentId}/${e.handle.partId}@${String(expected.revision)}->${String(handle.revision)}#split`,
+      value: build(e.document, e.summary),
+      summary: e.summary,
+    };
+  }
+  private checkTransactionSource(e: Entry, expected: DocumentHandle, part: PartId): void {
+    if (
+      expected.documentId !== e.handle.documentId ||
+      expected.revision !== e.handle.sourceRevision ||
+      part !== e.handle.partId
+    )
+      throw modelUnavailable('The split targets a different model revision or part.');
+    const source = this.resident.resolve(expected),
+      original = e.source.parts.find((p) => p.id === part);
+    if (
+      source !== e.source ||
+      !original ||
+      splitMeshSHA(original.mesh) !== e.sourceSHA ||
+      candidateMeshSHA(e.document, e.summary.pieceAId, e.summary.pieceBId) !== e.candidateSHA
+    )
+      throw modelUnavailable('Prepared split authority changed. Preview the part again.');
+  }
+  public ackCommit(transactionId: string): SplitTransactionStatus {
+    const t = this.transactions.get(transactionId);
+    if (!t) throw modelUnavailable('Unknown split transaction.');
+    if (t.status.state === 'FINALIZED') return this.transactionStatus(transactionId);
+    if (t.status.state !== 'APPLIED_PENDING_ADOPTION')
+      throw invalidState('Cannot acknowledge an aborted or unprepared transaction.');
+    const e = this.require(t.candidate);
+    this.checkTransactionSource(e, t.expected, t.part);
+    this.resident.unlockMutation(t.expected.documentId, t.lock);
+    delete e.lockedBy;
+    try {
+      const authorize = e.authorizeCommit;
+      delete e.authorizeCommit; // consumed exactly once when this transaction acquired authority
+      let result;
+      try {
+        result = this.commit(t.candidate, t.expected, t.part, () => undefined);
+      } catch (cause) {
+        if (authorize) e.authorizeCommit = authorize;
+        throw cause;
+      }
+      t.status = {
+        ...t.status,
+        state: 'FINALIZED',
+        handle: result.handle,
+        recordId: result.recordId,
+      };
+      return this.transactionStatus(transactionId);
+    } catch (cause) {
+      // commit prepares all fallible geometry before its single resident swap.
+      // If that did not happen, retain explicit recovery authority.
+      if (this.resident.has(t.expected)) {
+        this.resident.lockMutation(t.expected, t.lock);
+        e.lockedBy = transactionId;
+      }
+      throw cause;
+    }
+  }
+  public abortCommit(transactionId: string): SplitTransactionStatus {
+    const t = this.transactions.get(transactionId);
+    if (!t) throw modelUnavailable('Unknown split transaction.');
+    if (t.status.state === 'ABORTED' || t.status.state === 'FINALIZED')
+      return this.transactionStatus(transactionId);
+    this.resident.unlockMutation(t.expected.documentId, t.lock);
+    const e = this.candidates.get(t.candidate.candidateId);
+    if (e?.lockedBy === transactionId) {
+      delete e.lockedBy;
+      this.discard(t.candidate); // abort consumes the Preview; recovery never depends on its reuse
+    }
+    t.status = { ...t.status, state: 'ABORTED', handle: { ...t.expected } };
+    return this.transactionStatus(transactionId);
+  }
+  /** Only a caller that has observed a terminal receipt releases it. Lost ACKs
+   * retain their receipt; unrelated edits cannot evict recovery authority. */
+  public releaseCommitReceipt(transactionId: string): SplitTransactionStatus {
+    const status = this.transactionStatus(transactionId);
+    if (status.state !== 'FINALIZED' && status.state !== 'ABORTED')
+      throw invalidState('Unresolved transaction cannot be released.');
+    this.transactions.delete(transactionId);
+    return status;
   }
   public discard(handle: SplitCandidateHandle): boolean {
     const released = this.discardById(handle.candidateId);
@@ -279,6 +528,9 @@ export class SplitCandidateStore {
     this.lifecycle.invalidate(ticket);
   }
   public releaseDocument(id: DocumentId): void {
+    this.resident.assertMutable(id);
+    for (const [key, t] of this.transactions)
+      if (t.expected.documentId === id) this.transactions.delete(key);
     const active = this.active.get(id);
     if (active) this.discardById(active);
     this.lifecycle.releaseDocument(id);
@@ -302,7 +554,7 @@ export class SplitCandidateStore {
   }
   private discardById(id: string): boolean {
     const e = this.candidates.get(id);
-    if (!e) return false;
+    if (!e || e.lockedBy) return false;
     this.candidates.delete(id);
     if (this.active.get(e.handle.documentId) === id) this.active.delete(e.handle.documentId);
     return true;

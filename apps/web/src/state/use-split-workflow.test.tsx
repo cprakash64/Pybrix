@@ -127,7 +127,9 @@ function setup(): TestSetup {
     cancel: vi.fn(),
   });
   const commit = vi.spyOn(client, 'commitSplit').mockReturnValue({
+    transactionId: 'mock-transaction',
     promise: Promise.resolve({
+      handle: { documentId: 'doc-1', revision: 2 },
       pieceAId: 'A',
       pieceBId: 'B',
       recordId: 'record',
@@ -136,6 +138,31 @@ function setup(): TestSetup {
       connector: { kind: 'none' },
     }),
   } as ReturnType<GeometryClient['commitSplit']>);
+  vi.spyOn(client, 'ackSplitCommit').mockImplementation(
+    (transactionId) =>
+      ({
+        promise: Promise.resolve({
+          transactionId,
+          state: 'FINALIZED',
+          handle: { documentId: 'doc-1', revision: 2 },
+        }),
+      }) as ReturnType<GeometryClient['ackSplitCommit']>,
+  );
+  vi.spyOn(client, 'abortSplitCommit').mockImplementation(
+    (transactionId) =>
+      ({
+        promise: Promise.resolve({
+          transactionId,
+          state: transactionId === 'mock-transaction' ? 'ABORTED' : 'UNKNOWN',
+        }),
+      }) as ReturnType<GeometryClient['abortSplitCommit']>,
+  );
+  vi.spyOn(client, 'splitCommitStatus').mockImplementation(
+    (transactionId) =>
+      ({ promise: Promise.resolve({ transactionId, state: 'UNKNOWN' }) }) as ReturnType<
+        GeometryClient['splitCommitStatus']
+      >,
+  );
   const undo = vi
     .spyOn(client, 'undoRepair')
     .mockReturnValue({ promise: Promise.resolve({}) } as ReturnType<GeometryClient['undoRepair']>);
@@ -483,7 +510,7 @@ it.each([
   await frame();
   expect(s.commit).toHaveBeenCalledTimes(1);
 });
-it('keeps a manual Preview retryable after commit failure', async () => {
+it('allows manual retry through a fresh Preview after transaction abort', async () => {
   const s = setup();
   s.commit.mockImplementation(
     () =>
@@ -498,6 +525,12 @@ it('keeps a manual Preview retryable after commit failure', async () => {
   await frame();
   act(() => {
     s.result.current.apply();
+  });
+  await frame();
+  await frame();
+  expect(s.result.current.preview).toBeUndefined();
+  act(() => {
+    s.result.current.updatePreview();
   });
   await frame();
   await frame();
@@ -693,7 +726,7 @@ it.each([
   expect(s.commit).toHaveBeenCalledTimes(1);
   clearSpy?.mockRestore();
 });
-it('preserves manual adoption-refusal behavior', async () => {
+it('requires a fresh manual Preview after an aborted adoption', async () => {
   const s = setup();
   vi.spyOn(s.store, 'applySplitResult').mockReturnValue(false);
   act(() => {
@@ -706,13 +739,13 @@ it('preserves manual adoption-refusal behavior', async () => {
   });
   await frame();
   await frame();
-  expect(s.result.current.preview).toBeDefined();
+  expect(s.result.current.preview).toBeUndefined();
   act(() => {
     s.result.current.apply();
   });
   await frame();
   await frame();
-  expect(s.commit).toHaveBeenCalledTimes(2);
+  expect(s.commit).toHaveBeenCalledTimes(1);
 });
 it('unmount after semantic dispatch already retires the operative Preview', async () => {
   const s = setup();

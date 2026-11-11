@@ -1,4 +1,4 @@
-import { modelUnavailable, type AppError } from '@cadfixer/shared';
+import { invalidState, modelUnavailable, type AppError } from '@cadfixer/shared';
 import { distinctMeshes, findPart, meshByteLength } from '@cadfixer/mesh-core';
 import type { GeometryDocument, GeometryPart, PartId } from '@cadfixer/mesh-core';
 
@@ -94,6 +94,21 @@ export function isPart(value: GeometryPart | AppError): value is GeometryPart {
 export class ResidentDocumentStore {
   private readonly documents = new Map<DocumentId, ResidentEntry>();
   private nextId = 1;
+  private readonly mutationLocks = new Map<DocumentId, object>();
+  public assertMutable(id: DocumentId): void {
+    if (this.mutationLocks.has(id)) throw invalidState('A split transaction is awaiting adoption.');
+  }
+  public lockMutation(handle: DocumentHandle, owner: object): void {
+    this.assertMutable(handle.documentId);
+    const source = this.resolve(handle);
+    if (!isDocument(source)) throw source;
+    this.mutationLocks.set(handle.documentId, owner);
+  }
+  public unlockMutation(id: DocumentId, owner: object): void {
+    if (this.mutationLocks.get(id) !== owner)
+      throw invalidState('Transaction lock does not match.');
+    this.mutationLocks.delete(id);
+  }
 
   /**
    * Takes ownership of a document and returns its handle.
@@ -102,6 +117,8 @@ export class ResidentDocumentStore {
    * store is the owner from this point.
    */
   public commit(document: GeometryDocument): DocumentHandle {
+    if (this.mutationLocks.size)
+      throw invalidState('Resolve the pending split before importing another document.');
     const documentId = `document-${String(this.nextId)}` as DocumentId;
     this.nextId += 1;
     this.documents.set(documentId, {
@@ -179,6 +196,7 @@ export class ResidentDocumentStore {
    * partial multi-part commit — one assignment publishes every part or none.
    */
   public replace(expected: DocumentHandle, document: GeometryDocument): DocumentHandle | AppError {
+    this.assertMutable(expected.documentId);
     const entry = this.documents.get(expected.documentId);
     if (entry === undefined) {
       return modelUnavailable('That model is no longer available.', {
@@ -209,11 +227,13 @@ export class ResidentDocumentStore {
 
   /** Releases a document. Returns whether anything was actually released. */
   public release(documentId: DocumentId): boolean {
+    this.assertMutable(documentId);
     return this.documents.delete(documentId);
   }
 
   /** Releases everything. Used when the runtime is torn down. */
   public releaseAll(): void {
+    if (this.mutationLocks.size) throw invalidState('A split transaction is awaiting adoption.');
     this.documents.clear();
   }
 

@@ -1,3 +1,4 @@
+import { splitTransactionId } from '@cadfixer/geometry-runtime';
 import { required } from '@cadfixer/auto-split/fixtures';
 import { fixtureDeflate } from '@cadfixer/auto-split/fixtures';
 import { prepareSemanticGeometry } from '@cadfixer/auto-split';
@@ -32,7 +33,7 @@ import {
   autoSplitSuggestHandler,
 } from './auto-split-handlers';
 import { repairUndoHandler } from './repair-handlers';
-import { splitCommitHandler } from './split-handlers';
+import { splitCommitHandler, splitCommitAckHandler } from './split-handlers';
 import { repairHistory, residentDocuments, splitCandidates } from './stl-handlers';
 /**
  * THE LOCAL HALF OF AUTO SPLIT, AT THE WORKER BOUNDARY.
@@ -275,7 +276,16 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     );
     expect(field.value.faces.length).toBeGreaterThan(0);
     const applied = await splitCommitHandler(
-      { candidate: preview.candidate, expectedSource: handle, expectedPart: PART },
+      {
+        transactionId: splitTransactionId(preview.candidate, 1),
+        candidate: preview.candidate,
+        expectedSource: handle,
+        expectedPart: PART,
+      },
+      context(),
+    );
+    await splitCommitAckHandler(
+      { transactionId: splitTransactionId(preview.candidate, 1) },
       context(),
     );
     expect(applied.value.handle.revision).toBeGreaterThan(handle.revision);
@@ -307,7 +317,16 @@ describe('autosplit/extract-create and the existing Apply and Undo', () => {
     expect(meshOf(handle)).toBe(open);
     expect(preview.value.parts).toHaveLength(2);
     const applied = await splitCommitHandler(
-      { candidate: preview.value.candidate, expectedSource: handle, expectedPart: PART },
+      {
+        transactionId: splitTransactionId(preview.value.candidate, 1),
+        candidate: preview.value.candidate,
+        expectedSource: handle,
+        expectedPart: PART,
+      },
+      context(),
+    );
+    await splitCommitAckHandler(
+      { transactionId: splitTransactionId(preview.value.candidate, 1) },
       context(),
     );
     const undone = await repairUndoHandler(
@@ -366,7 +385,16 @@ describe('semantic worker authority and preparation lifetime', () => {
     );
     expect(meshOf(handle)).toBe(fixture.mesh);
     const applied = await splitCommitHandler(
-      { candidate: preview.value.candidate, expectedSource: handle, expectedPart: PART },
+      {
+        transactionId: splitTransactionId(preview.value.candidate, 1),
+        candidate: preview.value.candidate,
+        expectedSource: handle,
+        expectedPart: PART,
+      },
+      context(),
+    );
+    await splitCommitAckHandler(
+      { transactionId: splitTransactionId(preview.value.candidate, 1) },
       context(),
     );
     expect(residentDocuments.resolve(applied.value.handle)).toHaveProperty('parts.length', 2);

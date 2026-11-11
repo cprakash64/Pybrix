@@ -230,7 +230,7 @@ export class GeometryCoordinator {
    * Callers own the endpoint's lifetime; `dispose` closes it only if the
    * endpoint exposes `close`.
    */
-  public dispose(): void {
+  public dispose(closeEndpoint = true): void {
     if (this.disposed) return;
     this.disposed = true;
     this.unsubscribe();
@@ -248,7 +248,7 @@ export class GeometryCoordinator {
       );
     }
 
-    this.endpoint.close?.();
+    if (closeEndpoint) this.endpoint.close?.();
   }
 
   /**

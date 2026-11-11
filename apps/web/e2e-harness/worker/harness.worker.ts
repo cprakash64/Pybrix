@@ -60,6 +60,10 @@ import {
 } from '../../src/workers/geometry-edit-handlers';
 import {
   splitCommitHandler,
+  splitCommitStatusHandler,
+  splitCommitReleaseHandler,
+  splitCommitAckHandler,
+  splitCommitAbortHandler,
   splitCreateHandler,
   splitDiscardHandler,
   setSplitQualificationObserver,
@@ -103,12 +107,33 @@ import { buildHarnessDocument, isHarnessFixtureId } from '../fixtures';
 
 const workerScope: DedicatedWorkerGlobalScope = self;
 
+// Test-only terminal-delivery faults; never included in the production worker.
+let splitTransactionFault: string | undefined;
+const splitTransactionOperations = new Map<string, string>();
+workerScope.addEventListener('message', (event: MessageEvent): void => {
+  const data = event.data as { kind?: string; operation?: string };
+  if (data.kind === 'harness/split-transaction-fault') splitTransactionFault = data.operation;
+});
 const endpoint: MessageEndpoint = {
   postMessage(message, transfer) {
+    const m = message as { kind?: string; id?: string };
+    const operation = m.id ? splitTransactionOperations.get(m.id) : undefined;
+    if (m.kind === 'result' || m.kind === 'error') splitTransactionOperations.delete(m.id ?? '');
+    if (m.kind === 'result' && operation && `${operation}-drop` === splitTransactionFault) {
+      splitTransactionFault = undefined;
+      return;
+    }
+    if (m.kind === 'result' && operation && operation === splitTransactionFault) {
+      splitTransactionFault = undefined;
+      throw Error('Injected split terminal delivery throw in real harness worker');
+    }
     workerScope.postMessage(message, toTransferables(transfer));
   },
   addMessageListener(listener) {
     const handler = (event: MessageEvent): void => {
+      const m = event.data as { id?: string; operation?: string };
+      if (m.id && (m.operation === 'split/commit' || m.operation === 'split/commit-ack'))
+        splitTransactionOperations.set(m.id, m.operation);
       listener(event.data);
     };
     workerScope.addEventListener('message', handler);
@@ -214,6 +239,10 @@ host.register('edit/commit', editCommitHandler);
 host.register('edit/discard', editDiscardHandler);
 host.register('split/create', splitCreateHandler);
 host.register('split/commit', splitCommitHandler);
+host.register('split/commit-status', splitCommitStatusHandler);
+host.register('split/commit-release', splitCommitReleaseHandler);
+host.register('split/commit-ack', splitCommitAckHandler);
+host.register('split/commit-abort', splitCommitAbortHandler);
 host.register('split/discard', splitDiscardHandler);
 host.register('texture/create', textureCreateHandler);
 host.register('texture/select', textureSelectHandler);

@@ -16,6 +16,7 @@ import type {
   DocumentRenderSnapshot,
   EditCommitResult,
   SplitCommitResult,
+  SplitTransactionStatus,
   MeshBounds,
   DocumentHandle,
   PartDescriptor,
@@ -1267,6 +1268,15 @@ export class WorkspaceStore {
   }
 
   private state: WorkspaceState = INITIAL_STATE;
+  private splitAdoptionStage:
+    | {
+        published: WorkspaceState;
+        target: WorkspaceState['model'];
+        transactionId: string | undefined;
+        rollback: () => void;
+        publish: () => void;
+      }
+    | undefined;
   private readonly listeners = new Set<() => void>();
   private nextStatusId = 1;
   private nextModelRevision = 1;
@@ -1283,7 +1293,7 @@ export class WorkspaceStore {
   private nextHoleFillToken = 1;
   private currentHoleFillToken: HoleFillToken | undefined;
 
-  public getSnapshot = (): WorkspaceState => this.state;
+  public getSnapshot = (): WorkspaceState => this.splitAdoptionStage?.published ?? this.state;
 
   public subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -1357,6 +1367,97 @@ export class WorkspaceStore {
     this.update({ splitPlane: plane });
   }
 
+  /** Stage adoption without publishing a future worker handle to React. The
+   * exact old snapshot remains readable until ACK. No observer effects need
+   * undoing if preparation/adoption fails. */
+  public splitAdoptionCheckpoint(transactionId?: string): (() => void) & { publish: () => void } {
+    if (this.splitAdoptionStage) throw new Error('A split adoption is already pending.');
+    const state = this.state,
+      nextRevision = this.nextModelRevision,
+      analysis = this.currentAnalysisToken,
+      repair = this.currentRepairToken,
+      intersection = this.currentSelfIntersectionToken,
+      fill = this.currentHoleFillToken,
+      assembly = new Map(this.assemblyHistory),
+      stage = {
+        published: state,
+        target: undefined as WorkspaceState['model'],
+        transactionId,
+        rollback: (): void => undefined,
+        publish: (): void => undefined,
+      };
+    this.splitAdoptionStage = stage;
+    const notify = (): void => {
+      for (const listener of [...this.listeners]) {
+        try {
+          listener();
+        } catch {
+          /* Authoritative publication cannot be reversed by a subscriber. */
+        }
+      }
+    };
+    const rollback = (): void => {
+      if (this.splitAdoptionStage !== stage) return;
+      // A previously completed foreign edit may have arrived before worker
+      // preparation acquired its lock. Preserve that authority rather than
+      // rewinding it to a stale checkpoint.
+      if (this.state.model === state.model || this.state.model === stage.target) {
+        this.state = state;
+        this.nextModelRevision = nextRevision;
+        this.currentAnalysisToken = analysis;
+        this.currentRepairToken = repair;
+        this.currentSelfIntersectionToken = intersection;
+        this.currentHoleFillToken = fill;
+        this.assemblyHistory.clear();
+        for (const [key, value] of assembly) this.assemblyHistory.set(key, value);
+      }
+      this.splitAdoptionStage = undefined;
+      notify();
+    };
+    stage.rollback = rollback;
+    stage.publish = (): void => {
+      if (this.splitAdoptionStage !== stage) return;
+      this.splitAdoptionStage = undefined;
+      notify();
+    };
+    return Object.assign(rollback, { publish: stage.publish });
+  }
+
+  public pendingSplitAdoption():
+    | {
+        transactionId: string | undefined;
+        source: DocumentHandle | undefined;
+        proposed: DocumentHandle | undefined;
+      }
+    | undefined {
+    const stage = this.splitAdoptionStage;
+    return stage
+      ? {
+          transactionId: stage.transactionId,
+          source: stage.published.model?.handle,
+          proposed: stage.target?.handle,
+        }
+      : undefined;
+  }
+  public reconcileSplitAdoption(status: SplitTransactionStatus): void {
+    const stage = this.splitAdoptionStage;
+    if (
+      !stage?.transactionId ||
+      stage.transactionId !== status.transactionId ||
+      !sameHandle(stage.published.model?.handle, status.source)
+    )
+      throw new Error('Split adoption recovery authority does not match.');
+    if (status.state === 'ABORTED') {
+      stage.rollback();
+      return;
+    }
+    if (status.state === 'FINALIZED' && sameHandle(stage.target?.handle, status.handle)) {
+      stage.publish();
+      return;
+    }
+    throw new Error('Split adoption is not reconciled.');
+  }
+
   public applySplitResult(result: SplitCommitResult, context?: SplitAssemblyContext): boolean {
     const model = this.state.model;
     if (
@@ -1412,6 +1513,7 @@ export class WorkspaceStore {
       repair: { ...EMPTY_REPAIR, handle: result.handle },
       overlays: OVERLAYS_HIDDEN,
     });
+    if (this.splitAdoptionStage) this.splitAdoptionStage.target = this.state.model;
     return true;
   }
 
@@ -3246,6 +3348,7 @@ export class WorkspaceStore {
    * install anything afterwards.
    */
   public loseGeometrySession(reason: string): void {
+    this.splitAdoptionStage = undefined;
     this.currentImportToken = undefined;
     this.currentExportToken = undefined;
     this.currentAnalysisToken = undefined;
@@ -3575,6 +3678,7 @@ export class WorkspaceStore {
 
   private update(patch: Partial<WorkspaceState>): void {
     this.state = { ...this.state, ...patch };
+    if (this.splitAdoptionStage) return;
     for (const listener of [...this.listeners]) listener();
   }
 }

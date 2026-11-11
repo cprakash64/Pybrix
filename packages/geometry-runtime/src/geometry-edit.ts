@@ -180,6 +180,7 @@ export class GeometryEditStore {
   }
   /** Start invalidates a prior candidate before asynchronous work can finish. */
   public begin(source: DocumentHandle, partId: PartId, operation: string): GeometryEditTicket {
+    this.resident.assertMutable(source.documentId);
     const part = this.resident.resolvePart(source, partId);
     if (isAppError(part)) throw part;
     if (!operation || operation.length > 80)

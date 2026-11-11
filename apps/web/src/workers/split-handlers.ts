@@ -254,7 +254,8 @@ export const splitConfirmScopeHandler: OperationHandler<'split/confirm-scope'> =
 export const splitCommitHandler: OperationHandler<'split/commit'> = (payload, context) => {
   context.throwIfCancelled();
   requireConfirmedBoundary(payload.candidate);
-  const committed = splitCandidates.commit(
+  const committed = splitCandidates.prepareCommit(
+    payload.transactionId,
     payload.candidate,
     payload.expectedSource,
     partId(payload.expectedPart),
@@ -286,3 +287,14 @@ function defined<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
   return value;
 }
+
+/** These operations expose only bounded authority metadata, never candidate geometry. */
+export const splitCommitStatusHandler: OperationHandler<'split/commit-status'> = (payload) =>
+  Promise.resolve({ value: splitCandidates.transactionStatus(payload.transactionId) });
+export const splitCommitAckHandler: OperationHandler<'split/commit-ack'> = (payload) =>
+  Promise.resolve({ value: splitCandidates.ackCommit(payload.transactionId) });
+export const splitCommitAbortHandler: OperationHandler<'split/commit-abort'> = (payload) =>
+  Promise.resolve({ value: splitCandidates.abortCommit(payload.transactionId) });
+
+export const splitCommitReleaseHandler: OperationHandler<'split/commit-release'> = (payload) =>
+  Promise.resolve({ value: splitCandidates.releaseCommitReceipt(payload.transactionId) });

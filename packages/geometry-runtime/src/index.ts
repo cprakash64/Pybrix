@@ -241,8 +241,12 @@ export {
   SplitSourceReason,
   SplitStage,
 } from './split-connectors';
-export { SplitCandidateStore } from './split-candidates';
-export type { SplitCandidateHandle, SplitCandidateSummary } from './split-candidates';
+export { SplitCandidateStore, splitTransactionId } from './split-candidates';
+export type {
+  SplitCandidateHandle,
+  SplitCandidateSummary,
+  SplitTransactionStatus,
+} from './split-candidates';
 export type {
   CutSurfaceSummary,
   SplitConnector,

@@ -1,3 +1,4 @@
+import type { SplitTransactionStatus } from './split-candidates';
 import type { SemanticRequestMetadata } from '@cadfixer/auto-split-contract';
 import type { Diagnostic, OperationId, SerializedAppError } from '@cadfixer/shared';
 import type { MeshBounds, PartTransform } from '@cadfixer/mesh-core';
@@ -237,6 +238,22 @@ export interface OperationMap {
     result: Pick<SplitCreateResult, 'candidate' | 'semanticQualification'>;
   };
   'split/commit': { payload: SplitCommitPayload; result: SplitCommitResult };
+  'split/commit-release': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
+  'split/commit-status': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
+  'split/commit-ack': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
+  'split/commit-abort': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
   'split/discard': { payload: SplitDiscardPayload; result: SplitDiscardResult };
   /**
    * AUTO SPLIT, LOCAL HALF. None of these three mutates the document: `autosplit/render` and
@@ -327,6 +344,7 @@ export interface SplitCreateResult extends SplitCandidateSummary {
   readonly parts: readonly PartDescriptor[];
 }
 export interface SplitCommitPayload {
+  readonly transactionId: string;
   readonly candidate: SplitCandidateHandle;
   readonly expectedSource: DocumentHandle;
   readonly expectedPart: string;

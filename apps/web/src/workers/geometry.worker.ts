@@ -36,6 +36,10 @@ import {
 } from './auto-split-handlers';
 import {
   splitCommitHandler,
+  splitCommitStatusHandler,
+  splitCommitReleaseHandler,
+  splitCommitAckHandler,
+  splitCommitAbortHandler,
   splitCreateHandler,
   splitDiscardHandler,
   splitConfirmScopeHandler,
@@ -105,6 +109,10 @@ host.register('edit/discard', editDiscardHandler);
 host.register('split/create', splitCreateHandler);
 host.register('split/confirm-scope', splitConfirmScopeHandler);
 host.register('split/commit', splitCommitHandler);
+host.register('split/commit-status', splitCommitStatusHandler);
+host.register('split/commit-release', splitCommitReleaseHandler);
+host.register('split/commit-ack', splitCommitAckHandler);
+host.register('split/commit-abort', splitCommitAbortHandler);
 host.register('split/discard', splitDiscardHandler);
 // Auto Split, local half: two reads and one CANDIDATE. None of them commits; Apply is `split/commit`.
 host.register('autosplit/release', autoSplitReleaseHandler);

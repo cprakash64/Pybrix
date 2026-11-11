@@ -1,3 +1,4 @@
+import { splitTransactionId } from '@cadfixer/geometry-runtime';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
@@ -272,6 +273,34 @@ function mount(options: Options = {}): Spies {
     createComponentSplit,
     commitSplit,
     confirmSplitScope,
+    ackSplitCommit: vi.fn(
+      (transactionId: string): ReturnType<GeometryClient['ackSplitCommit']> =>
+        ({
+          promise: Promise.resolve({
+            transactionId,
+            state: 'FINALIZED',
+            handle: { ...VIEWS.source, revision: 2 },
+          }),
+          cancel: (): void => undefined,
+        }) as ReturnType<GeometryClient['ackSplitCommit']>,
+    ),
+    // These panel tests mock submission and never run a worker transaction.
+    // Explicit UNKNOWN replies allow real recovery logic to distinguish that
+    // fixture from an acquired transaction without changing semantic assertions.
+    abortSplitCommit: vi.fn(
+      (transactionId: string): ReturnType<GeometryClient['abortSplitCommit']> =>
+        ({
+          promise: Promise.resolve({ transactionId, state: 'UNKNOWN' }),
+          cancel: (): void => undefined,
+        }) as ReturnType<GeometryClient['abortSplitCommit']>,
+    ),
+    splitCommitStatus: vi.fn(
+      (transactionId: string): ReturnType<GeometryClient['splitCommitStatus']> =>
+        ({
+          promise: Promise.resolve({ transactionId, state: 'UNKNOWN' }),
+          cancel: (): void => undefined,
+        }) as ReturnType<GeometryClient['splitCommitStatus']>,
+    ),
   });
   let n = 0;
   render_(store, client, transport, () => `req-test-${String((n += 1)).padStart(4, '0')}`);
@@ -1396,7 +1425,9 @@ describe('physical scope confirmation controls', () => {
       expect(screen.getByTestId('auto-row-status-' + nextId)).toHaveTextContent('Ready');
       vi.spyOn(s.store, 'applySplitResult').mockReturnValue(true);
       s.commitSplit.mockReturnValue({
+        transactionId: splitTransactionId(next.candidate, 1),
         promise: Promise.resolve({
+          handle: { ...VIEWS.source, revision: 2 },
           pieceAId: 'A',
           pieceBId: 'B',
           recordId: 'fresh-record',

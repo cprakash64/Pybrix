@@ -1,3 +1,8 @@
+import {
+  adoptSplitCommit,
+  recoverSplitCommit,
+  SplitCommitRecoveryRequired,
+} from '../runtime/split-commit-transaction';
 import { sameSemanticPlane } from '@cadfixer/auto-split';
 import { preservesAssemblyInterfaces } from './assembly-presentation';
 import { flushSync } from 'react-dom';
@@ -9,6 +14,7 @@ import type {
   SplitConnector,
   SplitCreatePayload,
   SplitCreateResult,
+  SplitTransactionStatus,
   SplitPlane,
 } from '@cadfixer/geometry-runtime';
 import { useGeometryClient } from '../runtime/client-context';
@@ -931,8 +937,10 @@ export function useSplitWorkflow(): SplitControls {
     const semanticAuthorized =
       scopeAuthority?.state === 'CONFIRMED' || scopeAuthority?.state === 'AUTOMATIC_IDENTIFIED';
     let dispatched = false;
+    let commitTransactionId: string | undefined;
     // Only completed local adoption lets a dispatched semantic lifecycle survive.
     let successfullyAdopted = false;
+    const recovery: { required: boolean } = { required: false };
     let failureMessage = 'The split could not be applied. Preview the piece again.';
     const withdrawFailedSemanticApply = (): void => {
       const safely = (effect: () => void): void => {
@@ -970,34 +978,83 @@ export function useSplitWorkflow(): SplitControls {
         /* Best effort only. */
       }
     };
+    const awaitRecovery = (transactionId: string): void => {
+      recovery.required = true;
+      if (client.isLost) {
+        setPhase(SplitPhase.Idle);
+        action.current = undefined;
+        setError('The geometry worker ended. Reload and re-import the model.', true);
+        return;
+      }
+      client.onSplitCommitRecovered(transactionId, (status: SplitTransactionStatus): void => {
+        if (action.current !== token) return;
+        if (status.state === 'FINALIZED') {
+          previewRef.current = undefined;
+          setPreviewState(undefined);
+          setAssemblyEditing(false);
+          const adopted = store.getSnapshot().model,
+            finalizedHandle = status.handle;
+          if (!adopted || !finalizedHandle) {
+            setPhase(SplitPhase.Idle);
+            action.current = undefined;
+            return;
+          }
+          if (
+            status.recordId &&
+            adopted.handle.documentId === finalizedHandle.documentId &&
+            adopted.handle.revision === finalizedHandle.revision
+          ) {
+            setApplied({
+              pieceA: current.pieceAId,
+              pieceB: current.pieceBId,
+              recordId: status.recordId,
+              metrics: current.metrics,
+              section: current.section,
+              connector: current.connector,
+              revision: adopted.revision,
+            });
+            setError('');
+          }
+        } else {
+          failureMessage = 'The split was not applied. Preview the part again.';
+          withdrawFailedSemanticApply();
+        }
+        setPhase(SplitPhase.Idle);
+        action.current = undefined;
+      });
+      setError('Reconnect the split transaction before editing can continue.', true);
+    };
     void (async (): Promise<void> => {
       try {
         await afterPaint();
         if (action.current !== token) return;
-        const operation = client.commitSplit(current.candidate, model.handle, part.partId);
+        commitTransactionId = client.reserveSplitCommit(current.candidate, model.handle);
+        const operation = client.commitSplit(
+          current.candidate,
+          model.handle,
+          part.partId,
+          commitTransactionId,
+        );
         // A returned handle follows synchronous transport submission. A throw
         // before return leaves this Preview retryable; later outcomes may have
         // consumed Worker authority and must retain fail-closed recovery.
         dispatched = true;
-        const result = await operation.promise;
-        {
-          if (
-            !store.applySplitResult(result, {
+        const rollback = store.splitAdoptionCheckpoint(commitTransactionId);
+        const result = await adoptSplitCommit(
+          client,
+          operation,
+          (prepared) =>
+            store.applySplitResult(prepared, {
               sourcePartId: part.partId,
               sourceTransform: part.transform,
               ...(componentRanks.length === 0 ? { plane: splitPlane } : {}),
               ...(semanticIntent.current?.key === partKey
                 ? { label: semanticIntent.current.label }
                 : {}),
-            })
-          ) {
-            failureMessage = 'The model changed before the split could be applied.';
-            if (!semanticAuthorized) {
-              setPhase(SplitPhase.Preview);
-              setError(failureMessage);
-            }
-            return;
-          }
+            }),
+          rollback,
+        );
+        {
           previewRef.current = undefined;
           setPreviewState(undefined);
 
@@ -1017,6 +1074,22 @@ export function useSplitWorkflow(): SplitControls {
           successfullyAdopted = true;
         }
       } catch (cause: unknown) {
+        if (!dispatched && commitTransactionId) {
+          try {
+            const status = await recoverSplitCommit(client, commitTransactionId, false);
+            if (status.state === 'FINALIZED')
+              throw new SplitCommitRecoveryRequired(commitTransactionId);
+            dispatched = status.state === 'ABORTED';
+            client.confirmSplitReceipt(commitTransactionId, status.state !== 'UNKNOWN');
+          } catch {
+            awaitRecovery(commitTransactionId);
+            return;
+          }
+        }
+        if (cause instanceof SplitCommitRecoveryRequired) {
+          awaitRecovery(cause.transactionId);
+          return;
+        }
         failureMessage = messageOf(cause, 'The split could not be applied.');
         if (!dispatched || !semanticAuthorized) {
           setPhase(SplitPhase.Preview);
@@ -1024,8 +1097,8 @@ export function useSplitWorkflow(): SplitControls {
           store.pushStatus(StatusSeverity.Error, failureMessage);
         }
       } finally {
-        if (dispatched && semanticAuthorized && !successfullyAdopted) withdrawFailedSemanticApply();
-        if (action.current === token) action.current = undefined;
+        if (!recovery.required && dispatched && !successfullyAdopted) withdrawFailedSemanticApply();
+        if (!recovery.required && action.current === token) action.current = undefined;
       }
     })();
   }, [

@@ -1,3 +1,4 @@
+import { splitTransactionId } from '@cadfixer/geometry-runtime';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   GeometryCoordinator,
@@ -115,12 +116,29 @@ async function owner(): Promise<{
     { onDiagnostic: (): void => undefined },
   );
   return {
-    commit: (expectedPart: string = part) =>
-      coordinator.dispatch('split/commit', {
+    commit: (expectedPart: string = part): ReturnType<GeometryCoordinator['dispatch']> => {
+      const operation = coordinator.dispatch('split/commit', {
+        transactionId: splitTransactionId(preview.candidate, 1),
         candidate: preview.candidate,
         expectedSource: source,
         expectedPart,
-      }),
+      });
+      return {
+        ...operation,
+        promise: operation.promise.then(async (result) => {
+          await handlers.splitCommitAckHandler(
+            { transactionId: splitTransactionId(preview.candidate, 1) },
+            {
+              cancellation: uncancellable,
+              interruptible: true,
+              throwIfCancelled: (): void => undefined,
+              reportProgress: (): void => undefined,
+            },
+          );
+          return result;
+        }),
+      };
+    },
     accepted: () => accepted,
     preview,
     stores,

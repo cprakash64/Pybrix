@@ -125,6 +125,18 @@ declare global {
        * camera cannot isolate. Resolves to the number of selected faces.
        */
       selectTextureSurface(partId: string, triangleIndex: number): Promise<number>;
+      setSplitTransactionFault(
+        fault:
+          | 'delivery'
+          | 'adoption-false'
+          | 'adoption-throw'
+          | 'after-write-throw'
+          | 'ack-delivery'
+          | 'commit-drop'
+          | 'ack-drop',
+      ): void;
+      splitTransactionStates(): Promise<readonly { transactionId: string; state: string }[]>;
+      reconnectSplitTransactions(): Promise<readonly string[]>;
       resetSplitQualification(): void;
       splitQualificationEvents(): readonly {
         documentId: string;
