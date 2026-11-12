@@ -2,6 +2,8 @@ import { automaticPinPlan, type AutomaticConnectorDiagnostics } from './automati
 import { isLengthUnit } from '@cadfixer/shared';
 import {
   assertMeshStructure,
+  IDENTITY_PART_TRANSFORM,
+  type PartTransform,
   computeBounds,
   createIndexArray,
   createPositionArray,
@@ -10,7 +12,18 @@ import {
 } from '@cadfixer/mesh-core';
 import { invalidState, throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
 import { analyseTopology } from '@cadfixer/mesh-topology';
-import { choosePlaneSplitStrategy, splitOpenSurface } from './open-plane-split';
+import {
+  choosePlaneSplitStrategy,
+  splitOpenSurface,
+  type PlaneSplitCapability,
+} from './open-plane-split';
+import {
+  clipPlane,
+  type ClipBinding,
+  type ClosedPlaneClip,
+  type CanonicalSplitFrame,
+} from './closed-plane-kernel';
+import { splitMeshSHA } from './split-source-identity';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
 
 export type SplitVector = readonly [number, number, number];
@@ -93,7 +106,40 @@ export interface SplitMetrics {
   readonly volumeRelativeError: number;
   readonly tolerance: number;
 }
+export interface PreparedPlaneSplitSource {
+  readonly mesh: CanonicalMesh;
+  readonly plane: SplitPlane;
+  readonly transform: PartTransform;
+  readonly binding: ClipBinding;
+  readonly capability: PlaneSplitCapability;
+  readonly meshSHA?: string;
+}
+
+export function preparePlaneSplitSource(
+  mesh: CanonicalMesh,
+  plane: SplitPlane,
+  transform: PartTransform,
+  binding: ClipBinding,
+  cancellation: CancellationToken,
+): PreparedPlaneSplitSource {
+  const capability = choosePlaneSplitStrategy(mesh, plane, cancellation);
+  return Object.freeze({
+    mesh,
+    plane: Object.freeze({
+      origin: Object.freeze([...plane.origin] as SplitVector),
+      normal: Object.freeze([...plane.normal] as SplitVector),
+    }),
+    transform,
+    binding: Object.freeze(binding),
+    capability,
+    ...(capability.strategy === 'exact-solid' ? { meshSHA: splitMeshSHA(mesh, cancellation) } : {}),
+  });
+}
+
 export interface SplitResult {
+  /** Worker-only proof, omitted from the preview summary. */
+  readonly closedPlaneClip?: ClosedPlaneClip;
+  readonly outputPlacements?: { readonly a: PartTransform; readonly b: PartTransform };
   readonly interface?: {
     readonly plane: SplitPlane;
     readonly connectorEligible: boolean;
@@ -359,8 +405,11 @@ export function identifyCutSurface(
   mesh: CanonicalMesh,
   plane: SplitPlane,
   tolerance: number,
+  generated?: { readonly frame: CanonicalSplitFrame; readonly capFaces: number },
 ): CutSurfaceSummary {
-  const { n, u, v } = frame(plane),
+  const { n, u, v } = generated
+      ? { n: generated.frame.N, u: generated.frame.U, v: generated.frame.V }
+      : frame(plane),
     ids: number[] = [],
     capMin = [Infinity, Infinity, Infinity],
     capMax = [-Infinity, -Infinity, -Infinity];
@@ -380,13 +429,15 @@ export function identifyCutSurface(
     maxU = -Infinity,
     minV = Infinity,
     maxV = -Infinity;
-  for (let t = 0; t < triangleCount(mesh); t++) {
+  const faces = triangleCount(mesh);
+  for (let t = generated ? faces - generated.capFaces : 0; t < faces; t++) {
     const ps = [
       vertex(mesh, mesh.indices[t * 3] ?? 0),
       vertex(mesh, mesh.indices[t * 3 + 1] ?? 0),
       vertex(mesh, mesh.indices[t * 3 + 2] ?? 0),
     ];
-    if (!ps.every((p) => Math.abs(dot(sub(p, plane.origin), n)) <= tolerance * 4)) continue;
+    if (!generated && !ps.every((p) => Math.abs(dot(sub(p, plane.origin), n)) <= tolerance * 4))
+      continue;
     ids.push(t);
     const [p0, p1, p2] = ps as [SplitVector, SplitVector, SplitVector];
     area += Math.hypot(...cross(sub(p1, p0), sub(p2, p0))) / 2;
@@ -677,10 +728,26 @@ export async function splitWithConnectors(
   cancellation: CancellationToken,
   onStage?: (stage: SplitStage) => void,
   physicalScale = 1,
+  prepared?: PreparedPlaneSplitSource,
 ): Promise<SplitResult> {
   throwIfCancelled(cancellation);
   onStage?.(SplitStage.PreparingCut);
-  const capability = choosePlaneSplitStrategy(source, request.plane, cancellation);
+  const preparation =
+    prepared ??
+    preparePlaneSplitSource(
+      source,
+      request.plane,
+      IDENTITY_PART_TRANSFORM,
+      { document: 'split', revision: 0, part: 'source', generation: 0 },
+      cancellation,
+    );
+  if (
+    preparation.mesh !== source ||
+    !preparation.plane.origin.every((value, index) => value === request.plane.origin[index]) ||
+    !preparation.plane.normal.every((value, index) => value === request.plane.normal[index])
+  )
+    throw invalidState('The prepared split source no longer matches.');
+  const { capability } = preparation;
   if (capability.strategy === 'unsupported') throw invalidState('This cut cannot be made safely.');
   if (request.connector.kind === 'automatic' && !isLengthUnit(request.connector.unit))
     throw invalidState('A known unit is required for automatic connectors.', {
@@ -712,28 +779,29 @@ export async function splitWithConnectors(
         : {}),
     };
   }
-  const tolerance = splitTolerance(source),
-    [positive, negative] = buildSplitCutters(source, request.plane);
   onStage?.(SplitStage.Intersecting);
-  let pieceA = (await runValidatedBoolean(backend, 'intersection', source, positive, cancellation))
-      .mesh,
-    pieceB = (await runValidatedBoolean(backend, 'intersection', source, negative, cancellation))
-      .mesh;
-  requireSolid(pieceA, 'piece A', cancellation);
-  requireSolid(pieceB, 'piece B', cancellation);
+  const clip = clipPlane(source, preparation.plane, {
+    binding: preparation.binding,
+    sourceSHA: defined(preparation.meshSHA),
+    sourceReport: { volume: Math.abs(capability.topology.totalSignedVolume) },
+    placement: preparation.transform,
+    cancellation,
+  });
+  if (clip.status === 'REFUSED') {
+    const message =
+      clip.reason === 'EMPTY_PIECE'
+        ? 'The split plane does not pass through enough of this part to create two pieces.'
+        : 'This cut cannot be made safely. Try a different plane.';
+    throw invalidState(message, { code: 'CUT_NOT_SAFE', reason: clip.reason });
+  }
+  const { tolerance, sourceVolume, volumeError: volumeRelativeError } = clip;
+  const [pieceAVolume, pieceBVolume] = clip.volumes;
+  const plane = { origin: clip.interface.outputPlaneOrigin, normal: clip.interface.frame.N };
+  let { pieceA, pieceB }: { pieceA: CanonicalMesh; pieceB: CanonicalMesh } = clip;
   onStage?.(SplitStage.BuildingCutSurfaces);
-  const cutA = identifyCutSurface(pieceA, request.plane, tolerance),
-    cutB = identifyCutSurface(pieceB, request.plane, tolerance),
-    sourceVolume = meshVolume(source),
-    pieceAVolume = meshVolume(pieceA),
-    pieceBVolume = meshVolume(pieceB),
-    volumeRelativeError =
-      Math.abs(pieceAVolume + pieceBVolume - sourceVolume) / Math.max(sourceVolume, tolerance ** 3);
-  if (volumeRelativeError > 1e-4)
-    throw invalidState('The split did not conserve the source volume within tolerance.', {
-      relativeError: volumeRelativeError,
-      limit: 1e-4,
-    });
+  const generated = { frame: clip.interface.frame, capFaces: clip.interface.capFaces };
+  const cutA = identifyCutSurface(pieceA, plane, tolerance, generated);
+  const cutB = identifyCutSurface(pieceB, plane, tolerance, generated);
   const automatic = request.connector.kind === 'automatic';
   if (automatic && !isLengthUnit(request.connector.unit))
     throw invalidState('A known unit is required for automatic connectors.', {
@@ -753,7 +821,7 @@ export async function splitWithConnectors(
           pieceA,
           pieceB,
           cutA,
-          request.plane.normal,
+          plane.normal,
           request.connector.unit,
           physicalScale,
           tolerance,
@@ -780,7 +848,7 @@ export async function splitWithConnectors(
         if (automatic) automaticDiagnostics.placementAttempts++;
         throwIfCancelled(cancellation);
         if (plan) {
-          const n = unit(request.plane.normal),
+          const n = unit(plane.normal),
             extent = c.depth + plan.wall;
           for (const [piece, sign, depth] of [
             [pieceA, 1, plan.wall],
@@ -803,8 +871,7 @@ export async function splitWithConnectors(
           }
         }
         placements.push(center);
-        const axis =
-            c.maleSide === 'A' ? scale(unit(request.plane.normal), -1) : unit(request.plane.normal),
+        const axis = c.maleSide === 'A' ? scale(unit(plane.normal), -1) : unit(plane.normal),
           overlap = Math.max(tolerance * 8, c.depth * 1e-4),
           primitiveDepth = c.depth + overlap,
           primitiveCenter = add(center, scale(axis, (c.depth - overlap) / 2)),
@@ -834,8 +901,7 @@ export async function splitWithConnectors(
       const [placement] = connectorCenters(cutA, 1, need, Math.max(tolerance * 8, need * 0.25));
       if (!placement) throw invalidState('No safe dovetail placement was found.');
       placements.push(placement);
-      const axis =
-          c.maleSide === 'A' ? scale(unit(request.plane.normal), -1) : unit(request.plane.normal),
+      const axis = c.maleSide === 'A' ? scale(unit(plane.normal), -1) : unit(plane.normal),
         overlap = Math.max(tolerance * 8, c.depth * 1e-4),
         primitiveDepth = c.depth + overlap,
         mc = add(cutA.center, scale(axis, (c.depth - overlap) / 2)),
@@ -866,8 +932,10 @@ export async function splitWithConnectors(
           .mesh;
       }
     }
-    requireSolid(pieceA, 'final piece A', cancellation);
-    requireSolid(pieceB, 'final piece B', cancellation);
+    if (c.kind !== 'none') {
+      requireSolid(pieceA, 'final piece A', cancellation);
+      requireSolid(pieceB, 'final piece B', cancellation);
+    }
   } catch (error) {
     throwIfCancelled(cancellation);
     if (!automatic) throw error;
@@ -877,22 +945,27 @@ export async function splitWithConnectors(
     c = { kind: 'none' };
     placements.length = 0;
   }
-  requireSolid(pieceA, 'final piece A', cancellation);
-  requireSolid(pieceB, 'final piece B', cancellation);
   const pieceAFinalVolume = c.kind === 'none' ? pieceAVolume : meshVolume(pieceA),
     pieceBFinalVolume = c.kind === 'none' ? pieceBVolume : meshVolume(pieceB);
   return {
     pieceA,
     pieceB,
-    cutA,
-    cutB,
+    closedPlaneClip: clip,
+    ...(prepared
+      ? { outputPlacements: Object.freeze({ a: clip.outputPlacement, b: clip.outputPlacement }) }
+      : {}),
+    cutA: translateCutSurface(cutA, clip.outputAnchor),
+    cutB: translateCutSurface(cutB, clip.outputAnchor),
     connector: c,
     interface: {
       plane: request.plane,
       connectorEligible: true,
-      placements,
-      center: cutA.center,
-      bounds: defined(cutA.bounds),
+      placements: placements.map((point) => add(point, clip.outputAnchor)),
+      center: add(cutA.center, clip.outputAnchor),
+      bounds: {
+        min: add(defined(cutA.bounds).min, clip.outputAnchor),
+        max: add(defined(cutA.bounds).max, clip.outputAnchor),
+      },
     },
     ...(automatic
       ? {
@@ -900,7 +973,7 @@ export async function splitWithConnectors(
           automaticConnectorDiagnostics: automaticDiagnostics,
         }
       : {}),
-    placements,
+    placements: placements.map((point) => add(point, clip.outputAnchor)),
     metrics: {
       sourceVolume,
       pieceAVolume,
@@ -910,6 +983,23 @@ export async function splitWithConnectors(
       volumeRelativeError,
       tolerance,
     },
+  };
+}
+
+function translateCutSurface(cut: CutSurfaceSummary, offset: SplitVector): CutSurfaceSummary {
+  if (offset.every((value) => value === 0)) return cut;
+  const outline = cut.outline.map((value, index) => value + defined(offset[index % 3]));
+  return {
+    ...cut,
+    center: add(cut.center, offset),
+    ...(cut.bounds
+      ? { bounds: { min: add(cut.bounds.min, offset), max: add(cut.bounds.max, offset) } }
+      : {}),
+    interiorCandidates: cut.interiorCandidates.map(({ point, edgeDistance }) => ({
+      point: add(point, offset),
+      edgeDistance,
+    })),
+    outline,
   };
 }
 

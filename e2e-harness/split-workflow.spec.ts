@@ -44,7 +44,8 @@ async function waitForSplitPhase(
               ?.splitQualificationEvents()
               .some(
                 (event) =>
-                  event.phase === phase && event.booleanIndex >= (minimumBooleanIndex ?? 0),
+                  event.phase === phase &&
+                  (minimumBooleanIndex === undefined || event.booleanIndex >= minimumBooleanIndex),
               ) ?? false,
           predicate,
         ),
@@ -151,7 +152,7 @@ test('7B-X09: seven shared parts become eight and Undo restores exact sharing', 
   expect((await digest(page, await readState(page))).parts).toEqual(before.parts);
 });
 
-test('7B-X01: five confirmed in-Manifold heavy Split cancellations terminate and recover', async ({
+test('7B-X01: five confirmed local-kernel heavy Split cancellations terminate and recover', async ({
   page,
 }) => {
   await openHarness(page);
@@ -161,7 +162,7 @@ test('7B-X01: five confirmed in-Manifold heavy Split cancellations terminate and
     await openSplit(page);
     await resetQualification(page);
     await page.getByTestId('split-preview').click();
-    await waitForSplitPhase(page, { phase: 'MANIFOLD_ENTER' });
+    await waitForSplitPhase(page, { phase: 'KERNEL_ENTER' });
     const started = Date.now();
     await cancelSplit(page);
     const terminal = await latestTerminal(page);
@@ -214,7 +215,7 @@ test('7B-X01 connector cancellation terminates a confirmed pin Boolean without a
   await chooseConnector(page, 'pin');
   await resetQualification(page);
   await page.getByTestId('split-preview').click();
-  await waitForSplitPhase(page, { phase: 'MANIFOLD_ENTER', minimumBooleanIndex: 2 });
+  await waitForSplitPhase(page, { phase: 'MANIFOLD_ENTER', minimumBooleanIndex: 0 });
   await cancelSplit(page);
   const terminal = await latestTerminal(page);
   expect(terminal.stats.active).toBe(0);
@@ -228,7 +229,7 @@ test('7B-X02 real Split supersession allows only Preview B to apply', async ({ p
   await openSplit(page);
   await resetQualification(page);
   await page.getByTestId('split-preview').click();
-  await waitForSplitPhase(page, { phase: 'MANIFOLD_ENTER' });
+  await waitForSplitPhase(page, { phase: 'KERNEL_ENTER' });
   await expect(page.getByTestId('split-apply')).toBeEnabled({ timeout: 60_000 });
   await revealControl(page, page.getByTestId('split-position-value'));
   await page.getByTestId('split-position-value').fill('3');
@@ -253,7 +254,7 @@ test('7B-X03 replacement import terminates a heavy Split and remains authoritati
   await openSplit(page);
   await resetQualification(page);
   await page.getByTestId('split-preview').click();
-  await waitForSplitPhase(page, { phase: 'MANIFOLD_ENTER' });
+  await waitForSplitPhase(page, { phase: 'KERNEL_ENTER' });
   await loadFixture(page, Fixture.SplitCubeMillimetre);
   const terminal = await latestTerminal(page);
   expect(terminal.stats.active).toBe(0);

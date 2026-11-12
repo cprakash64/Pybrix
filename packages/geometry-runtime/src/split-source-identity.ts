@@ -1,4 +1,5 @@
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
+import { throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
 
 // Streaming SHA256 over the existing position/index views. Constant-size scratch;
 // no concatenation or source clone, no dependency on DOM/WebCrypto or Node.
@@ -17,7 +18,13 @@ function word(value: number | undefined): number {
   return value;
 }
 const rotate = (x: number, n: number): number => (x >>> n) | (x << (32 - n));
-export function splitMeshSHA(mesh: CanonicalMesh): string {
+export function splitMeshSHA(mesh: CanonicalMesh, cancellation?: CancellationToken): string {
+  return splitBufferSHA([mesh.positions, mesh.indices], cancellation);
+}
+export function splitBufferSHA(
+  buffers: readonly ArrayBufferView[],
+  cancellation?: CancellationToken,
+): string {
   const h = new Uint32Array([
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
   ]);
@@ -80,10 +87,13 @@ export function splitMeshSHA(mesh: CanonicalMesh): string {
       used = 0;
     }
   };
-  for (const a of [mesh.positions, mesh.indices]) {
+  for (const a of buffers) {
     const input = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
     bytes += input.length;
-    for (const b of input) put(b);
+    for (let offset = 0; offset < input.length; offset += 65_536) {
+      if (cancellation) throwIfCancelled(cancellation);
+      for (const b of input.subarray(offset, offset + 65_536)) put(b);
+    }
   }
   put(0x80);
   while (used !== 56) put(0);

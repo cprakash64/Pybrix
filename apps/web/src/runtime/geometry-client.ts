@@ -624,7 +624,7 @@ export class GeometryClient {
     return this.coordinator.dispatch(
       'split/create',
       { source, partId, request, ...(semanticQualification ? { semanticQualification } : {}) },
-      onProgress === undefined ? {} : { onProgress },
+      { interruptible: true, ...(onProgress === undefined ? {} : { onProgress }) },
     );
   }
 

@@ -130,7 +130,7 @@ it.each(['success-undo', 'delivery-throw', 'adoption-refuse', 'adoption-throw'] 
         partId: part,
         request: { plane: { origin: [0, 0, 0], normal: [1, 0, 0] }, connector: { kind: 'none' } },
       }).promise;
-      expect(nativeCalls).toBe(2);
+      expect(nativeCalls).toBe(0);
       expect(residentDocuments.resolve(source)).toBe(document);
       expect(splitCandidates.preview(preview.candidate, (d) => d.parts.length)).toBe(2);
       const originalAdoption = workspace.applySplitResult.bind(workspace);

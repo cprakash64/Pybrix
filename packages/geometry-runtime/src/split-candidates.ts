@@ -1,6 +1,7 @@
-import { splitMeshSHA } from './split-source-identity';
+import { splitBufferSHA, splitMeshSHA } from './split-source-identity';
 import {
   assertGeometryDocument,
+  composePartTransforms,
   documentTriangleCount,
   documentVertexCount,
   meshByteLength,
@@ -31,7 +32,12 @@ import {
 import type { RepairHistoryStore } from './repair-history';
 import { UndoableChangeKind } from './repair-history';
 import { analyseTopology } from '@cadfixer/mesh-topology';
-import type { SplitResult } from './split-connectors';
+import {
+  preparePlaneSplitSource,
+  type PreparedPlaneSplitSource,
+  type SplitPlane,
+  type SplitResult,
+} from './split-connectors';
 
 export interface SplitCandidateHandle extends GeometryEditTicket {
   readonly candidateId: string;
@@ -68,6 +74,12 @@ interface Entry {
   readonly document: GeometryDocument;
   readonly resultIdentity: object;
   readonly summary: SplitCandidateSummary;
+  readonly closedPlaneAuthority?: {
+    readonly interface: NonNullable<SplitResult['closedPlaneClip']>['interface'];
+    readonly provenanceA: Int32Array;
+    readonly provenanceB: Int32Array;
+    readonly provenanceSHA: string;
+  };
 }
 
 export type SplitTransactionState =
@@ -115,6 +127,7 @@ export class SplitCandidateStore {
   ).crypto.randomUUID();
   private readonly candidates = new Map<string, Entry>();
   private readonly active = new Map<DocumentId, string>();
+  private readonly prepared = new WeakMap<GeometryEditTicket, PreparedPlaneSplitSource>();
   private nextId = 1;
   private readonly transactions = new Map<string, Transaction>();
   private readonly resident: ResidentDocumentStore;
@@ -135,6 +148,32 @@ export class SplitCandidateStore {
     if (old) this.discardById(old);
     return this.lifecycle.begin(source, sourcePart, 'split');
   }
+  public preparePlaneSource(
+    ticket: GeometryEditTicket,
+    plane: SplitPlane,
+    cancellation: CancellationToken,
+  ): PreparedPlaneSplitSource {
+    if (!this.lifecycle.isCurrent(ticket)) throw modelUnavailable('The split source is stale.');
+    const part = this.resident.resolvePart(
+      { documentId: ticket.documentId, revision: ticket.sourceRevision },
+      ticket.partId,
+    );
+    if (isAppError(part)) throw part;
+    const prepared = preparePlaneSplitSource(
+      part.mesh,
+      plane,
+      part.transform,
+      {
+        document: ticket.documentId,
+        revision: ticket.sourceRevision,
+        part: ticket.partId,
+        generation: ticket.generation,
+      },
+      cancellation,
+    );
+    this.prepared.set(ticket, prepared);
+    return prepared;
+  }
   public resolve(
     ticket: GeometryEditTicket,
     result: SplitResult,
@@ -151,6 +190,22 @@ export class SplitCandidateStore {
     const index = source.parts.findIndex((p) => p.id === ticket.partId),
       original = source.parts[index];
     if (index < 0 || !original) throw modelUnavailable('The selected part is no longer present.');
+    const prepared = this.prepared.get(ticket);
+    const clip = result.closedPlaneClip;
+    if (
+      prepared &&
+      (prepared.mesh !== original.mesh ||
+        prepared.transform !== original.transform ||
+        (prepared.capability.strategy === 'exact-solid' &&
+          (clip?.interface.frame.binding !== prepared.binding ||
+            clip.interface.sourceSHA !== prepared.meshSHA ||
+            clip.outputPlacement !== result.outputPlacements?.a ||
+            clip.outputPlacement !== result.outputPlacements.b)))
+    )
+      throw modelUnavailable('The prepared split source is stale.');
+    if (result.outputPlacements && !prepared)
+      throw modelUnavailable('The split placements have no matching prepared source.');
+    this.prepared.delete(ticket);
     const sourceDefects =
       result.surfaceValidation === undefined
         ? undefined
@@ -187,18 +242,25 @@ export class SplitCandidateStore {
           sourceDefects.repeatedPositionFaceCount)
     )
       throw invalidState('This cut introduced degenerate faces.');
+    const offset = clip?.outputAnchor;
+    const rebased = offset?.some((value) => value !== 0)
+      ? composePartTransforms(original.transform, [1, 0, 0, 0, 1, 0, 0, 0, 1, ...offset])
+      : original.transform;
+    const outputPlacements = result.outputPlacements ?? { a: rebased, b: rebased };
     const aId = uniquePartId(source, `${ticket.partId}-A`),
       bId = uniquePartId(source, `${ticket.partId}-B`, new Set([aId]));
     const a: GeometryPart = {
         ...original,
         id: aId,
         mesh: result.pieceA,
+        transform: outputPlacements.a,
         name: `${original.name ?? 'Part'} A`,
       },
       b: GeometryPart = {
         ...original,
         id: bId,
         mesh: result.pieceB,
+        transform: outputPlacements.b,
         name: `${original.name ?? 'Part'} B`,
       };
     const parts = source.parts.slice();
@@ -248,7 +310,17 @@ export class SplitCandidateStore {
       resultIdentity: Object.freeze({}),
       attempt: 0,
       source,
-      sourceSHA: splitMeshSHA(original.mesh),
+      sourceSHA: prepared?.meshSHA ?? splitMeshSHA(original.mesh),
+      ...(clip && result.connector.kind === 'none'
+        ? {
+            closedPlaneAuthority: {
+              interface: clip.interface,
+              provenanceA: clip.provenanceA,
+              provenanceB: clip.provenanceB,
+              provenanceSHA: splitBufferSHA([clip.provenanceA, clip.provenanceB], cancellation),
+            },
+          }
+        : {}),
       candidateSHA: candidateMeshSHA(document, aId, bId),
     });
     this.active.set(ticket.documentId, handle.candidateId);

@@ -38,7 +38,7 @@ export interface SplitQualificationEvent {
   readonly generation: number;
   readonly booleanIndex: number;
   readonly operation: BooleanKind;
-  readonly phase: BooleanOperationPhase | 'TERMINAL';
+  readonly phase: BooleanOperationPhase | 'KERNEL_ENTER' | 'TERMINAL';
   readonly at: number;
   readonly stats: {
     readonly active: number;
@@ -91,6 +91,11 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
   let booleanIndex = 0;
   try {
     context.reportProgress(0.02, 'Preparing cut…');
+    const prepared = splitCandidates.preparePlaneSource(
+      ticket,
+      payload.request.plane,
+      context.cancellation,
+    );
     const result = await splitWithConnectors(
       {
         operate: (kind, a, b, cancellation) => {
@@ -114,8 +119,19 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
       context.cancellation,
       (stage) => {
         context.reportProgress(STAGE_PROGRESS[stage][0], STAGE_PROGRESS[stage][1]);
+        if (stage === SplitStage.Intersecting && prepared.capability.strategy === 'exact-solid')
+          qualificationObserver?.({
+            documentId: ticket.documentId,
+            generation: ticket.generation,
+            booleanIndex: -1,
+            operation: 'intersection',
+            phase: 'KERNEL_ENTER',
+            at: performance.now(),
+            stats: booleanOperations.stats,
+          });
       },
       uniformPhysicalScale(sourcePart.transform),
+      prepared,
     );
     context.reportProgress(0.85, 'Checking parts…');
     const summary = splitCandidates.resolve(ticket, result, context.cancellation);
