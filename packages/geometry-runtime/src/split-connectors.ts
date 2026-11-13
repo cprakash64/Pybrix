@@ -21,7 +21,7 @@ import {
   clipPlane,
   type ClipBinding,
   type ClosedPlaneClip,
-  type CanonicalSplitFrame,
+  type GeneratedSeparationInterface,
 } from './closed-plane-kernel';
 import { splitMeshSHA } from './split-source-identity';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
@@ -82,6 +82,19 @@ export interface CutSurfaceSummary {
   readonly loopCount: number;
   readonly outline: Float32Array;
   readonly outlineTruncated: boolean;
+}
+
+/** Generated section geometry in the kernel's canonical frame. */
+export interface GeneratedMatingInterfaceSummary extends CutSurfaceSummary {
+  readonly authority: 'generated-mating-interface';
+}
+
+/** Internal inputs to the predecessor connector selection algorithm. */
+export interface ConnectorCompatibilitySurface extends Pick<
+  CutSurfaceSummary,
+  'center' | 'spanU' | 'spanV' | 'centerEdgeDistance' | 'interiorCandidates' | 'outlineTruncated'
+> {
+  readonly authority: 'connector-compatibility';
 }
 
 /** Upper bound on the cap boundary edges carried back for display. */
@@ -405,12 +418,58 @@ export function identifyCutSurface(
   mesh: CanonicalMesh,
   plane: SplitPlane,
   tolerance: number,
-  generated?: { readonly frame: CanonicalSplitFrame; readonly capFaces: number },
 ): CutSurfaceSummary {
-  const { n, u, v } = generated
-      ? { n: generated.frame.N, u: generated.frame.U, v: generated.frame.V }
-      : frame(plane),
-    ids: number[] = [],
+  const basis = frame(plane);
+  return summarizeSection(mesh, plane, basis, 0, (points) =>
+    points.every((point) => Math.abs(dot(sub(point, plane.origin), basis.n)) <= tolerance * 4),
+  );
+}
+
+export function identifyConnectorCompatibilitySurface(
+  mesh: CanonicalMesh,
+  plane: SplitPlane,
+  tolerance: number,
+): ConnectorCompatibilitySurface {
+  const { center, spanU, spanV, centerEdgeDistance, interiorCandidates, outlineTruncated } =
+    identifyCutSurface(mesh, plane, tolerance);
+  return {
+    authority: 'connector-compatibility',
+    center,
+    spanU,
+    spanV,
+    centerEdgeDistance,
+    interiorCandidates,
+    outlineTruncated,
+  };
+}
+
+function identifyGeneratedMatingInterface(
+  mesh: CanonicalMesh,
+  generated: GeneratedSeparationInterface,
+): GeneratedMatingInterfaceSummary {
+  const { N: n, U: u, V: v } = generated.frame;
+  const plane = { origin: generated.outputPlaneOrigin, normal: n };
+  return {
+    ...summarizeSection(
+      mesh,
+      plane,
+      { n, u, v },
+      triangleCount(mesh) - generated.capFaces,
+      () => true,
+    ),
+    area: generated.area,
+    authority: 'generated-mating-interface',
+  };
+}
+
+function summarizeSection(
+  mesh: CanonicalMesh,
+  plane: SplitPlane,
+  { u, v }: ReturnType<typeof frame>,
+  firstFace: number,
+  includes: (points: readonly SplitVector[]) => boolean,
+): CutSurfaceSummary {
+  const ids: number[] = [],
     capMin = [Infinity, Infinity, Infinity],
     capMax = [-Infinity, -Infinity, -Infinity];
   const edgeUse = new Map<
@@ -430,14 +489,13 @@ export function identifyCutSurface(
     minV = Infinity,
     maxV = -Infinity;
   const faces = triangleCount(mesh);
-  for (let t = generated ? faces - generated.capFaces : 0; t < faces; t++) {
+  for (let t = firstFace; t < faces; t++) {
     const ps = [
       vertex(mesh, mesh.indices[t * 3] ?? 0),
       vertex(mesh, mesh.indices[t * 3 + 1] ?? 0),
       vertex(mesh, mesh.indices[t * 3 + 2] ?? 0),
     ];
-    if (!generated && !ps.every((p) => Math.abs(dot(sub(p, plane.origin), n)) <= tolerance * 4))
-      continue;
+    if (!includes(ps)) continue;
     ids.push(t);
     const [p0, p1, p2] = ps as [SplitVector, SplitVector, SplitVector];
     area += Math.hypot(...cross(sub(p1, p0), sub(p2, p0))) / 2;
@@ -670,7 +728,7 @@ function dimension(value: number, label: string, zero = false): void {
     throw invalidState(`${label} is outside the supported range.`, { value });
 }
 export function connectorCenters(
-  cut: CutSurfaceSummary,
+  cut: ConnectorCompatibilitySurface,
   count: number,
   radius: number,
   margin: number,
@@ -799,9 +857,16 @@ export async function splitWithConnectors(
   const plane = { origin: clip.interface.outputPlaneOrigin, normal: clip.interface.frame.N };
   let { pieceA, pieceB }: { pieceA: CanonicalMesh; pieceB: CanonicalMesh } = clip;
   onStage?.(SplitStage.BuildingCutSurfaces);
-  const generated = { frame: clip.interface.frame, capFaces: clip.interface.capFaces };
-  const cutA = identifyCutSurface(pieceA, plane, tolerance, generated);
-  const cutB = identifyCutSurface(pieceB, plane, tolerance, generated);
+  const cutA = identifyGeneratedMatingInterface(pieceA, clip.interface);
+  const cutB = identifyGeneratedMatingInterface(pieceB, clip.interface);
+  const selection =
+    request.connector.kind === 'none'
+      ? undefined
+      : identifyConnectorCompatibilitySurface(
+          pieceA,
+          { origin: sub(request.plane.origin, clip.outputAnchor), normal: request.plane.normal },
+          splitTolerance(source),
+        );
   const automatic = request.connector.kind === 'automatic';
   if (automatic && !isLengthUnit(request.connector.unit))
     throw invalidState('A known unit is required for automatic connectors.', {
@@ -820,7 +885,7 @@ export async function splitWithConnectors(
       ? automaticPinPlan(
           pieceA,
           pieceB,
-          cutA,
+          defined(selection),
           plane.normal,
           request.connector.unit,
           physicalScale,
@@ -844,7 +909,12 @@ export async function splitWithConnectors(
       dimension(c.clearance, 'Pin clearance', true);
       const r = c.diameter / 2;
       for (const center of plan?.centers ??
-        connectorCenters(cutA, c.count, r + c.clearance, Math.max(tolerance * 8, r * 0.35))) {
+        connectorCenters(
+          defined(selection),
+          c.count,
+          r + c.clearance,
+          Math.max(tolerance * 8, r * 0.35),
+        )) {
         if (automatic) automaticDiagnostics.placementAttempts++;
         throwIfCancelled(cancellation);
         if (plan) {
@@ -898,13 +968,18 @@ export async function splitWithConnectors(
       dimension(c.length, 'Dovetail length');
       dimension(c.clearance, 'Dovetail clearance', true);
       const need = Math.max(c.width, c.length) / 2 + c.clearance;
-      const [placement] = connectorCenters(cutA, 1, need, Math.max(tolerance * 8, need * 0.25));
+      const [placement] = connectorCenters(
+        defined(selection),
+        1,
+        need,
+        Math.max(tolerance * 8, need * 0.25),
+      );
       if (!placement) throw invalidState('No safe dovetail placement was found.');
       placements.push(placement);
       const axis = c.maleSide === 'A' ? scale(unit(plane.normal), -1) : unit(plane.normal),
         overlap = Math.max(tolerance * 8, c.depth * 1e-4),
         primitiveDepth = c.depth + overlap,
-        mc = add(cutA.center, scale(axis, (c.depth - overlap) / 2)),
+        mc = add(defined(selection).center, scale(axis, (c.depth - overlap) / 2)),
         male = dovetail(
           mc,
           { origin: mc, normal: axis },

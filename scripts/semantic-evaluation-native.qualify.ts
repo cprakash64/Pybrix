@@ -1,5 +1,9 @@
 /** Node/browser shared prevalidation oracle. Imports production safety paths without changing them. */
 import { splitWithConnectors } from '@cadfixer/geometry-runtime';
+import {
+  identifyConnectorCompatibilitySurface,
+  splitTolerance,
+} from '../packages/geometry-runtime/src/split-connectors';
 import { automaticPinPlan } from '../packages/geometry-runtime/src/automatic-connectors';
 import type { BooleanBackend } from '../packages/geometry-runtime/src/boolean-adapter';
 import { uncancellable } from '@cadfixer/shared';
@@ -61,7 +65,7 @@ export async function prevalidatePlanes(
       const plan = automaticPinPlan(
         plain.pieceA,
         plain.pieceB,
-        plain.cutA,
+        identifyConnectorCompatibilitySurface(plain.pieceA, plane, splitTolerance(f.mesh)),
         p.normal,
         'millimeter',
         1,

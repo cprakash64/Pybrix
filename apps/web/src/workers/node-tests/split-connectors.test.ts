@@ -458,6 +458,37 @@ describe('Stage 7B split and connectors', () => {
     expect(annulus.cutA.area).toBeLessThan(Math.PI * (11 * 11 - 5 * 5));
   });
 
+  it('uses coplanar neighbors for connector selection while reporting only the generated cap', async () => {
+    const source = combine(cube(), translatedCube(30, 0, 5, 10));
+    const backend = await createManifoldBooleanBackend(binary);
+    const result = await splitWithConnectors(
+      backend,
+      source,
+      {
+        plane: { origin: [0, 0, 0], normal: [0, 0, 1] },
+        connector: { kind: 'automatic', unit: 'millimeter' },
+      },
+      uncancellable,
+    );
+    expect(result.automaticConnectorDiagnostics?.reason).toBe('NO_SAFE_SITE');
+    const clip = result.closedPlaneClip;
+    expect(clip?.interface.area).toBe(400);
+    expect(clip?.interface.frame.N).toEqual([0, 0, 1]);
+    for (const [cut, provenance] of [
+      [result.cutA, clip?.provenanceA],
+      [result.cutB, clip?.provenanceB],
+    ] as const) {
+      expect(cut).toMatchObject({
+        authority: 'generated-mating-interface',
+        area: 400,
+        loopCount: 1,
+      });
+      expect(cut.triangleIds).toHaveLength(clip?.interface.capFaces ?? 0);
+      expect(cut.triangleIds.every((face) => provenance?.[face] === -1)).toBe(true);
+      expect(cut.bounds?.max[0]).toBe(10);
+    }
+  });
+
   it('UI-04 reports the finished piece volumes after connectors, beside the cut volumes', async () => {
     const plain = await run({ kind: 'none' });
     expect(plain.metrics.pieceAFinalVolume).toBe(plain.metrics.pieceAVolume);
@@ -661,12 +692,14 @@ it('retains the exact wall/depth-proven automatic sites on an oblique cap', asyn
     { plane, connector: { kind: 'none' } },
     uncancellable,
   );
+  const { identifyConnectorCompatibilitySurface, splitTolerance } =
+    await import('../../../../../packages/geometry-runtime/src/split-connectors');
   const { automaticPinPlan } =
     await import('../../../../../packages/geometry-runtime/src/automatic-connectors');
   const plan = automaticPinPlan(
     plain.pieceA,
     plain.pieceB,
-    plain.cutA,
+    identifyConnectorCompatibilitySurface(plain.pieceA, plane, splitTolerance(source)),
     plane.normal,
     'millimeter',
     1,
@@ -699,6 +732,8 @@ it('connector site search observes cancellation without returning a partial plan
     { plane, connector: { kind: 'none' } },
     uncancellable,
   );
+  const { identifyConnectorCompatibilitySurface, splitTolerance } =
+    await import('../../../../../packages/geometry-runtime/src/split-connectors');
   const { automaticPinPlan } =
     await import('../../../../../packages/geometry-runtime/src/automatic-connectors');
   let polls = 0;
@@ -706,7 +741,7 @@ it('connector site search observes cancellation without returning a partial plan
     automaticPinPlan(
       plain.pieceA,
       plain.pieceB,
-      plain.cutA,
+      identifyConnectorCompatibilitySurface(plain.pieceA, plane, splitTolerance(source)),
       plane.normal,
       'millimeter',
       1,

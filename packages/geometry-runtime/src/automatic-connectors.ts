@@ -7,7 +7,7 @@ import {
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
 import {
   connectorCenters,
-  type CutSurfaceSummary,
+  type ConnectorCompatibilitySurface,
   type SplitConnector,
   type SplitVector,
 } from './split-connectors';
@@ -82,7 +82,7 @@ function exitDistance(
 export function automaticPinPlan(
   a: CanonicalMesh,
   b: CanonicalMesh,
-  cut: CutSurfaceSummary,
+  cut: ConnectorCompatibilitySurface,
   normal: SplitVector,
   unit: string,
   scale: number,
