@@ -175,7 +175,9 @@ test('the four workspaces share one control family', async ({ page }) => {
 
   // Format, connector and pattern cards are one family: radius, border,
   // padding; each at least a comfortable target.
-  expect(cards.length).toBeGreaterThanOrEqual(10);
+  // Nine since v0.7.0: the dovetail connector card was removed because its two
+  // halves cannot be assembled (it was the tenth).
+  expect(cards.length).toBeGreaterThanOrEqual(9);
   for (const property of [
     'border-top-left-radius',
     'border-top-width',

@@ -1,8 +1,9 @@
 # Format support matrix and known limitations
 
-Released capability reference for the **Pybrix v0.6.1 Technical Preview**, whose
-capabilities are those of v0.6.0: v0.6.1 changes how a Repair result is
-described, not what Repair does. The 3MF
+Capability reference for the **Pybrix v0.7.0 Technical Preview** (prepared, not
+yet deployed; the live site is still v0.6.1). Import, export, Repair and
+Texture are those of v0.6.0; v0.7.0 changes only what Split offers and shows —
+see the [v0.7.0 notes](V0_7_0_TECHNICAL_PREVIEW_RELEASE.md). The 3MF
 per-entry ceiling remains 320 MiB; model entries from 128 MiB up are read by
 streaming. The live product is <https://pybrix.com>. Large 3MF export can be
 refused when serialized XML exceeds the 320 MiB validation/write policy; this
@@ -67,7 +68,9 @@ before it is offered; there is no way to skip that.
   on a part of up to 250,000 triangles. Large-mesh Repair model uses its own
   resource policy; this tool limit is not a general Repair model ceiling.
 - **Split** — one selected part and one plane at a time, on an eligible closed
-  manifold solid. Connector choices are None, round Pin/Socket, and Dovetail.
+  manifold solid. Connector choices are None and round Pin/Socket (one to
+  four); the dovetail is not offered since v0.7.0. Split Preview can be shown
+  assembled or exploded; the exploded layout is display-only.
   Connector dimensions require an explicit-millimetre document. Preview,
   Apply, Cancel, individual STL piece export, and one-step Undo are supported.
 - **Surface Texture** — one planar connected region on one part at a time.

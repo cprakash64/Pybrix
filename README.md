@@ -19,8 +19,10 @@ service for AI analysis.
 
 **Try it: <https://pybrix.com>**
 
-This repository carries the **Pybrix v0.6.1 Technical Preview** — the v0.6.0
-feature set with clearer Repair results. See the
+This repository carries the **Pybrix v0.7.0 Technical Preview** (prepared, not
+yet deployed; the live site is v0.6.1) — the v0.6.1 feature set with an exploded
+Split preview, no dovetail connector and more exact Split checks. See the
+[v0.7.0 notes](docs/release/V0_7_0_TECHNICAL_PREVIEW_RELEASE.md), the
 [v0.6.1 patch notes](docs/release/V0_6_1_TECHNICAL_PREVIEW_RELEASE.md) and the
 [v0.6.0 release notes](docs/release/V0_6_0_TECHNICAL_PREVIEW_RELEASE.md).
 
@@ -38,12 +40,12 @@ observed unless you report it. See
 [Beta feedback issue](https://github.com/cprakash64/CAD-Fixer/issues/new/choose).
 Please do not attach models you are not authorised to share.
 
-> **Current status: v0.6.1 Technical Preview.**
+> **Current status: v0.7.0 Technical Preview (prepared; live site is v0.6.1).**
 > You can open an **STL, OBJ or 3MF** file, inspect it in a real 3D viewport,
 > read a full topology report about it, highlight its defects in 3D, **run a
 > combined conservative repair and eligible simple flat opening fills with a
 > before/after preview, apply it, undo it**, run a read-only self-intersection check, **split a
-> closed part with one flat cut** (optionally with pin or dovetail connectors),
+> closed part with one flat cut** (optionally with round pin connectors),
 > **add a Dots, Lines or Diamond texture to one flat region**, and convert or
 > export to any of the three formats — entirely on your own machine.
 >
