@@ -1,9 +1,9 @@
 # Format support matrix and known limitations
 
-Capability reference for the **Pybrix v0.7.0 Technical Preview** (prepared, not
-yet deployed; the live site is still v0.6.1). Import, export, Repair and
-Texture are those of v0.6.0; v0.7.0 changes only what Split offers and shows —
-see the [v0.7.0 notes](V0_7_0_TECHNICAL_PREVIEW_RELEASE.md). The 3MF
+Capability reference for the **Pybrix v0.7.1 Technical Preview** (a candidate, not yet deployed; the
+live site is v0.7.0). Import, export, Repair and Texture are those of v0.6.0; v0.7.0 changed what Split
+offers and shows and v0.7.1 corrects how a replaced model is framed and how Auto Split reports what it
+found — see the [v0.7.1 notes](V0_7_1_TECHNICAL_PREVIEW_RELEASE.md). The 3MF
 per-entry ceiling remains 320 MiB; model entries from 128 MiB up are read by
 streaming. The live product is <https://pybrix.com>. Large 3MF export can be
 refused when serialized XML exceeds the 320 MiB validation/write policy; this
@@ -70,7 +70,9 @@ before it is offered; there is no way to skip that.
 - **Split** — one selected part and one plane at a time, on an eligible closed
   manifold solid. Connector choices are None and round Pin/Socket (one to
   four); the dovetail is not offered since v0.7.0. Split Preview can be shown
-  assembled or exploded; the exploded layout is display-only.
+  assembled or exploded; the exploded layout is display-only. Auto Split (Beta) lists the parts it
+  RECOGNIZED, says whether each was located on the model and offers a display-only "Show part"; a
+  split is offered only where a cut was found.
   Connector dimensions require an explicit-millimetre document. Preview,
   Apply, Cancel, individual STL piece export, and one-step Undo are supported.
 - **Surface Texture** — one planar connected region on one part at a time.

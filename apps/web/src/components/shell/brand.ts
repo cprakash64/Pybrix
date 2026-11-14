@@ -18,7 +18,7 @@ export const PRODUCT_NAME = 'Pybrix';
 /** Secondary to the name, never louder than it. */
 export const PRODUCT_STATUS = 'Technical Preview';
 
-export const PRODUCT_VERSION = 'v0.7.0';
+export const PRODUCT_VERSION = 'v0.7.1';
 
 /** What Pybrix does, in one line. Used where explanation helps, not everywhere. */
 export const PRODUCT_SUMMARY =

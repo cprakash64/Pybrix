@@ -739,6 +739,55 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   per operand became a fraction of that, with the same numbering and the same coordinates (`-0` kept).
   Welding was considered and rejected: it adds topology semantics the ceiling does not need.
 
+## Camera framing invariants (v0.7.1)
+
+- **A DOCUMENT IS FRAMED ONCE, BY IDENTITY.** `ViewportPanel` keeps the document id the camera was last
+  fitted to (`framedDocumentRef`); `setModel(..., { preserveView })` is true only for the SAME document
+  inside the Split workspace (a preview or an applied split of what is on screen). A different document is
+  fitted exactly once, from its own bounds. The decision was once `preserveView: splitWorkspaceRef.current`
+  alone, which kept model A's framing for model B whenever Split was open (owner acceptance, v0.7.0).
+- **NOTHING ELSE REFITS.** Not a re-render, a preview, Exploded / Assembled, a part selection, Show part,
+  a connector control or the inspector. No timer, no polling, no triangle-count heuristic. The viewport
+  publishes `data-document-fit-count`, `data-camera-distance` and `data-camera-fit-ratio` so
+  `e2e/camera-replacement.spec.ts` reads what the camera did; the ratio is exactly `1 / FIT_PADDING` when
+  fitted.
+- **`commitImport` RESETS THE PREVIOUS DOCUMENT'S PRESENTATION**: the applied-split layout (`assembly`)
+  and `previewExploded`. Model A's view state must not reach model B.
+- **THE WORKSPACE PACKAGE LINKS ARE RELATIVE.** `node_modules/@cadfixer/*` links resolve into whichever
+  tree owns that `node_modules`. A git worktree that borrows another tree's `node_modules` builds the
+  OTHER tree's packages, silently ignoring its own edits: give the worktree its own `@cadfixer` links.
+
+## Auto Split state invariants (v0.7.1)
+
+- **RECOGNIZED, GROUNDED AND SPLITTABLE ARE THREE FACTS.** Recognized: the service named a part. Grounded:
+  its outline reached faces of the model (`Suggestion.grounding`: GROUNDED / NOT_GROUNDED with face and
+  view counts). Splittable: a cut or a component set was proposed. The list heading counts parts
+  RECOGNIZED, never splits.
+- **"NO SAFE SPLIT FOUND" IS A FINDING ABOUT A PROPOSED CUT.** A part nothing was proposed for reads
+  "No cut suggested", one inside a single shell "Built into the body", one that could not be isolated
+  "Couldn't isolate this part reliably". A skipped analysis, a spent allowance, an ungrounded part, a
+  rejected service answer and a stale result may never produce the phrase. Copy lives in
+  `state/auto-split-presentation.ts`; a test bans the phrase on every row that was not examined.
+- **GROUNDING IS KEPT, NOT RECOMPUTED, AND IS BOUNDED.** The per-face view mask the engine builds for
+  every part is retained bit-packed in the worker (`GroundedRegion`: one bit a face, at most 24 parts —
+  497 KB on the 1,988,877-triangle truck) beside the preparation it came from and released with it. The
+  page receives only scalars and, on request, face indices (`autosplit/part-faces`).
+- **SHOW PART IS DISPLAY ONLY.** It needs no candidate, loads nothing into Manual Split, creates no
+  revision, history entry, transaction or analysis charge, and never reframes the camera. It marks the
+  surface the service outlined as seen from six views — approximate, and the interface says so. The
+  request is made only for the result's own (document, revision, part); a replaced document clears every
+  recognized part, its highlight and its Show part state. `shownPartId` is separate from `shownId` and
+  `selectedId`.
+- **THE NATIVE ALLOWANCE IS PER SELECTION.** Each Preview request gets the bound the policy states (one
+  attempt of one finalist on 250,000+ triangles); outcomes are remembered per part (`winners`, `refused`),
+  so a repeat does no new work and a refused part reports a completed analysis again. A limit inside a
+  request is a typed `SEMANTIC_NATIVE_BUDGET_EXHAUSTED` that is never worded as a finding. The previous
+  session-wide counting refused every part after the first on a large model without examining it. No
+  ceiling was raised.
+- **THE OWNER'S TRUCK IS A GATED REGRESSION FIXTURE.** `large-truck-grounding.test.ts` runs only with
+  `CADFIXER_TRUCK_STL` set and ships no model; its hierarchy is a deterministic fixture authored from the
+  engine-rendered views, not a provider answer. No real provider call is ever made by a test.
+
 ## Streaming 3MF ingestion invariants (Stage 6E-A1 prototype, 6E-A2 production)
 
 - **BUFFERED IS `read3mf`'s DEFAULT; THE PRODUCT ROUTES — Stage 6E-A3
