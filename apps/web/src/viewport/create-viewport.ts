@@ -757,6 +757,8 @@ export function createViewport(
   };
 
   let currentModel: ViewportModel | undefined;
+  /** How many times `setModel` fitted the camera to a newly installed model. Published for tests only. */
+  let documentFitCount = 0;
   /**
    * Held beside the model rather than inside it, because it changes far more
    * often than the model does and on a completely different cadence.
@@ -816,6 +818,22 @@ export function createViewport(
      * occasionally measure the wrong scene.
      */
     canvas.dataset.modelRevision = String(currentModel?.revision ?? 0);
+    /*
+     * CAMERA FRAMING, as facts a test can read. `cameraFitRatio` is the model's bounding-sphere
+     * radius over the radius the camera sees at its target: exactly 1 / FIT_PADDING when the camera
+     * was fitted to this model, far below that when a previous model's framing was kept.
+     */
+    canvas.dataset.documentFitCount = String(documentFitCount);
+    {
+      const distance = camera.position.distanceTo(controls.target);
+      const seen = distance * Math.sin((camera.fov * Math.PI) / 180 / 2);
+      const radius =
+        currentModel === undefined
+          ? 0
+          : (currentModel.radius > 0 ? currentModel.radius : 1) + assemblyRadius;
+      canvas.dataset.cameraDistance = distance.toFixed(4);
+      canvas.dataset.cameraFitRatio = seen > 0 && radius > 0 ? (radius / seen).toFixed(4) : '0';
+    }
     /*
      * THE SPLIT PLANE AS DRAWN, so a test can prove the viewport shows the cut
      * the controls describe — not merely that a number was stored.
@@ -1187,7 +1205,10 @@ export function createViewport(
 
     applyPartTints();
     if (keepView) scheduleRender();
-    else fitView();
+    else {
+      documentFitCount += 1;
+      fitView();
+    }
   };
 
   /** Moves the overlay/preview frame onto the active part. Touches no geometry. */

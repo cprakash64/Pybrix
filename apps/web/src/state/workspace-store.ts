@@ -1665,6 +1665,13 @@ export class WorkspaceStore {
       activePartId: activePart?.partId,
       splitPreview: undefined,
       splitPlane: undefined,
+      /*
+       * THE PREVIOUS DOCUMENT'S PRESENTATION GOES WITH IT. The applied-split layout and the
+       * Assembled / Exploded choice are views of document A; neither describes this file, and the
+       * choice must not make the next preview open exploded because the last one was left so.
+       */
+      assembly: undefined,
+      previewExploded: false,
       texturePreview: undefined,
       textureSelection: undefined,
       importProgress: { state: ImportState.Ready, fraction: 1 },

@@ -220,14 +220,26 @@ export function ViewportPanel(): ReactNode {
   // store replaces it only on a successful import — unrelated updates such as a
   // status message keep the same reference, so this does not rebuild GPU
   // buffers every time something else in the workspace changes.
+  /*
+   * THE DOCUMENT THE CAMERA WAS LAST FITTED TO. A camera is framed once per DOCUMENT, so the
+   * question "may the view be kept?" is answered by identity, never by which workspace is open:
+   * a split preview or an applied split is the same document seen differently and keeps the view
+   * the cut was chosen from, but a different document is a different model with its own bounds.
+   * Keying the decision on the workspace alone kept model A's framing for model B whenever the
+   * Split workspace was open, and B appeared tiny or out of view (owner acceptance, v0.7.0).
+   */
+  const framedDocumentRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (viewport === undefined) return;
 
     if (model === undefined) {
+      framedDocumentRef.current = undefined;
       viewport.setModel(undefined);
       return;
     }
+    const sameDocument = framedDocumentRef.current === model.handle.documentId;
+    framedDocumentRef.current = model.handle.documentId;
 
     /*
      * The render snapshot and the part descriptors are joined here rather than
@@ -262,7 +274,7 @@ export function ViewportPanel(): ReactNode {
       {
         // In Split & Connect, a preview or an applied split is the same document
         // seen differently: the camera the cut was chosen from stays put.
-        preserveView: splitWorkspaceRef.current,
+        preserveView: splitWorkspaceRef.current && sameDocument,
       },
     );
   }, [model, splitPreview]);

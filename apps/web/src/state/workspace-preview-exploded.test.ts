@@ -142,4 +142,29 @@ describe('the split preview and its exploded view', () => {
     ).toBe(false);
     expect(store.getSnapshot().splitPreview).toBeUndefined();
   });
+
+  it("replacing the document drops the previous document's exploded choice, preview and layout", () => {
+    const store = loaded();
+    store.setSplitPreview(handle, render(pieces), pieces, assembly);
+    store.setPreviewExploded(true);
+    expect(store.getSnapshot().previewExploded).toBe(true);
+
+    // Model B: a different document, installed without a refresh.
+    const parts = [part('part-1')];
+    const current = store.getSnapshot().model;
+    if (current === undefined) throw new Error('the fixture model should be loaded');
+    const replacement: Omit<LoadedModel, 'revision'> = {
+      ...current,
+      handle: { documentId: 'doc-2' as DocumentId, revision: 1 },
+      parts,
+      render: render(parts),
+    };
+    expect(store.commitImport(store.beginImport('truck.stl'), replacement)).toBe(true);
+
+    const after = store.getSnapshot();
+    expect(after.previewExploded).toBe(false);
+    expect(after.splitPreview).toBeUndefined();
+    expect(after.assembly).toBeUndefined();
+    expect(after.model?.handle.documentId).toBe('doc-2');
+  });
 });
