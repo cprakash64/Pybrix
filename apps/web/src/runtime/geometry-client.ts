@@ -40,6 +40,7 @@ import {
   type AutoSplitRenderResult,
   type AutoSplitSuggestResult,
   type AutoSplitComponentFacesResult,
+  type AutoSplitPartFacesResult,
   type SplitCreatePayload,
   type SplitCreateResult,
   type SplitCommitResult,
@@ -780,6 +781,15 @@ export class GeometryClient {
     ranks: readonly number[],
   ): OperationHandle<AutoSplitComponentFacesResult> {
     return this.coordinator.dispatch('autosplit/component-faces', { source, partId, ranks }, {});
+  }
+
+  /** The faces a recognized part was grounded to, for display only. Changes nothing. */
+  public autoSplitPartFaces(
+    source: DocumentHandle,
+    partId: string,
+    suggestionId: string,
+  ): OperationHandle<AutoSplitPartFacesResult> {
+    return this.coordinator.dispatch('autosplit/part-faces', { source, partId, suggestionId }, {});
   }
 
   /**

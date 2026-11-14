@@ -294,6 +294,8 @@ export type {
   AutoSplitSuggestResult,
   AutoSplitComponentFacesPayload,
   AutoSplitComponentFacesResult,
+  AutoSplitPartFacesPayload,
+  AutoSplitPartFacesResult,
   AutoSplitExtractPayload,
   TextureCreatePayload,
   TextureCreateResult,

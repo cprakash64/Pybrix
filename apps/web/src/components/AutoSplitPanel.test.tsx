@@ -159,6 +159,7 @@ interface Spies {
   readonly render: ReturnType<typeof vi.fn>;
   readonly suggest: ReturnType<typeof vi.fn>;
   readonly createSplit: ReturnType<typeof vi.fn>;
+  readonly partFaces: ReturnType<typeof vi.fn>;
   readonly createComponentSplit: ReturnType<typeof vi.fn>;
   readonly commitSplit: ReturnType<typeof vi.fn>;
   readonly confirmSplitScope: ReturnType<typeof vi.fn>;
@@ -255,11 +256,21 @@ function mount(options: Options = {}): Spies {
       ? never()
       : { promise: Promise.reject(options.previewRejects as Error), cancel: (): void => undefined },
   );
+  const partFaces = vi.fn((_source: DocumentHandle, _part: string, suggestionId: string) => ({
+    promise: Promise.resolve({
+      source: VIEWS.source,
+      partId: PART_ID,
+      suggestionId,
+      faces: new Uint32Array([3, 4, 5]),
+    }),
+    cancel: (): void => undefined,
+  }));
   const createComponentSplit = vi.fn(never);
   const commitSplit = vi.fn(never);
   const confirmSplitScope = vi.fn(never);
   const client = Object.assign(new GeometryClient({ onDiagnostic: (): void => undefined }), {
     renderAutoSplitViews: render,
+    autoSplitPartFaces: partFaces,
     suggestAutoSplit: suggest,
     autoSplitComponentFaces: vi.fn(() => ({
       promise: Promise.resolve({
@@ -311,6 +322,7 @@ function mount(options: Options = {}): Spies {
     render,
     suggest,
     createSplit,
+    partFaces,
     createComponentSplit,
     commitSplit,
     confirmSplitScope,
@@ -1444,4 +1456,145 @@ describe('physical scope confirmation controls', () => {
       expect(document.body).toHaveTextContent('Split applied');
     },
   );
+});
+
+/*
+ * v0.7.1 — RECOGNIZED, GROUNDED AND SPLITTABLE ARE THREE DIFFERENT THINGS.
+ *
+ * The owner's live truck listed "Road wheels (4) — Part of the body" and "Cab — No safe split found",
+ * with Preview and Edit disabled and nothing to look at. Nothing in the first was a finding about
+ * splitting, and the second said "examined and unsafe" about a part no cut was ever proposed for.
+ */
+describe('recognized parts, grounding and Show part', () => {
+  const GROUNDED = { state: 'GROUNDED', faces: 1234, views: 3 } as const;
+  const semanticRow = (id: string, label: string, over: Partial<Suggestion>): Suggestion => ({
+    id,
+    family: 'semantic',
+    label,
+    operation: SuggestionOperation.None,
+    status: SuggestionStatus.Unavailable,
+    reason: SuggestionReason.FusedIntoBody,
+    plane: null,
+    components: [],
+    quality: 'RECOGNIZED_NOT_SEPARABLE',
+    importance: 'major',
+    parentId: null,
+    semanticConfidence: 0.9,
+    grounding: GROUNDED,
+    ...over,
+  });
+  const WHEELS = semanticRow('wheels', 'Road wheels', {
+    diagnostic: 'CONFIRMED_FUSED',
+    instanceCount: 4,
+  });
+  const CAB = semanticRow('cab', 'Cab', { diagnostic: 'NO_REALIZATION_PROPOSAL' });
+  const ANTENNA = semanticRow('antenna', 'Antenna', {
+    reason: SuggestionReason.NotLocated,
+    diagnostic: 'NO_REALIZATION_PROPOSAL',
+    grounding: { state: 'NOT_GROUNDED', faces: 0, views: 0 },
+  });
+  const HOOD = semanticRow('hood', 'Hood', {
+    operation: SuggestionOperation.Plane,
+    status: SuggestionStatus.Suggested,
+    reason: SuggestionReason.Clear,
+    quality: 'READY',
+    plane: { origin: [20, 10, 80], normal: [0, 0, 1] },
+  });
+  const all = [WHEELS, CAB, ANTENNA, HOOD];
+  const text = (id: string): string => screen.getByTestId(`auto-row-${id}`).textContent;
+
+  it('counts what was RECOGNIZED, not what can be split', async () => {
+    mount({ suggestions: all });
+    await findParts();
+    expect(screen.getByText(AUTO_SPLIT_COPY.resultsHeading)).toBeTruthy();
+    expect(AUTO_SPLIT_COPY.resultsHeading).toBe('Parts recognized');
+  });
+
+  it('gives each state its own words: built into the body, no cut suggested, ready', async () => {
+    mount({ suggestions: all });
+    await findParts();
+    expect(screen.getByTestId('auto-row-status-wheels').textContent).toBe('Built into the body');
+    expect(screen.getByTestId('auto-row-status-cab').textContent).toBe('No cut suggested');
+    expect(screen.getByTestId('auto-row-status-hood').textContent).toBe('Ready');
+    // Neither unsplittable row claims a safe split was searched for and not found.
+    expect(text('wheels')).not.toMatch(/no safe split/i);
+    expect(text('cab')).not.toMatch(/no safe split/i);
+    expect(text('antenna')).not.toMatch(/no safe split/i);
+  });
+
+  it('offers Show part for every GROUNDED part, including ones with no split to offer', async () => {
+    mount({ suggestions: all });
+    await findParts();
+    for (const id of ['wheels', 'cab', 'hood']) {
+      const button = screen.getByTestId<HTMLButtonElement>(`auto-showpart-${id}`);
+      expect(button.disabled).toBe(false);
+      expect(button.textContent).toBe(AUTO_SPLIT_COPY.showPart);
+    }
+    // ...while the split controls stay unavailable for the two that have none.
+    expect(screen.getByTestId<HTMLButtonElement>('auto-edit-wheels').disabled).toBe(true);
+    expect(screen.getByTestId<HTMLButtonElement>('auto-edit-cab').disabled).toBe(true);
+    expect(screen.getByTestId<HTMLButtonElement>('auto-preview-wheels').disabled).toBe(true);
+  });
+
+  it('an UNGROUNDED part offers nothing to show and says that it is not located, not that it is unsafe', async () => {
+    mount({ suggestions: all });
+    await findParts();
+    expect(screen.queryByTestId('auto-showpart-antenna')).toBeNull();
+    const note = screen.getByTestId('auto-row-grounding-antenna');
+    expect(note.getAttribute('data-testid')).toBe('auto-row-grounding-antenna');
+    expect(note.textContent).toContain('Not located on the model');
+    expect(note.textContent).not.toMatch(/safe split/i);
+  });
+
+  it("Show part asks the worker for THAT part's faces and changes nothing else", async () => {
+    const spies = mount({ suggestions: all });
+    await findParts();
+    const before = spies.store.getSnapshot();
+    click('auto-showpart-wheels');
+    await settle();
+    expect(spies.partFaces).toHaveBeenCalledTimes(1);
+    expect(spies.partFaces.mock.calls[0]?.[2]).toBe('wheels');
+    const after = spies.store.getSnapshot();
+    // SHOW_PART_MUTATION_COUNT = 0: same document object, revision and handle; no preview, no split.
+    expect(after.model).toBe(before.model);
+    expect(after.model?.revision).toBe(before.model?.revision);
+    expect(after.splitPreview).toBeUndefined();
+    expect(spies.createSplit).not.toHaveBeenCalled();
+    expect(spies.createComponentSplit).not.toHaveBeenCalled();
+    expect(spies.commitSplit).not.toHaveBeenCalled();
+    // It toggles, and shows one part at a time.
+    expect(screen.getByTestId('auto-showpart-wheels').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('auto-showpart-wheels').textContent).toBe(AUTO_SPLIT_COPY.hidePart);
+    click('auto-showpart-cab');
+    await settle();
+    expect(screen.getByTestId('auto-showpart-wheels').getAttribute('aria-pressed')).toBe('false');
+    click('auto-showpart-cab');
+    await settle();
+    expect(screen.getByTestId('auto-showpart-cab').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('REPLACING THE DOCUMENT clears every recognized part, its highlight and its Show part state', async () => {
+    const spies = mount({ suggestions: all });
+    await findParts();
+    click('auto-showpart-wheels');
+    await settle();
+    expect(spies.partFaces).toHaveBeenCalledTimes(1);
+
+    // Model B opens without a refresh: a different document.
+    const model = spies.store.getSnapshot().model;
+    if (model === undefined) throw new Error('the fixture model should be loaded');
+    act(() => {
+      spies.store.commitImport(spies.store.beginImport('second.stl'), {
+        ...model,
+        handle: { documentId: 'doc-2', revision: 1 } as DocumentHandle,
+      });
+    });
+    await settle();
+
+    // Nothing recognized for model A survives on model B: no row, no control, no request for its faces.
+    expect(screen.queryByTestId('auto-row-wheels')).toBeNull();
+    expect(screen.queryByTestId('auto-showpart-wheels')).toBeNull();
+    expect(screen.queryByTestId('auto-row-grounding-cab')).toBeNull();
+    expect(spies.partFaces).toHaveBeenCalledTimes(1);
+  });
 });

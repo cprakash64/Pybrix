@@ -143,6 +143,12 @@ export interface AutoSplitSnapshot {
   readonly selectedId: string | undefined;
   /** The suggestion drawn in the viewport. One at a time; undefined hides every overlay. */
   readonly shownId: string | undefined;
+  /**
+   * The recognized part whose grounded faces are highlighted ("Show part"). Display only and entirely
+   * separate from `shownId` and `selectedId`: showing a part needs no split candidate, loads nothing into
+   * Manual Split and cannot start a preview.
+   */
+  readonly shownPartId: string | undefined;
   /** The user's own component selection for the selected component suggestion. */
   readonly selection: readonly number[] | undefined;
 }
@@ -191,6 +197,7 @@ const INITIAL: AutoSplitSnapshot = Object.freeze({
   stale: false,
   selectedId: undefined,
   shownId: undefined,
+  shownPartId: undefined,
   selection: undefined,
 });
 
@@ -271,6 +278,7 @@ export class AutoSplitSession {
       stale: false,
       selectedId: undefined,
       shownId: undefined,
+      shownPartId: undefined,
       selection: undefined,
     });
   }
@@ -301,6 +309,7 @@ export class AutoSplitSession {
         stale: false,
         selectedId: undefined,
         shownId: undefined,
+        shownPartId: undefined,
         selection: undefined,
       });
       return true;
@@ -330,6 +339,7 @@ export class AutoSplitSession {
       stale: false,
       selectedId: undefined,
       shownId: undefined,
+      shownPartId: undefined,
       selection: undefined,
     });
     try {
@@ -512,6 +522,7 @@ export class AutoSplitSession {
       stale: false,
       selectedId: undefined,
       shownId: undefined,
+      shownPartId: undefined,
       selection: undefined,
     });
   }
@@ -567,6 +578,7 @@ export class AutoSplitSession {
         stale: false,
         selectedId: undefined,
         shownId: undefined,
+        shownPartId: undefined,
         selection: undefined,
       });
       return;
@@ -575,7 +587,14 @@ export class AutoSplitSession {
     if (stale !== this.snapshot.stale)
       this.set({
         stale,
-        ...(stale ? { selectedId: undefined, shownId: undefined, selection: undefined } : {}),
+        ...(stale
+          ? {
+              selectedId: undefined,
+              shownId: undefined,
+              shownPartId: undefined,
+              selection: undefined,
+            }
+          : {}),
       });
   }
 
@@ -711,7 +730,12 @@ export class AutoSplitSession {
     const result = this.snapshot.result;
     if (this.snapshot.stale || result === undefined) return;
     if (id === undefined) {
-      this.set({ selectedId: undefined, shownId: undefined, selection: undefined });
+      this.set({
+        selectedId: undefined,
+        shownId: undefined,
+        shownPartId: undefined,
+        selection: undefined,
+      });
       return;
     }
     const suggestion = result.suggestions.find((s) => s.id === id);
@@ -727,6 +751,12 @@ export class AutoSplitSession {
   public toggleShown(id: string): void {
     if (this.snapshot.stale) return;
     this.set({ shownId: this.snapshot.shownId === id ? undefined : id });
+  }
+
+  /** "Show part": highlight the faces this recognized part was grounded to, or stop. One at a time. */
+  public togglePartShown(id: string): void {
+    if (this.snapshot.stale) return;
+    this.set({ shownPartId: this.snapshot.shownPartId === id ? undefined : id });
   }
 
   /** The user's correction of which components belong to the selected suggestion. */

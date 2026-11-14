@@ -1,4 +1,9 @@
 import {
+  clearSemanticGrounding,
+  groundedFacesFor,
+  registerSemanticGrounding,
+} from './semantic-grounding';
+import {
   clearSemanticNativeFinalists,
   registerSemanticNativeFinalists,
 } from './semantic-native-finalists';
@@ -195,6 +200,7 @@ export const autoSplitRenderHandler: OperationHandler<'autosplit/render'> = asyn
   const mesh = resolveMesh(payload.source, payload.partId);
   refuseIfTooLarge(mesh);
   clearSemanticNativeFinalists();
+  clearSemanticGrounding();
   clearSemanticPreparation();
   if (payload.mode === 'semantic') {
     if (payload.scope === 'entire-model') {
@@ -308,6 +314,13 @@ export const autoSplitSuggestHandler: OperationHandler<'autosplit/suggest'> = as
       suggestions,
       qualified,
     );
+    registerSemanticGrounding(
+      payload.source,
+      payload.partId,
+      mesh,
+      cached.preparationId,
+      result.grounding,
+    );
     return Promise.resolve({
       value: {
         source: payload.source,
@@ -383,6 +396,32 @@ export const autoSplitComponentFacesHandler: OperationHandler<'autosplit/compone
   return Promise.resolve({
     value: { source: payload.source, partId: payload.partId, faces: out },
     transfer: [out.buffer],
+  });
+};
+
+export const autoSplitPartFacesHandler: OperationHandler<'autosplit/part-faces'> = (
+  payload,
+  context,
+) => {
+  context.throwIfCancelled();
+  const mesh = resolveMesh(payload.source, payload.partId);
+  const grounded = groundedFacesFor(payload.source, payload.partId, mesh, payload.suggestionId);
+  if (grounded.state === 'STALE')
+    throw invalidState('Find parts again before showing this part.', {
+      code: 'AUTO_SPLIT_SOURCE_STALE',
+    });
+  if (grounded.state === 'NOT_GROUNDED')
+    throw invalidState('This part was not tied to any faces of the model.', {
+      code: 'AUTO_SPLIT_PART_NOT_GROUNDED',
+    });
+  return Promise.resolve({
+    value: {
+      source: payload.source,
+      partId: payload.partId,
+      suggestionId: payload.suggestionId,
+      faces: grounded.faces,
+    },
+    transfer: [grounded.faces.buffer],
   });
 };
 

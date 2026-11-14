@@ -19,6 +19,8 @@ let current:
       confirmations: Map<string, NonNullable<Suggestion['boundaryConfirmation']>>;
       groups: Map<string, { key: string; opposite: boolean }>;
       winners: Map<string, NonNullable<Suggestion['plane']>>;
+      /** Groups whose every finalist failed the exact check: a COMPLETED analysis, remembered so it is not repeated. */
+      refused: Set<string>;
       parts: Set<string>;
       attempts: number;
       identified: Map<string, NonNullable<Suggestion['plane']>>;
@@ -68,6 +70,7 @@ export function registerSemanticNativeFinalists(
       ]),
     ),
     winners: new Map(),
+    refused: new Set(),
     parts: new Set(spent.partIds),
     attempts: spent.attempts,
     identified: new Map(
@@ -137,12 +140,26 @@ export function semanticNativePlan(
         /* Explicit refresh: no new fallback search budget. */
       },
     };
-  if (!c.parts.has(group.key) && c.parts.size >= c.policy.parts)
-    throw invalidState('No safe split found.', { code: 'SEMANTIC_NATIVE_BUDGET_EXHAUSTED' });
-  const remaining = Math.max(0, c.policy.attempts - c.attempts);
-  if (!remaining)
-    throw invalidState('No safe split found.', { code: 'SEMANTIC_NATIVE_BUDGET_EXHAUSTED' });
-  c.parts.add(group.key);
+  // A part whose every finalist already failed the exact check has had its analysis: say so again,
+  // do not repeat the work and do not call it a limit.
+  if (c.refused.has(group.key))
+    throw invalidState('No safe split found.', {
+      code: 'SEMANTIC_NATIVE_FINALISTS_REFUSED',
+      remembered: true,
+    });
+  /*
+   * ONE ENVELOPE PER SELECTION. Previewing a part is the user's own request for ONE bounded exact
+   * check of THAT part, so the allowance (`policy.attempts` checks of `policy.finalistsPerPart`
+   * finalists, one and one on a large model) belongs to the request, not to the whole analysis.
+   * Counting it across the analysis meant that on a 2,000,000-triangle model the first part
+   * previewed spent everything and every later part was refused as "No safe split found" without
+   * having been examined. Nothing here raises a ceiling: each request is bounded exactly as before,
+   * an outcome is remembered per part (`winners`, `refused`, at most one entry per suggestion, so at
+   * most 24), and the page releases the previous candidate before it asks for the next.
+   */
+  c.parts = new Set([group.key]);
+  c.attempts = 0;
+  const remaining = c.policy.attempts;
   const ordered = [...planes].sort(
     (a, b) =>
       Number(samePlane(b, payload.request.plane)) - Number(samePlane(a, payload.request.plane)),
@@ -150,8 +167,12 @@ export function semanticNativePlan(
   return {
     planes: ordered.slice(0, Math.min(c.policy.finalistsPerPart, remaining)),
     charge: (): void => {
+      // Unreachable while `planes` is bounded by `remaining`; kept as the typed guard that a limit is
+      // never worded as a finding.
       if (++c.attempts > c.policy.attempts)
-        throw invalidState('No safe split found.', { code: 'SEMANTIC_NATIVE_BUDGET_EXHAUSTED' });
+        throw invalidState('Auto Split reached its analysis limit for this part.', {
+          code: 'SEMANTIC_NATIVE_BUDGET_EXHAUSTED',
+        });
     },
   };
 }
@@ -224,4 +245,14 @@ export function semanticScopeBinding(
       JSON.stringify(semanticPlaneIdentity(identified)) ===
         JSON.stringify(semanticPlaneIdentity(plane)),
   };
+}
+
+/** Remembers that the exact check completed for this part and refused every finalist. */
+export function recordSemanticNativeRefusal(payload: SplitCreatePayload): void {
+  const c = current;
+  const id = payload.semanticQualification?.candidateId;
+  if (c === undefined || id === undefined) return;
+  if (c.key !== key(payload.source, payload.partId)) return;
+  const group = c.groups.get(id);
+  if (group !== undefined) c.refused.add(group.key);
 }

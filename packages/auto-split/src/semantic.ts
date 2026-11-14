@@ -71,10 +71,12 @@ import { rasteriseView, shadeView, SUPERSAMPLE, type Raster } from './raster';
 import { encodePng, type Deflate } from './png';
 import { NO_CHECKPOINT, CHECKPOINT_STRIDE, type Checkpoint } from './checkpoint';
 import {
+  GroundingState,
   SuggestionOperation,
   SuggestionStatus,
   SuggestionReason,
   type Suggestion,
+  type SuggestionGrounding,
   type SuggestionResult,
 } from './suggestions';
 export const SEMANTIC_WORK_LIMITS = Object.freeze({
@@ -430,7 +432,21 @@ export interface SemanticEvidence {
   }[];
   readonly reason: string;
 }
+/**
+ * THE FACES ONE RECOGNIZED PART WAS GROUNDED TO, kept for display. A face is in the set when, in at least
+ * one view the service outlined for the part, its pixels fall inside that outline. The set is bit-packed
+ * (one bit a face), so a part of two million faces costs 250 KB and a full semantic answer (at most 24
+ * parts) about 6 MB. It lives in the worker beside the preparation it was computed from and is released
+ * with it; the page only ever receives face indices for a highlight.
+ */
+export interface GroundedRegion {
+  readonly faceBits: Uint32Array;
+  readonly faces: number;
+  readonly views: number;
+}
 export interface SemanticDecomposition extends SuggestionResult {
+  /** Grounded face sets by suggestion id. A part that no outline reached has no entry. */
+  readonly grounding: ReadonlyMap<string, GroundedRegion>;
   readonly complementaryPairs?: readonly ComplementarySiblingPair[];
   readonly ambiguousComplementaryPairs?: readonly string[];
   readonly complementaryPairingDiagnostic?: 'AMBIGUOUS_COMPLEMENTARY_PAIR';
@@ -530,6 +546,16 @@ function instanceGroups(
   return groups;
 }
 /** No arbitrary surface operation: unsupported local cuts are explicit future candidates only. */
+/** The scalar grounding facts for one suggestion; a part no outline reached is NOT_GROUNDED, never guessed. */
+function groundingFactsFor(
+  id: string,
+  regions: ReadonlyMap<string, GroundedRegion>,
+): SuggestionGrounding {
+  const region = regions.get(id);
+  return region === undefined
+    ? { state: GroundingState.NotGrounded, faces: 0, views: 0 }
+    : { state: GroundingState.Grounded, faces: region.faces, views: region.views };
+}
 export function decomposeSemantic(
   prepared: PreparedSemanticGeometry,
   raw: unknown,
@@ -572,6 +598,7 @@ export function decomposeSemantic(
     },
   };
   const localPlanes = new Map<string, LocalPlaneProposal>();
+  const groundedRegions = new Map<string, GroundedRegion>();
   for (const part of answer.parts) {
     checkpoint();
     const planeStarted = Date.now();
@@ -854,6 +881,18 @@ export function decomposeSemantic(
         );
       if ((mask[f] ?? 0) > 0) visibleFaces++;
       if (bits(mask[f] ?? 0) >= 2) multiViewFaces++;
+    }
+    if (visibleFaces > 0) {
+      // The same per-face view mask the correspondence above was scored from, packed and kept.
+      const faceBits = new Uint32Array(Math.ceil(geometry.faceCount / 32));
+      let viewUnion = 0;
+      for (let f = 0; f < geometry.faceCount; f++) {
+        const m = mask[f] ?? 0;
+        if (m === 0) continue;
+        viewUnion |= m;
+        faceBits[f >>> 5] = (faceBits[f >>> 5] ?? 0) | (1 << (f & 31));
+      }
+      groundedRegions.set(part.id, { faceBits, faces: visibleFaces, views: bits(viewUnion) });
     }
     const sourceShare = ranks.reduce((s, r) => s + required(facts[r], 'facts[r]').areaShare, 0);
     if (sourceShare >= 0.995 || sourceShare <= 0) ranks = [];
@@ -1785,7 +1824,11 @@ export function decomposeSemantic(
       ? { complementaryPairingDiagnostic: complementary.diagnostic }
       : {}),
     reservations: reservation.reservations,
-    suggestions: published,
+    grounding: groundedRegions,
+    suggestions: published.map((s) => ({
+      ...s,
+      grounding: groundingFactsFor(s.id, groundedRegions),
+    })),
     candidates: published.map((s) => ({
       id: s.id,
       label: s.label,

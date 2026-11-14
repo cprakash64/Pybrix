@@ -172,13 +172,41 @@ describe('errors', () => {
   });
 });
 
-it('distinguishes unsupported mapping and missing proposal from confirmed fusion', () => {
+it('distinguishes unsupported mapping, a missing proposal and confirmed fusion, and none says "no safe split"', () => {
+  // v0.7.1: "No safe split found" is a finding about a cut that was proposed and examined. A part
+  // nothing was proposed for, one built into the body and one that could not be isolated are each
+  // their own state, so each reads as that state.
   expect(describeSemanticUnavailable('MAPPING_UNCERTAIN')).toBe(
     "Couldn't isolate this part reliably",
   );
-  expect(describeSemanticUnavailable('NO_REALIZATION_PROPOSAL')).toBe('No safe split found');
-  expect(describeSemanticUnavailable(undefined)).toBe('No safe split found');
-  expect(describeSemanticUnavailable('CONFIRMED_FUSED')).toBe('Part of the body');
+  expect(describeSemanticUnavailable('NO_REALIZATION_PROPOSAL')).toBe('No cut suggested');
+  expect(describeSemanticUnavailable(undefined)).toBe('No cut suggested');
+  expect(describeSemanticUnavailable('CONFIRMED_FUSED')).toBe('Built into the body');
+  for (const diagnostic of [
+    'MAPPING_UNCERTAIN',
+    'NO_REALIZATION_PROPOSAL',
+    'CONFIRMED_FUSED',
+    undefined,
+  ] as const)
+    expect(describeSemanticUnavailable(diagnostic)).not.toMatch(/no safe split/i);
+});
+
+it('a semantic part nothing was proposed for is not reported as examined and found unsafe', () => {
+  const noProposal = suggestion({
+    family: 'semantic',
+    operation: SuggestionOperation.None,
+    status: SuggestionStatus.Unavailable,
+    diagnostic: 'NO_REALIZATION_PROPOSAL',
+  });
+  expect(describeStatus(noProposal, true).label).toBe('No cut suggested');
+  // A cut WAS proposed and the engine judged it unsafe: that is the finding the phrase names.
+  const unsafeCut = suggestion({
+    family: 'semantic',
+    operation: SuggestionOperation.Plane,
+    status: SuggestionStatus.Unavailable,
+    quality: 'UNSAFE',
+  });
+  expect(describeStatus(unsafeCut, true).label).toBe('No safe split found');
 });
 
 it('distinguishes a semantic suggestion from final native/component readiness', () => {

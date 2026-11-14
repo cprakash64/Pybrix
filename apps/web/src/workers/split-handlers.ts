@@ -7,6 +7,7 @@ import {
 import { semanticScopeBinding } from './semantic-native-finalists';
 import { qualifySemanticFinalists } from '@cadfixer/auto-split';
 import {
+  recordSemanticNativeRefusal,
   semanticNativePlan,
   recordSemanticNativeWinner,
   recordBoundaryPreview,
@@ -207,13 +208,15 @@ export const splitCreateHandler: OperationHandler<'split/create'> = async (paylo
       },
     },
   );
-  if (!qualified)
+  if (!qualified) {
+    recordSemanticNativeRefusal(payload);
     throw invalidState('No safe split found.', {
       code: 'SEMANTIC_NATIVE_FINALISTS_REFUSED',
       attempts: nativeAttempts,
       failures: nativeFailures,
       finalists: plan.planes.length,
     });
+  }
   const { value, ...metrics } = qualified;
   if (!recordSemanticNativeWinner(payload, qualified.plane)) {
     splitCandidates.discard(value.value.candidate);

@@ -29,6 +29,7 @@ import {
 } from './geometry-edit-handlers';
 import {
   autoSplitComponentFacesHandler,
+  autoSplitPartFacesHandler,
   autoSplitExtractCreateHandler,
   autoSplitReleaseHandler,
   autoSplitRenderHandler,
@@ -119,6 +120,7 @@ host.register('autosplit/release', autoSplitReleaseHandler);
 host.register('autosplit/render', autoSplitRenderHandler);
 host.register('autosplit/suggest', autoSplitSuggestHandler);
 host.register('autosplit/component-faces', autoSplitComponentFacesHandler);
+host.register('autosplit/part-faces', autoSplitPartFacesHandler);
 host.register('autosplit/extract-create', autoSplitExtractCreateHandler);
 host.register('texture/create', textureCreateHandler);
 host.register('texture/select', textureSelectHandler);

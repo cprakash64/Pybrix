@@ -600,6 +600,27 @@ function Row({
                             ? "Can't separate this safely"
                             : 'No separate part found'}
       </p>
+      {row.suggestion.family === 'semantic' && !auto.stale ? (
+        <div className="auto-row__part" data-testid={`auto-row-grounding-${row.id}`}>
+          {row.grounded || row.partShown ? (
+            <button
+              type="button"
+              className="secondary-action auto-row__button"
+              aria-pressed={row.partShown}
+              disabled={auto.stale}
+              onClick={() => {
+                auto.togglePartShown(row.id);
+              }}
+              data-testid={`auto-showpart-${row.id}`}
+            >
+              {row.partShown ? AUTO_SPLIT_COPY.hidePart : AUTO_SPLIT_COPY.showPart}
+            </button>
+          ) : null}
+          <p className="auto-row__note" data-grounding={row.grounded ? 'grounded' : 'not-grounded'}>
+            {row.grounded ? AUTO_SPLIT_COPY.groundedNote : AUTO_SPLIT_COPY.notGroundedNote}
+          </p>
+        </div>
+      ) : null}
       {row.suggestion.reviewAlternative ? (
         <p data-testid={`auto-review-context-${row.id}`}>
           Review this physical alternative. Its structural scope is not automatically verified.

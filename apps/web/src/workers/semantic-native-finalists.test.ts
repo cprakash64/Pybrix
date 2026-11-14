@@ -1,5 +1,6 @@
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
 import { describe, it, expect } from 'vitest';
+import { isAppError } from '@cadfixer/shared';
 import { box } from '@cadfixer/auto-split/fixtures';
 import {
   SuggestionOperation,
@@ -13,6 +14,7 @@ import {
   semanticNativePlan,
   clearSemanticNativeFinalists,
   recordSemanticNativeWinner,
+  recordSemanticNativeRefusal,
   recordBoundaryPreview,
   requireConfirmedBoundary,
 } from './semantic-native-finalists';
@@ -90,29 +92,73 @@ describe('revision-scoped scalar native finalist plan', () => {
       ).planes[0],
     ).toEqual(planes[0]);
   });
-  it('caps native work to six attempts and three distinct parts per analysis', () => {
+  /*
+   * v0.7.1: the allowance is PER SELECTION. It used to be counted across the whole analysis, so on a
+   * large model the first part previewed spent everything and every later part was refused with the
+   * words "No safe split found" without ever being examined. These tests hold the new contract.
+   */
+  const codeOf = (action: () => unknown): { code: unknown; message: string } => {
+    try {
+      action();
+    } catch (error) {
+      if (isAppError(error)) return { code: error.details.code, message: error.message };
+      throw error;
+    }
+    throw new Error('expected the action to throw');
+  };
+  it('bounds ONE request to six attempts of three finalists, and each part gets its own request', () => {
     const mesh = box([-1, -1, -1], [1, 1, 1]);
     registerSemanticNativeFinalists(source, 'part', mesh, 7, suggestions);
-    for (const id of ['a', 'b', 'c']) {
+    // Four different parts in turn: every one is examined, none is refused for the others' sake.
+    for (const id of ['a', 'b', 'c', 'd']) {
       const plan = planFor(payload(id), mesh);
-      plan.charge();
-      plan.charge();
+      expect(plan.planes).toHaveLength(3);
+      for (let i = 0; i < 6; i++) plan.charge();
     }
-    expect(() => planFor(payload('d'), mesh)).toThrow();
-    expect(() => {
-      planFor(payload('a'), mesh).charge();
-    }).toThrow();
+    // The bound inside one request is unchanged: a seventh attempt is a LIMIT, and says so.
+    const plan = planFor(payload('a'), mesh);
+    for (let i = 0; i < 6; i++) plan.charge();
+    const seventh = codeOf(() => {
+      plan.charge();
+    });
+    expect(seventh.code).toBe('SEMANTIC_NATIVE_BUDGET_EXHAUSTED');
+    expect(seventh.message).not.toMatch(/no safe split/i);
   });
-  it('near-2M models get one candidate and one native attempt, never three truck cuts', () => {
+  it('near-2M models: one candidate and one native attempt PER SELECTION, never three truck cuts', () => {
     const mesh = { ...box([-1, -1, -1], [1, 1, 1]), indices: new Uint32Array(3 * 1_999_999) };
     registerSemanticNativeFinalists(source, 'part', mesh, 7, suggestions);
     const plan = planFor(payload(), mesh);
     expect(plan.planes).toHaveLength(1);
     plan.charge();
-    expect(() => {
+    // Inside the request the bound is exactly as before, and it is a limit, not a finding.
+    const second = codeOf(() => {
       plan.charge();
-    }).toThrow();
-    expect(() => planFor(payload('b'), mesh)).toThrow();
+    });
+    expect(second.code).toBe('SEMANTIC_NATIVE_BUDGET_EXHAUSTED');
+    expect(second.message).not.toMatch(/no safe split/i);
+    // A DIFFERENT part is a new selection with its own bounded envelope: examined, not refused.
+    const other = planFor(payload('b'), mesh);
+    expect(other.planes).toHaveLength(1);
+  });
+  it('repeated selection accumulates nothing: a hundred requests across four parts stay one candidate each', () => {
+    const mesh = { ...box([-1, -1, -1], [1, 1, 1]), indices: new Uint32Array(3 * 1_999_999) };
+    registerSemanticNativeFinalists(source, 'part', mesh, 7, suggestions);
+    for (let i = 0; i < 100; i++) {
+      const plan = planFor(payload(['a', 'b', 'c', 'd'][i % 4]), mesh);
+      expect(plan.planes).toHaveLength(1);
+      plan.charge();
+    }
+  });
+  it('a part whose every finalist was refused stays a COMPLETED analysis, repeated without work', () => {
+    const mesh = box([-1, -1, -1], [1, 1, 1]);
+    registerSemanticNativeFinalists(source, 'part', mesh, 7, suggestions);
+    planFor(payload('a'), mesh);
+    recordSemanticNativeRefusal(payload('a'));
+    const again = codeOf(() => planFor(payload('a'), mesh));
+    expect(again.code).toBe('SEMANTIC_NATIVE_FINALISTS_REFUSED');
+    expect(again.message).toBe('No safe split found.');
+    // Another part is unaffected.
+    expect(planFor(payload('b'), mesh).planes).toHaveLength(3);
   });
   it('an explicit later connector Preview rechecks only the qualified winner without fallback search', () => {
     const mesh = box([-1, -1, -1], [1, 1, 1]);

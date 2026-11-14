@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
+  GroundingState,
   SuggestionOperation,
   SuggestionStatus,
   sameSemanticPlane,
@@ -55,6 +56,13 @@ export interface AutoSplitRow {
   /** True when Preview and Edit may be used: the part is splittable and the suggestion has a split to offer. */
   readonly executable: boolean;
   readonly shown: boolean;
+  /**
+   * The service's outline for this part was tied to faces of the model, so "Show part" has something
+   * true to draw. Independent of `executable`: a part with no safe split can still be inspected.
+   */
+  readonly grounded: boolean;
+  /** "Show part" is on for this row. */
+  readonly partShown: boolean;
   readonly selected: boolean;
   readonly suggestion: Suggestion;
 }
@@ -116,6 +124,8 @@ export interface AutoSplitControls {
   readonly components: readonly AutoSplitComponentRow[];
   readonly toggleComponent: (rank: number) => void;
   readonly toggleShown: (id: string) => void;
+  /** Highlights the faces a recognized part was grounded to, or stops. Display only; needs no split. */
+  readonly togglePartShown: (id: string) => void;
   /** Loads the suggestion into Manual Split's controls and asks for its preview. */
   readonly preview: (id: string) => void;
   readonly scopePreview?: { readonly candidateId: string };
@@ -257,13 +267,15 @@ export function useAutoSplit(
           suggestion.status !== SuggestionStatus.Unavailable &&
           suggestion.operation !== SuggestionOperation.None,
         shown: snap.shownId === suggestion.id,
+        grounded: !stale && suggestion.grounding?.state === GroundingState.Grounded,
+        partShown: snap.shownPartId === suggestion.id,
         selected: snap.selectedId === suggestion.id,
         suggestion:
           stale && suggestion.quality !== undefined
             ? { ...suggestion, quality: 'STALE' as const }
             : suggestion,
       })),
-    [result, snap.selectedId, snap.shownId, stale, splitPhase],
+    [result, snap.selectedId, snap.shownId, snap.shownPartId, stale, splitPhase],
   );
   const selected = rows.find((row) => row.selected);
   const scopeReceipt = split.preview?.semanticQualification?.scopeConfirmation;
@@ -535,6 +547,16 @@ export function useAutoSplit(
     [loadSuggestedPlane, rows, session, stale],
   );
 
+  const togglePartShown = useCallback(
+    (id: string): void => {
+      const row = rows.find((candidate) => candidate.id === id);
+      // Only a row that was tied to faces can be shown, and only while its analysis is current.
+      if (row === undefined || stale || (!row.grounded && !row.partShown)) return;
+      session.togglePartShown(id);
+    },
+    [rows, session, stale],
+  );
+
   /* ---------------------------------------------------------- tabs -- */
 
   const setTab = useCallback(
@@ -635,10 +657,72 @@ export function useAutoSplit(
       operation.cancel();
     };
   }, [geometry, wantedHandle, wantedKey, wantedPart, wantedRanks]);
+  /*
+   * SHOW PART. The faces one recognized part was grounded to, asked of the worker by suggestion id.
+   * It reads the current analysis only, changes nothing and never reframes the camera. A part is
+   * shown on its own say-so: no split candidate, no preview and no Manual Split control is involved.
+   */
+  const [partHighlightState, setPartHighlightState] = useState<
+    { readonly key: string; readonly faces: Uint32Array; readonly revision: number } | undefined
+  >(undefined);
+  /*
+   * The result is read for the document, revision and part it was MADE for, in the same render that
+   * asks for faces. The session notices a replaced document one render later; without this gate that
+   * render would ask the worker for model A's part against model B's handle.
+   */
+  const resultIsCurrent =
+    result !== undefined &&
+    model !== undefined &&
+    part !== undefined &&
+    result.documentId === model.handle.documentId &&
+    result.revision === model.handle.revision &&
+    result.partId === part.partId;
+  const shownPartRow = rows.find((row) => row.partShown && row.grounded);
+  const shownPartKey =
+    shownPartRow === undefined ||
+    model === undefined ||
+    part === undefined ||
+    stale ||
+    !resultIsCurrent
+      ? undefined
+      : `${model.handle.documentId}@${String(model.revision)}/${part.partId}/${shownPartRow.id}`;
+  const shownPartId = shownPartRow?.id;
+  useEffect(() => {
+    const client = geometry;
+    if (
+      shownPartKey === undefined ||
+      shownPartId === undefined ||
+      wantedHandle === undefined ||
+      wantedPart === undefined ||
+      client === undefined
+    )
+      return;
+    let current = true;
+    const operation = client.autoSplitPartFaces(wantedHandle, wantedPart, shownPartId);
+    operation.promise.then(
+      (out) => {
+        if (current)
+          setPartHighlightState({
+            key: shownPartKey,
+            faces: out.faces,
+            revision: wantedHandle.revision,
+          });
+      },
+      () => {
+        if (current) setPartHighlightState(undefined);
+      },
+    );
+    return (): void => {
+      current = false;
+      operation.cancel();
+    };
+  }, [geometry, shownPartId, shownPartKey, wantedHandle, wantedPart]);
   const highlight =
-    wantedKey !== undefined && highlightState?.key === wantedKey
-      ? { faces: highlightState.faces, revision: highlightState.revision }
-      : undefined;
+    shownPartKey !== undefined && partHighlightState?.key === shownPartKey
+      ? { faces: partHighlightState.faces, revision: partHighlightState.revision }
+      : wantedKey !== undefined && highlightState?.key === wantedKey
+        ? { faces: highlightState.faces, revision: highlightState.revision }
+        : undefined;
 
   /* ------------------------------------------------------- outputs -- */
 
@@ -700,6 +784,7 @@ export function useAutoSplit(
     components,
     toggleComponent,
     toggleShown,
+    togglePartShown,
     preview,
     previewBoundary,
     ...(split.preview?.semanticQualification?.scopeConfirmation?.state === 'REQUIRED'

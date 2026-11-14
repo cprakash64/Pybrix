@@ -62,10 +62,17 @@ export const AUTO_SPLIT_COPY = {
   waitHint: 'Pybrix is looking for natural places to split your model.',
   localNote: 'Your model is not changed while Auto Split looks at it.',
 
-  resultsHeading: 'Parts found',
+  resultsHeading: 'Parts recognized',
   noSuggestions: 'Auto Split did not find parts it could suggest for this model.',
   show: 'Show on model',
   hide: 'Hide from model',
+  showPart: 'Show part',
+  hidePart: 'Hide part',
+  /** What "Show part" draws, and the limits of it. Never a claim about the whole part or about a split. */
+  groundedNote:
+    'Located on the model. Show part marks the surface the part-finding service outlined, as seen from six views; it is approximate.',
+  notGroundedNote:
+    'Not located on the model, so there is nothing to show. This is not a finding about splitting.',
   preview: 'Preview',
   edit: 'Edit',
   previewSelection: 'Preview selection',
@@ -148,7 +155,15 @@ export interface SuggestionStatusView {
  */
 export function describeStatus(suggestion: Suggestion, sourceReady: boolean): SuggestionStatusView {
   if (suggestion.status === SuggestionStatus.Unavailable)
-    return { label: 'No safe split found', tone: 'unavailable' };
+    return {
+      // "No safe split found" says a cut was proposed and examined. A part for which nothing was
+      // proposed, or that is part of one shell, or that could not be isolated reliably, says that.
+      label:
+        suggestion.family === 'semantic' && suggestion.operation === SuggestionOperation.None
+          ? describeSemanticUnavailable(suggestion.diagnostic)
+          : 'No safe split found',
+      tone: 'unavailable',
+    };
   if (!sourceReady) return { label: NOT_CLOSED_COPY.chip, tone: 'repair' };
   switch (suggestion.status) {
     case SuggestionStatus.NeedsBoundaryConfirmation:
@@ -305,11 +320,13 @@ export function allAutoSplitCopy(): readonly string[] {
 export function describeSemanticUnavailable(diagnostic: Suggestion['diagnostic']): string {
   switch (diagnostic) {
     case 'CONFIRMED_FUSED':
-      return 'Part of the body';
+      return 'Built into the body';
     case 'MAPPING_UNCERTAIN':
       return "Couldn't isolate this part reliably";
     case 'NO_REALIZATION_PROPOSAL':
     case undefined:
-      return 'No safe split found';
+      // No cut or selection was proposed, so none was checked: this is not a finding that no safe
+      // split exists.
+      return 'No cut suggested';
   }
 }

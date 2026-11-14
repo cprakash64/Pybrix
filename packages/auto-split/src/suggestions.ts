@@ -62,7 +62,31 @@ export interface SuggestedPlane {
   readonly normal: Vec3;
 }
 
+/**
+ * WHETHER A RECOGNIZED PART WAS TIED TO THE MODEL'S OWN FACES. Scalars only: the face set itself stays in
+ * the worker and is fetched, for display, by `autosplit/part-faces`. Recognition (the service named a part)
+ * is not grounding (Pybrix found faces for it), and neither is a split proposal.
+ *
+ * `GROUNDED` means the service's outline for this part, projected through the same renders the engine
+ * scored, covers visible faces. It is the surface seen from the six views inside the outline, so it is
+ * approximate and says nothing about faces nobody can see or about where a safe cut lies.
+ */
+export const GroundingState = {
+  Grounded: 'GROUNDED',
+  NotGrounded: 'NOT_GROUNDED',
+} as const;
+export type GroundingState = (typeof GroundingState)[keyof typeof GroundingState];
+export interface SuggestionGrounding {
+  readonly state: GroundingState;
+  /** Faces visible inside the service's outline in at least one view. */
+  readonly faces: number;
+  /** Views whose outline covered at least one face. */
+  readonly views: number;
+}
+
 export interface Suggestion {
+  /** Present on every semantic suggestion: see `SuggestionGrounding`. */
+  readonly grounding?: SuggestionGrounding;
   /** Original semantic execution permission; native success cannot upgrade it. */
   readonly semanticExecutionEligibility?: SemanticExecutionEligibility;
   /** Stable for one analysis: `head`, `left_arm`, `wheel:wheel_1`, `cab`, `cab_bed`... */

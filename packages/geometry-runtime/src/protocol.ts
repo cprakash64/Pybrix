@@ -271,6 +271,14 @@ export interface OperationMap {
     payload: AutoSplitComponentFacesPayload;
     result: AutoSplitComponentFacesResult;
   };
+  /**
+   * The faces a RECOGNIZED part was grounded to, for display only. Read-only: no document, revision,
+   * history entry, candidate or analysis budget is touched. Answers only for the current analysis.
+   */
+  'autosplit/part-faces': {
+    payload: AutoSplitPartFacesPayload;
+    result: AutoSplitPartFacesResult;
+  };
   'autosplit/extract-create': { payload: AutoSplitExtractPayload; result: SplitCreateResult };
   'texture/select': { payload: TextureSelectPayload; result: TextureSelectResult };
   'texture/layout': { payload: TextureCreatePayload; result: TextureLayoutResult };
@@ -423,6 +431,19 @@ export interface AutoSplitComponentFacesResult {
   readonly source: DocumentHandle;
   readonly partId: string;
   /** Source face indices of the selected components, ascending. Transferred. */
+  readonly faces: Uint32Array;
+}
+export interface AutoSplitPartFacesPayload {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  /** The suggestion (recognized part) whose grounded faces are wanted. */
+  readonly suggestionId: string;
+}
+export interface AutoSplitPartFacesResult {
+  readonly source: DocumentHandle;
+  readonly partId: string;
+  readonly suggestionId: string;
+  /** Source face indices inside the part's outline in at least one view, ascending. Transferred. */
   readonly faces: Uint32Array;
 }
 export interface AutoSplitExtractPayload {
