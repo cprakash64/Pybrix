@@ -24,7 +24,7 @@ async function cancelSplit(page: Page): Promise<void> {
   await page.getByTestId('split-cancel').click();
   await expect(page.getByTestId('split-workspace')).toBeHidden();
 }
-async function chooseConnector(page: Page, kind: 'pin' | 'dovetail'): Promise<void> {
+async function chooseConnector(page: Page, kind: 'pin'): Promise<void> {
   await revealControl(page, page.getByTestId(`split-connector-${kind}`));
   await page.getByTestId(`split-connector-${kind}`).check();
 }
@@ -102,17 +102,19 @@ test('7B browser flow 2: round pin split applies and exports both pieces', async
   expect(sorted[1]).toBe(sorted[0]?.replace(/_part_A\.stl$/, '_part_B.stl'));
 });
 
-test('7B browser flow 3: dovetail supports 90 degree orientation and Piece B male', async ({
+test('7B browser flow 3: no dovetail is offered, and a pin with Piece B as the male side applies', async ({
   page,
 }) => {
   await openHarness(page);
   await loadFixture(page, Fixture.SplitCubeMillimetre);
   await openSplit(page);
-  await chooseConnector(page, 'dovetail');
-  await page.getByTestId('split-dovetail-90').click();
+  // The dovetail cannot be assembled (connector audit N1), so it is not a choice at all.
+  await revealControl(page, page.getByTestId('split-connector-pin'));
+  await expect(page.getByTestId('split-connector-dovetail')).toHaveCount(0);
+  await chooseConnector(page, 'pin');
   await page.getByTestId('split-male-b').click();
   await preview(page);
-  await expect(page.getByTestId('split-result-connector')).toHaveText('Dovetail');
+  await expect(page.getByTestId('split-result-connector')).toHaveText('Round pins and sockets');
   await page.getByTestId('split-apply').click();
   await expect.poll(async () => (await readState(page)).partCount).toBe(2);
 });
@@ -276,7 +278,8 @@ test('7B-X10 Split preview, connectors, apply and piece exports stay on origin',
   await openSplit(page);
   await chooseConnector(page, 'pin');
   await preview(page);
-  await chooseConnector(page, 'dovetail');
+  await revealControl(page, page.getByTestId('split-male-b'));
+  await page.getByTestId('split-male-b').click();
   await preview(page);
   await page.getByTestId('split-apply').click();
   await expect.poll(async () => (await readState(page)).partCount).toBe(2);

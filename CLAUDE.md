@@ -1175,14 +1175,27 @@ lost`, `printable`, `watertight`, and the rest. **"The numbers are unchanged"
   viewport's former `moveEditPlaneAlongNormal` / `rotateEditPlane` were deleted
   because they held a second copy of the plane.
 - **ONLY WHAT STAGE 7B BUILDS.** One flat plane per split (XY / XZ / YZ plus one
-  bounded tilt), automatic placement only, None / round pins (1–4) / one
-  dovetail, connectors only for a millimetre document. No cut list, custom
+  bounded tilt), automatic placement only, None / round pins (1–4) —
+  the dovetail is NOT offered since v0.7.0, because it cannot be assembled
+  (`OfferedConnectorKind` excludes it; the engine type still names it) —
+  connectors only for a millimetre document. No cut list, custom
   plane, align-to-face, three-point plane, extra connector types, manual
   placement, pattern or margin control, bed fit or orientation.
 - **CLEARANCE IS STATED EXACTLY.** Pin: radial, socket Ø = pin Ø + 2 × clearance.
-  Dovetail: per side, slot width and length each + 2 × clearance.
-  `socketDiameter` / `dovetailSlot` mirror the engine and a test holds them
-  together.
+  `socketDiameter` mirrors the engine and a test holds them together.
+  `dovetailSlot` was removed from the interface with the dovetail card.
+- **THE EXPLODED VIEW IS PRESENTATION ONLY, DURING PREVIEW TOO (v0.7.0).**
+  `assemblyForSplitPreview` builds the preview's offsets with the SAME
+  `assemblyAfterSplit` that builds the applied view, so the two cannot drift. The
+  Assembled / Exploded flag is `previewExploded` in the store, separate from
+  `splitPreview`, so toggling rebuilds no scene. Offsets are drawn translations
+  of each part's matrix: never a part transform, never geometry, never read by
+  Apply or export. A boundary test keeps `assembly-presentation` out of
+  `runtime/`, `workers/` and `packages/`.
+- **THE CHECKS LINE STATES WHAT WAS DONE.** `describeSplitChecks`: a surface cut
+  (`volumeInterpretable === false`) never reads "closed; capped". The placement
+  note says the connector is checked against the cut face and that the wall
+  behind it is NOT measured.
 - **CROSS-SECTION FACTS COME FROM THE ENGINE AFTER A PREVIEW.** Area, outline
   (loop) count and a bounded outline are measured from Piece A's cap in
   `identifyCutSurface`; nothing is estimated during a drag. `loopCount` counts

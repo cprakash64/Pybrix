@@ -13,8 +13,8 @@ import { isLengthUnit } from '@cadfixer/shared';
  * WHAT THE ENGINE CAN DO, and therefore all this may offer (Stage 7B): ONE flat
  * plane per split, normal to X, Y or Z and tilted by one bounded angle; a
  * closed, manifold, consistently wound part; automatic connector placement
- * only; round pins (one to four) or one straight dovetail; connectors only for
- * a document that states millimetres. Nothing here offers a second cut, a
+ * only; round pins (one to four); connectors only for a document that
+ * states millimetres. Nothing here offers a second cut, a
  * custom normal, align-to-face, three-point planes, snap-fits, threads,
  * magnets, manual placement, a margin control, bed fitting or orientation.
  */
@@ -239,25 +239,35 @@ function unitSymbol(unit: string | undefined): string | undefined {
 
 /* --------------------------------------------------------- connectors -- */
 
+/** Every connector kind the ENGINE can report back (a result may name any of them). */
 export type ConnectorKind = 'none' | 'pin' | 'dovetail';
 
+/**
+ * The kinds the interface OFFERS. The dovetail is not among them: measured on the
+ * released engine (PYBRIX connector audit, finding N1) its tip is wider than its
+ * socket's mouth and the socket is closed along its length, so the two pieces
+ * cannot be assembled. Re-offering it needs a redesigned sliding joint with an
+ * entrance and a validated insertion path, not this shape.
+ */
+export type OfferedConnectorKind = Exclude<ConnectorKind, 'dovetail'>;
+
 export interface ConnectorOption {
-  readonly kind: ConnectorKind;
+  readonly kind: OfferedConnectorKind;
   readonly name: string;
   readonly detail: string;
 }
 
 /**
- * EXACTLY THE CONNECTORS THE ENGINE BUILDS. The reference shows eleven; CAD
- * Fixer's Stage 7B Boolean pipeline makes round pins with sockets and one
- * straight dovetail, and "None" is a real choice — a plain cut. Snap-fits,
- * threads, magnets, puzzle keys, tapered plugs, screw holes and keyed prisms
- * have no geometry behind them and have no card.
+ * EXACTLY THE CONNECTORS THE PRODUCT OFFERS. The reference shows eleven; the
+ * Stage 7B Boolean pipeline makes round pins with sockets, and "None" is a real
+ * choice — a plain cut. The straight dovetail the engine can still build is NOT
+ * offered, because its pieces cannot be assembled (see `OfferedConnectorKind`).
+ * Snap-fits, threads, magnets, puzzle keys, tapered plugs, screw holes and keyed
+ * prisms have no geometry behind them and have no card.
  */
 export const CONNECTOR_OPTIONS: readonly ConnectorOption[] = Object.freeze([
   { kind: 'none', name: 'None', detail: 'Plain cut' },
   { kind: 'pin', name: 'Round pin', detail: 'Pin + socket' },
-  { kind: 'dovetail', name: 'Dovetail', detail: 'Straight, one' },
 ]);
 
 export const PIN_COUNTS: readonly (1 | 2 | 3 | 4)[] = Object.freeze([1, 2, 3, 4]);
@@ -269,18 +279,6 @@ export const PIN_COUNTS: readonly (1 | 2 | 3 | 4)[] = Object.freeze([1, 2, 3, 4]
  */
 export function socketDiameter(pinDiameter: number, radialClearance: number): number {
   return pinDiameter + 2 * radialClearance;
-}
-
-/**
- * CLEARANCE IS PER SIDE FOR A DOVETAIL: the slot's width and length each grow
- * by twice the clearance. Mirrors `dovetailFemaleDimensions`.
- */
-export function dovetailSlot(
-  width: number,
-  length: number,
-  perSideClearance: number,
-): { readonly width: number; readonly length: number } {
-  return { width: width + 2 * perSideClearance, length: length + 2 * perSideClearance };
 }
 
 /** The engine's accepted dimension range (Stage 7B `dimension`). */
@@ -299,6 +297,16 @@ export function connectorsAvailable(unit: string | undefined): boolean {
 
 /* --------------------------------------------------------------- copy -- */
 
+/**
+ * What the Checks row may say. A surface cut has no solid to close, so it must not claim pieces
+ * were closed or capped; only `volumeInterpretable === false` selects the surface wording.
+ */
+export function describeSplitChecks(volumeInterpretable: boolean | undefined): string {
+  return volumeInterpretable === false
+    ? SPLIT_COPY.piecesValidatedSurface
+    : SPLIT_COPY.piecesValidated;
+}
+
 export const SPLIT_COPY = Object.freeze({
   planeSection: 'Cut plane',
   planeGroup: 'Cut plane orientation',
@@ -307,13 +315,14 @@ export const SPLIT_COPY = Object.freeze({
   resetPlane: 'Reset plane',
   viewGroup: 'Show',
   piecesValidated: 'Both pieces closed; cut faces capped',
+  piecesValidatedSurface: 'Surface cut: the pieces are open surfaces and no cut face was capped.',
   flipPlane: 'Swap sides',
   flipHint: 'Swaps Piece A and Piece B. The cut itself does not move.',
   connectorsSection: 'Connectors',
   connectorsMeta: 'Placed automatically',
   connectorsGroup: 'Connector type',
   placementNote:
-    'Placed automatically on the cut face, inside its material and away from its edges. There is no manual placement.',
+    'Placed automatically on the cut face, away from its edges. Pybrix checks that the connector sits within the cut face; it does not measure the wall behind it. There is no manual placement.',
   connectorsNeedMillimetres:
     'Connectors have physical sizes, so Pybrix needs to know what this model’s numbers mean. Choose its units to continue.',
   fitNote: 'Printers vary: 0.2 mm is a starting point, not a guarantee of fit.',

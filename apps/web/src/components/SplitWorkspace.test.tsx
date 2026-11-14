@@ -223,7 +223,7 @@ describe('the cut plane', () => {
 });
 
 describe('connectors', () => {
-  it('shows only None, round pin and dovetail, as a labelled radio group', () => {
+  it('shows only None and round pin — no dovetail — as a labelled radio group', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
@@ -232,8 +232,10 @@ describe('connectors', () => {
     );
     const group = screen.getByRole('radiogroup', { name: 'Connector type' });
     const radios = [...group.querySelectorAll('input[type="radio"]')];
-    expect(radios).toHaveLength(3);
+    expect(radios).toHaveLength(2);
     expect(screen.getByTestId('split-connector-none')).toBeChecked();
+    expect(screen.queryByTestId('split-connector-dovetail')).toBeNull();
+    expect(group).not.toHaveTextContent(/dovetail/i);
     expect(group).not.toHaveTextContent(/snap|thread|magnet|puzzle|screw|keyed/i);
   });
 
@@ -242,7 +244,6 @@ describe('connectors', () => {
       load(store, undefined);
     });
     expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
-    expect(screen.getByTestId('split-connector-dovetail')).toBeEnabled();
     expect(screen.queryByTestId('split-unit-interpretation')).toBeNull();
     fireEvent.click(screen.getByTestId('split-connector-pin'));
     expect(screen.getByTestId('split-preview')).toBeDisabled();
@@ -286,18 +287,6 @@ describe('connectors', () => {
     );
     fireEvent.change(screen.getByTestId('split-clearance'), { target: { value: '0.3' } });
     expect(screen.getByTestId('split-socket-size')).toHaveTextContent('socket Ø 4.6 mm');
-  });
-
-  it('shows the dovetail slot the clearance produces, and its orientation choice', () => {
-    mount((store) => {
-      load(store, 'millimeter');
-    });
-    fireEvent.click(
-      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
-    );
-    fireEvent.click(screen.getByTestId('split-connector-dovetail'));
-    expect(screen.getByTestId('split-slot-size')).toHaveTextContent('Slot 8.4 × 12.4 mm');
-    expect(screen.getByRole('group', { name: 'Dovetail orientation' })).toBeInTheDocument();
   });
 
   it('refuses to preview a dimension the engine would refuse, and names it', () => {

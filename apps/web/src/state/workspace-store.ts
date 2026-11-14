@@ -1002,8 +1002,20 @@ export interface WorkspaceState {
         readonly source: DocumentHandle;
         readonly render: DocumentRenderSnapshot;
         readonly parts: readonly PartDescriptor[];
+        /**
+         * How these pieces would be arranged if the preview were applied: DISPLAY ONLY, built from the
+         * worker's preview result by the same code that builds the applied view. It is part of the
+         * preview, so every path that discards the preview discards it too.
+         */
+        readonly assembly?: AssemblyPresentation;
       }
     | undefined;
+  /**
+   * Whether the split PREVIEW is shown exploded. A purely visual choice kept apart from `splitPreview`
+   * so changing it never changes that object's identity — the viewport rebuilds its scene when the
+   * preview changes, and a toggle must not cause one. It touches no document, revision, history or worker.
+   */
+  readonly previewExploded: boolean;
   readonly splitPlane:
     | {
         readonly origin: readonly [number, number, number];
@@ -1142,6 +1154,7 @@ const INITIAL_STATE: WorkspaceState = {
   importedHandle: undefined,
   activePartId: undefined,
   splitPreview: undefined,
+  previewExploded: false,
   splitPlane: undefined,
   texturePreview: undefined,
   textureSelection: undefined,
@@ -1345,10 +1358,18 @@ export class WorkspaceStore {
     source: DocumentHandle,
     render: DocumentRenderSnapshot,
     parts: readonly PartDescriptor[],
+    assembly?: AssemblyPresentation,
   ): boolean {
     if (!sameHandle(this.state.model?.handle, source)) return false;
-    this.update({ splitPreview: { source, render, parts } });
+    this.update({
+      splitPreview: { source, render, parts, ...(assembly ? { assembly } : {}) },
+    });
     return true;
+  }
+
+  /** Shows the split preview exploded or assembled. Presentation only: nothing but this flag changes. */
+  public setPreviewExploded(exploded: boolean): void {
+    if (this.state.previewExploded !== exploded) this.update({ previewExploded: exploded });
   }
 
   public clearSplitPreview(): void {

@@ -135,8 +135,8 @@ test('A: the overview shows the real cut controls, range and plane', async ({ pa
   await revealControl(page, page.getByTestId('split-connector-none'));
   await expect(
     page.getByRole('radiogroup', { name: 'Connector type' }).getByRole('radio'),
-  ).toHaveCount(3);
-  await expect(page.getByTestId('split-workspace')).not.toContainText(/Add cut|Dovetail cut/);
+  ).toHaveCount(2);
+  await expect(page.getByTestId('split-workspace')).not.toContainText(/Add cut|Dovetail/);
   await expect(page.getByTestId('split-inspector-plane')).toHaveText('XY · Z = 40.0 mm');
   expect(errors).toEqual([]);
 });
@@ -237,6 +237,43 @@ test('D/E: a real split previews in two colours, applies as two parts, and parts
   await page.mouse.click(base.x - (tip.x - base.x) * 2.2, base.y - (tip.y - base.y) * 2.2);
   await expect(page.getByTestId('split-inspector-part')).toHaveText('Box B');
   await expect(page.getByTestId('split-inspector-volume')).toContainText('24,000 mm³');
+  expect(errors).toEqual([]);
+});
+
+test('a split PREVIEW can be shown exploded without touching the model, and Apply is unaffected', async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.goto('/');
+  await openBox(page);
+  await enterSplit(page);
+  await canvas(page).evaluate((element) => {
+    element.dataset.probe = 'original';
+  });
+
+  await previewSplit(page);
+  // The preview starts assembled; the control is offered before anything is applied.
+  await expect(page.getByTestId('assembly-view')).toBeVisible();
+  await expect(canvas(page)).toHaveAttribute('data-exploded-parts', '0');
+
+  await page.getByTestId('assembly-exploded').click();
+  await expect(canvas(page)).toHaveAttribute('data-exploded-parts', '2');
+  await page.getByTestId('assembly-assembled').click();
+  await expect(canvas(page)).toHaveAttribute('data-exploded-parts', '0');
+  await page.getByTestId('assembly-exploded').click();
+  await expect(canvas(page)).toHaveAttribute('data-exploded-parts', '2');
+
+  // Presentation only: the document is untouched, and the scene was never rebuilt.
+  await expect(page.getByTestId('fact-triangles')).toHaveText('12');
+  await expect(page.getByTestId('split-preview-label')).toBeVisible();
+  await expect(canvas(page)).toHaveAttribute('data-probe', 'original');
+
+  // Apply with the preview exploded commits the same two parts as with it assembled.
+  await page.getByTestId('split-apply').click();
+  await expect(page.getByTestId('split-export')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('split-inspector-part')).toHaveText('Box A');
+  await expect(page.getByTestId('split-piece-a')).toContainText('24,000 mm³');
+  await expect(page.getByTestId('split-piece-b')).toContainText('24,000 mm³');
   expect(errors).toEqual([]);
 });
 

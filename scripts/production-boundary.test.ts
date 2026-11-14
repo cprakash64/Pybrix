@@ -2121,3 +2121,50 @@ describe('no public control can change the repair work limit — REPAIR-CORE-07'
     expect(entry).not.toMatch(/RepairWorkCeilingProvider/);
   });
 });
+
+describe('an exploded view is presentation only — RELEASE-1', () => {
+  /*
+   * The assembly presentation turns a split result into display offsets. Anything that reads or writes
+   * geometry, builds an export, runs in a worker or lives in a package must never see it, so an
+   * explosion offset cannot leak into a document, a transform, a file or a transaction.
+   */
+  const importers = (): string[] =>
+    [
+      ...sourceFilesUnder(join(REPO_ROOT, 'apps', 'web', 'src')),
+      ...sourceFilesUnder(join(REPO_ROOT, 'packages')),
+    ]
+      .filter((file) => !/\.test\.(ts|tsx)$/.test(file))
+      .filter((file) => readFileSync(file, 'utf8').includes('assembly-presentation'))
+      .map((file) => relative(REPO_ROOT, file).split(sep).join('/'));
+
+  it('is imported only by the page state and the viewport panel', () => {
+    expect(importers().sort()).toEqual([
+      'apps/web/src/components/ViewportPanel.tsx',
+      'apps/web/src/state/use-split-workflow.ts',
+      'apps/web/src/state/workspace-store.ts',
+    ]);
+    for (const file of importers()) {
+      expect(file).toMatch(/^apps\/web\/src\/(state|components)\//);
+      expect(file).not.toMatch(/\/(runtime|workers)\//);
+    }
+  });
+
+  it('no export, worker, runtime or package module can reach an explosion offset', () => {
+    const reachable = importers().filter((file) =>
+      /^(packages\/|apps\/web\/src\/(runtime|workers)\/)/.test(file),
+    );
+    expect(reachable).toEqual([]);
+  });
+
+  it("the viewport applies offsets as a translation of each part's drawn matrix and nothing else", () => {
+    const viewport = readFileSync(
+      join(REPO_ROOT, 'apps', 'web', 'src', 'viewport', 'create-viewport.ts'),
+      'utf8',
+    );
+    const body = viewport.slice(viewport.indexOf('const setAssemblyOffsets'));
+    const block = body.slice(0, body.indexOf('const frameFrom'));
+    expect(block).toContain('mesh.matrix.copy(partMatrix(part.transform))');
+    expect(block).toMatch(/mesh\.matrix\.elements\[12\] \+= offset\[0\]/);
+    expect(block).not.toMatch(/geometry|positions|setModel|\.transform\s*=/);
+  });
+});

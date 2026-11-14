@@ -4,7 +4,7 @@ import {
   SplitCommitRecoveryRequired,
 } from '../runtime/split-commit-transaction';
 import { sameSemanticPlane } from '@cadfixer/auto-split';
-import { preservesAssemblyInterfaces } from './assembly-presentation';
+import { assemblyForSplitPreview, preservesAssemblyInterfaces } from './assembly-presentation';
 import { flushSync } from 'react-dom';
 import { afterPaint } from './after-paint';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -30,7 +30,7 @@ import {
   offsetAfterNormalDrag,
   splitPlaneFor,
   splitRange,
-  type ConnectorKind,
+  type OfferedConnectorKind,
   type SplitAxis,
   type SplitPlaneSettings,
   type SplitRange,
@@ -71,15 +71,12 @@ export const SplitPhase = {
 export type SplitPhase = (typeof SplitPhase)[keyof typeof SplitPhase];
 
 export interface ConnectorSettings {
-  readonly kind: ConnectorKind;
+  readonly kind: OfferedConnectorKind;
   readonly count: 1 | 2 | 3 | 4;
   readonly diameter: number;
   readonly depth: number;
   readonly clearance: number;
   readonly maleSide: 'A' | 'B';
-  readonly dovetailWidth: number;
-  readonly dovetailLength: number;
-  readonly dovetailAngle: 0 | 90;
 }
 
 export const DEFAULT_CONNECTOR: ConnectorSettings = Object.freeze({
@@ -89,9 +86,6 @@ export const DEFAULT_CONNECTOR: ConnectorSettings = Object.freeze({
   depth: 6,
   clearance: 0.2,
   maleSide: 'A',
-  dovetailWidth: 8,
-  dovetailLength: 12,
-  dovetailAngle: 0,
 });
 
 const NO_RANKS: readonly number[] = Object.freeze([]);
@@ -234,8 +228,6 @@ export function connectorRequest(
           diameter: toCoordinates(rawSettings.diameter),
           depth: toCoordinates(rawSettings.depth),
           clearance: toCoordinates(rawSettings.clearance),
-          dovetailWidth: toCoordinates(rawSettings.dovetailWidth),
-          dovetailLength: toCoordinates(rawSettings.dovetailLength),
         };
   switch (settings.kind) {
     case 'none':
@@ -249,16 +241,6 @@ export function connectorRequest(
         clearance: settings.clearance,
         maleSide: settings.maleSide,
       };
-    case 'dovetail':
-      return {
-        kind: 'dovetail',
-        width: settings.dovetailWidth,
-        depth: settings.depth,
-        length: settings.dovetailLength,
-        clearance: settings.clearance,
-        maleSide: settings.maleSide,
-        orientationDegrees: settings.dovetailAngle,
-      };
   }
 }
 
@@ -268,19 +250,11 @@ export function connectorProblemOf(
   unit?: LengthUnit,
 ): string | undefined {
   if (settings.kind === 'none') return undefined;
-  const checks: [number, string, boolean][] =
-    settings.kind === 'pin'
-      ? [
-          [settings.diameter, 'Pin diameter', false],
-          [settings.depth, 'Depth', false],
-          [settings.clearance, 'Clearance', true],
-        ]
-      : [
-          [settings.dovetailWidth, 'Width', false],
-          [settings.dovetailLength, 'Length', false],
-          [settings.depth, 'Depth', false],
-          [settings.clearance, 'Clearance', true],
-        ];
+  const checks: [number, string, boolean][] = [
+    [settings.diameter, 'Pin diameter', false],
+    [settings.depth, 'Depth', false],
+    [settings.clearance, 'Clearance', true],
+  ];
   for (const [value, label, zero] of checks) {
     if (!isValidDimension(value, zero))
       return `${label} must be between ${zero ? '0' : '0.01'} and 1000 mm.`;
@@ -764,7 +738,24 @@ export function useSplitWorkflow(): SplitControls {
               setPlane(() => planeSettingsFor(qualifiedPlane, part.bounds).settings);
             previewRef.current = result;
             setPreviewState({ key: session, result });
-            store.setSplitPreview(model.handle, result.render, result.parts);
+            store.setSplitPreview(
+              model.handle,
+              result.render,
+              result.parts,
+              assemblyForSplitPreview(
+                model.handle,
+                result,
+                {
+                  sourcePartId: part.partId,
+                  sourceTransform: part.transform,
+                  ...(byComponents ? {} : { plane: result.interface?.plane ?? splitPlane }),
+                  ...(semanticIntent.current?.key === partKey
+                    ? { label: semanticIntent.current.label }
+                    : {}),
+                },
+                store.getSnapshot().assembly,
+              ),
+            );
             await afterPaint();
             if (action.current === token) setPhase(SplitPhase.Preview);
           }

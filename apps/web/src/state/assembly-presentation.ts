@@ -1,9 +1,12 @@
 import type {
+  DocumentHandle,
   PartDescriptor,
   SplitCommitResult,
+  SplitCreateResult,
   SplitPlane,
   SplitConnector,
 } from '@cadfixer/geometry-runtime';
+import type { MeshBounds } from '@cadfixer/mesh-core';
 export type AssemblyVector = readonly [number, number, number];
 export interface AssemblyInterface {
   readonly id: string;
@@ -137,8 +140,28 @@ export function explosionOffsets(
     scale = maximum > diagonal * 0.35 ? (diagonal * 0.35) / maximum : 1;
   return offsets.map((p) => ({ partId: p.partId, offset: vector(p.offset.map((v) => v * scale)) }));
 }
+/**
+ * The fields of a split result the presentation reads. A COMMIT result satisfies it, and so does a
+ * PREVIEW once it is given a provisional handle: one function builds both views, so what a user
+ * inspects before Apply is what the Apply will show.
+ */
+export type AssemblySplitResult = Pick<
+  SplitCommitResult,
+  | 'handle'
+  | 'parentRevision'
+  | 'recordId'
+  | 'parts'
+  | 'pieceAId'
+  | 'pieceBId'
+  | 'interface'
+  | 'connector'
+  | 'automaticConnector'
+  | 'metrics'
+  | 'bounds'
+>;
+
 export function assemblyAfterSplit(
-  result: SplitCommitResult,
+  result: AssemblySplitResult,
   context: SplitAssemblyContext | undefined,
   previous: AssemblyPresentation | undefined,
 ): AssemblyPresentation {
@@ -369,4 +392,79 @@ export function connectorAtAssemblyPoint(
       matches.push(pair.id);
   }
   return matches.length === 1 ? matches[0] : undefined;
+}
+
+/** The part-local boxes of `parts`, placed by each part's own transform, as one world box. */
+function worldBoundsOf(parts: readonly PartDescriptor[]): MeshBounds | undefined {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity],
+    max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  let any = false;
+  for (const part of parts) {
+    if (!part.bounds) continue;
+    for (let bits = 0; bits < 8; bits++) {
+      const corner = assemblyPoint(
+        vector(
+          [0, 1, 2].map((k) =>
+            defined((bits >> k) & 1 ? part.bounds?.max[k] : part.bounds?.min[k]),
+          ),
+        ),
+        part.transform,
+      );
+      for (let k = 0; k < 3; k++) {
+        min[k] = Math.min(defined(min[k]), defined(corner[k]));
+        max[k] = Math.max(defined(max[k]), defined(corner[k]));
+      }
+      any = true;
+    }
+  }
+  if (!any) return undefined;
+  const size = vector(max.map((v, k) => v - defined(min[k]))),
+    center = vector(max.map((v, k) => (v + defined(min[k])) / 2));
+  return { min, max, size, center, radius: Math.hypot(...size) / 2 };
+}
+
+/**
+ * THE ASSEMBLY OF A SPLIT PREVIEW. Display-only, like everything in this module: it reads the
+ * worker's preview result, builds offsets and pair descriptions with `assemblyAfterSplit` itself, and
+ * touches no geometry, transform, revision, history or transaction. The handle is PROVISIONAL (the
+ * revision Apply would produce) and the record id is marked `#preview`; neither is ever sent anywhere.
+ * It is always returned assembled: whether to show it exploded is a separate, purely visual choice.
+ */
+export function assemblyForSplitPreview(
+  source: DocumentHandle,
+  preview: Pick<
+    SplitCreateResult,
+    | 'candidate'
+    | 'parts'
+    | 'pieceAId'
+    | 'pieceBId'
+    | 'interface'
+    | 'connector'
+    | 'automaticConnector'
+    | 'metrics'
+  >,
+  context: SplitAssemblyContext | undefined,
+  previous: AssemblyPresentation | undefined,
+): AssemblyPresentation {
+  const bounds = worldBoundsOf(preview.parts);
+  return {
+    ...assemblyAfterSplit(
+      {
+        handle: { documentId: source.documentId, revision: source.revision + 1 },
+        parentRevision: source.revision,
+        recordId: `${preview.candidate.candidateId}#preview`,
+        parts: preview.parts,
+        pieceAId: preview.pieceAId,
+        pieceBId: preview.pieceBId,
+        connector: preview.connector,
+        metrics: preview.metrics,
+        bounds,
+        ...(preview.interface ? { interface: preview.interface } : {}),
+        ...(preview.automaticConnector ? { automaticConnector: preview.automaticConnector } : {}),
+      },
+      context,
+      previous,
+    ),
+    exploded: false,
+  };
 }

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { dovetailFemaleDimensions, roundSocketRadius } from '@cadfixer/geometry-runtime';
+import { roundSocketRadius } from '@cadfixer/geometry-runtime';
 import { deriveSplitPartExportName } from '../runtime/download';
 import {
   CONNECTOR_OPTIONS,
   MAX_SPLIT_TILT_DEGREES,
   SPLIT_COPY,
+  describeSplitChecks,
   clampOffset,
   clampRoll,
   clampTilt,
@@ -14,7 +15,6 @@ import {
   describeOutlines,
   describePlaneName,
   describeSection,
-  dovetailSlot,
   formatArea,
   formatLength,
   isValidDimension,
@@ -207,8 +207,11 @@ describe('the plane', () => {
 });
 
 describe('connectors', () => {
-  it('offers exactly the connector kinds the engine builds', () => {
-    expect(CONNECTOR_OPTIONS.map((option) => option.kind)).toEqual(['none', 'pin', 'dovetail']);
+  it('offers exactly the connector kinds the product stands behind: no dovetail', () => {
+    // Measured on the released engine (connector audit N1): the dovetail's tip is wider than
+    // its socket's mouth and the socket is closed along its length, so it cannot be assembled.
+    expect(CONNECTOR_OPTIONS.map((option) => option.kind)).toEqual(['none', 'pin']);
+    expect(JSON.stringify(CONNECTOR_OPTIONS).toLowerCase()).not.toContain('dovetail');
     const names = CONNECTOR_OPTIONS.map((option) => option.name.toLowerCase()).join(' ');
     for (const absent of ['snap', 'thread', 'magnet', 'puzzle', 'screw', 'keyed', 'taper'])
       expect(names).not.toContain(absent);
@@ -220,11 +223,6 @@ describe('connectors', () => {
     for (const clearance of [0, 0.05, 0.2, 1]) {
       expect(socketDiameter(4, clearance)).toBeCloseTo(roundSocketRadius(4, clearance) * 2, 12);
     }
-  });
-
-  it('applies dovetail clearance per side — width and length each grow by twice it', () => {
-    expect(dovetailSlot(8, 12, 0.2)).toEqual(dovetailFemaleDimensions(8, 12, 0.2));
-    expect(dovetailSlot(8, 12, 0.2).width).toBeCloseTo(8.4, 12);
   });
 
   it('accepts exactly the dimensions the engine accepts', () => {
@@ -243,7 +241,7 @@ describe('connectors', () => {
     expect(connectorProblemOf({ ...DEFAULT_CONNECTOR, kind: 'pin', diameter: 0 })).toMatch(
       /Pin diameter/,
     );
-    expect(connectorProblemOf({ ...DEFAULT_CONNECTOR, kind: 'dovetail', clearance: -1 })).toMatch(
+    expect(connectorProblemOf({ ...DEFAULT_CONNECTOR, kind: 'pin', clearance: -1 })).toMatch(
       /Clearance/,
     );
   });
@@ -269,6 +267,20 @@ describe('export and wording', () => {
     expect(describeExportParts(1)).toBe('Export 1 part');
   });
 
+  it('states the checks truthfully for a closed solid and for a surface cut', () => {
+    expect(describeSplitChecks(true)).toBe('Both pieces closed; cut faces capped');
+    expect(describeSplitChecks(undefined)).toBe('Both pieces closed; cut faces capped');
+    const surface = describeSplitChecks(false).toLowerCase();
+    expect(surface).toContain('surface cut');
+    expect(surface).toContain('no cut face was capped');
+    expect(surface).not.toContain('both pieces closed');
+  });
+
+  it('does not claim connectors are placed inside material or measured behind the face', () => {
+    expect(SPLIT_COPY.placementNote.toLowerCase()).not.toContain('inside its material');
+    expect(SPLIT_COPY.placementNote).toContain('does not measure the wall behind it');
+  });
+
   it('claims no printability, fit or capability CAD Fixer lacks', () => {
     const text = Object.values(SPLIT_COPY).join(' ').toLowerCase();
     for (const banned of ['printable', 'watertight', 'guaranteed fit', 'fits bed', 'add cut'])
@@ -284,9 +296,6 @@ describe('connector sizes are physical, whatever the model’s unit', () => {
     depth: 10.16,
     clearance: 0.254,
     maleSide: 'A',
-    dovetailWidth: 12.7,
-    dovetailLength: 25.4,
-    dovetailAngle: 0,
   };
 
   it('leaves millimetre sizes unchanged for a millimetre model', () => {

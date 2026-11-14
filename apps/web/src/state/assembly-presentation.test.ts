@@ -3,11 +3,13 @@ import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
 import type { PartDescriptor, SplitCommitResult } from '@cadfixer/geometry-runtime';
 import {
   assemblyAfterSplit,
+  assemblyForSplitPreview,
   assemblyNormal,
   explosionOffsets,
   connectorAtAssemblyPoint,
   preservesAssemblyInterfaces,
 } from './assembly-presentation';
+import type { SplitAssemblyContext } from './assembly-presentation';
 function part(id: string, lo: number, hi: number): PartDescriptor {
   return {
     partId: id,
@@ -192,5 +194,91 @@ describe('assembly presentation leaves canonical geometry authoritative', () => 
     expect(assembly.interfaces).toEqual([]);
     expect(assembly.connectorPairs).toEqual([]);
     expect(assembly.labels.a).toBe('Wheel group');
+  });
+});
+
+describe('the assembly of a split PREVIEW', () => {
+  const source = { documentId: 'assembly-test' as never, revision: 4 };
+  const a = part('piece-a', 0, 40),
+    b = part('piece-b', -40, 0);
+  const preview = (x: number, parts = [a, b]): Parameters<typeof assemblyForSplitPreview>[1] => {
+    const commit = result('5', a, b, [], x);
+    return {
+      candidate: { candidateId: 'rt:split-candidate-9' },
+      parts,
+      pieceAId: commit.pieceAId,
+      pieceBId: commit.pieceBId,
+      connector: commit.connector,
+      metrics: commit.metrics,
+      interface: commit.interface,
+    } as unknown as Parameters<typeof assemblyForSplitPreview>[1];
+  };
+  const context = (x: number): SplitAssemblyContext => ({
+    sourcePartId: 'source',
+    sourceTransform: IDENTITY_PART_TRANSFORM,
+    plane: { origin: [x, 0, 0] as const, normal: [1, 0, 0] as const },
+  });
+
+  it('is built by the same code as the applied view, so the two cannot disagree', () => {
+    const shown = assemblyForSplitPreview(source, preview(0), context(0), undefined);
+    const applied = assemblyAfterSplit(
+      result('5', a, b, [], 0),
+      { ...context(0), sourcePartId: 'source' },
+      undefined,
+    );
+    expect(shown.offsets).toEqual(applied.offsets);
+    expect(shown.connectorMode).toBe(applied.connectorMode);
+    expect(shown.connectorPairs.map((p) => p.center)).toEqual(
+      applied.connectorPairs.map((p) => p.center),
+    );
+    expect(shown.interfaces.map((e) => e.normal)).toEqual(applied.interfaces.map((e) => e.normal));
+  });
+
+  it('starts assembled, names a provisional revision and marks its identities as preview', () => {
+    const shown = assemblyForSplitPreview(source, preview(0), context(0), undefined);
+    expect(shown.exploded).toBe(false);
+    expect(shown.documentId).toBe('assembly-test');
+    expect(shown.revision).toBe(5);
+    expect(shown.interfaces[0]?.id).toBe('rt:split-candidate-9#preview');
+    expect(
+      shown.connectorPairs.every((p) => p.id.startsWith('rt:split-candidate-9#preview/')),
+    ).toBe(true);
+  });
+
+  it('separates the two pieces along the cut normal only: A (the +N side) one way, B the other', () => {
+    const shown = assemblyForSplitPreview(source, preview(0), context(0), undefined);
+    const offsetA = shown.offsets.find((o) => o.partId === 'piece-a')?.offset ?? [0, 0, 0],
+      offsetB = shown.offsets.find((o) => o.partId === 'piece-b')?.offset ?? [0, 0, 0];
+    expect(offsetA[0]).toBeGreaterThan(0);
+    expect(offsetB[0]).toBeCloseTo(-offsetA[0], 12);
+    expect(offsetA[1]).toBeCloseTo(0, 12);
+    expect(offsetA[2]).toBeCloseTo(0, 12);
+    // The distance is a fraction of the assembly's own size: scale-independent.
+    const distance = Math.hypot(...offsetA);
+    expect(distance).toBeCloseTo(Math.hypot(80, 30, 30) * 0.14, 6);
+  });
+
+  it('reads its inputs and changes none of them: translation only, nothing mutated', () => {
+    const input = preview(0),
+      before = JSON.stringify([input, context(0)]);
+    assemblyForSplitPreview(source, input, context(0), undefined);
+    expect(JSON.stringify([input, context(0)])).toBe(before);
+  });
+
+  it("measures the assembly in world units, through each part's own placement", () => {
+    const scaled = (p: PartDescriptor): PartDescriptor => ({
+      ...p,
+      transform: [2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0],
+    });
+    const plain = assemblyForSplitPreview(source, preview(0), context(0), undefined),
+      doubled = assemblyForSplitPreview(
+        source,
+        preview(0, [scaled(a), scaled(b)]),
+        { ...context(0), sourceTransform: [2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0] },
+        undefined,
+      );
+    const distance = (assembly: typeof plain): number =>
+      Math.hypot(...(assembly.offsets.find((o) => o.partId === 'piece-a')?.offset ?? [0, 0, 0]));
+    expect(distance(doubled)).toBeCloseTo(distance(plain) * 2, 6);
   });
 });

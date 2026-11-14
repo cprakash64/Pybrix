@@ -5,6 +5,7 @@ import {
   PIN_COUNTS,
   SPLIT_AXES,
   SPLIT_COPY,
+  describeSplitChecks,
   MAX_SPLIT_TILT_DEGREES,
   describeConnectorResult,
   describeCut,
@@ -12,11 +13,10 @@ import {
   describePositionLabel,
   describeRollLabel,
   describeTiltLabel,
-  dovetailSlot,
   formatLength,
   formatVolume,
   socketDiameter,
-  type ConnectorKind,
+  type OfferedConnectorKind,
   type SplitAxis,
   type SplitPieceView,
 } from '../state/split-presentation';
@@ -47,7 +47,7 @@ import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/pr
  * THE SPLIT & CONNECT WORKSPACE — presentation of `useSplitControls`.
  *
  * EVERY CONTROL IS ONE THE ENGINE HONOURS. One flat plane per split (XY, XZ or
- * YZ, one tilt), automatic connector placement, round pins or one dovetail,
+ * YZ, one tilt), automatic connector placement, round pins (no dovetail: it cannot be assembled),
  * Preview → Apply → Undo. The reference's cut list, custom planes, eleven
  * connector types, manual placement, pattern and margin controls, bed fitting
  * and orientation have no engine behind them and are not drawn.
@@ -74,7 +74,7 @@ export function SplitWorkspace(): ReactNode {
   const [editingApplied, setEditingApplied] = useState<string | undefined>(undefined);
   const splitAgain = split.applied !== undefined && editingApplied === split.applied.recordId;
   const [connectorIntent, setConnectorIntent] = useState<
-    { readonly documentId: string | undefined; readonly kind: ConnectorKind } | undefined
+    { readonly documentId: string | undefined; readonly kind: OfferedConnectorKind } | undefined
   >(undefined);
   const pendingConnector =
     connectorIntent?.documentId === model?.handle.documentId &&
@@ -82,7 +82,7 @@ export function SplitWorkspace(): ReactNode {
     connectorIntent.kind !== split.connector.kind
       ? connectorIntent.kind
       : 'none';
-  const setPendingConnector = (kind: ConnectorKind): void => {
+  const setPendingConnector = (kind: OfferedConnectorKind): void => {
     setConnectorIntent({ documentId: model?.handle.documentId, kind });
   };
   const { connectorsAvailable, setConnector, connector } = split;
@@ -483,8 +483,8 @@ function ConnectorSection({
   onPending,
 }: {
   readonly split: SplitControls;
-  readonly pending: ConnectorKind;
-  readonly onPending: (kind: ConnectorKind) => void;
+  readonly pending: OfferedConnectorKind;
+  readonly onPending: (kind: OfferedConnectorKind) => void;
 }): ReactNode {
   const noteId = useId();
   const disabled = busy(split);
@@ -563,7 +563,7 @@ function ConnectorSection({
 }
 
 /** A small line drawing of each connector as it sits across the cut. */
-function ConnectorSchematic({ kind }: { readonly kind: ConnectorKind }): ReactNode {
+function ConnectorSchematic({ kind }: { readonly kind: OfferedConnectorKind }): ReactNode {
   return (
     <svg className="connector-card__schematic" viewBox="0 0 48 24" aria-hidden="true">
       <line x1="2" y1="12" x2="46" y2="12" className="connector-card__cut" />
@@ -572,9 +572,6 @@ function ConnectorSchematic({ kind }: { readonly kind: ConnectorKind }): ReactNo
           <rect x="16" y="4" width="6" height="16" rx="1.5" className="connector-card__male" />
           <rect x="28" y="4" width="6" height="16" rx="1.5" className="connector-card__male" />
         </>
-      ) : null}
-      {kind === 'dovetail' ? (
-        <path d="M18 12 L14 4 L34 4 L30 12 Z" className="connector-card__male" />
       ) : null}
     </svg>
   );
@@ -599,121 +596,54 @@ function ConnectorParameters({
     { value: 'A', label: SPLIT_COPY.pieceA, testId: 'split-male-a' },
     { value: 'B', label: SPLIT_COPY.pieceB, testId: 'split-male-b' },
   ];
-  const angleOptions: readonly SegmentedOption<string>[] = [
-    { value: '0', label: '0°', testId: 'split-dovetail-0' },
-    { value: '90', label: '90°', testId: 'split-dovetail-90' },
-  ];
-  const slot = dovetailSlot(connector.dovetailWidth, connector.dovetailLength, connector.clearance);
-
   return (
     <div className="split-params" data-testid="split-connector-parameters">
-      {connector.kind === 'pin' ? (
-        <>
-          <p className="format-options__label">Count per cut</p>
-          <SegmentedControl
-            label="Pin count"
-            options={countOptions}
-            value={String(connector.count)}
-            onChange={(value) => {
-              set({ count: Number(value) as 1 | 2 | 3 | 4 });
-            }}
-            disabled={disabled}
-          />
-          <div className="split-params__grid">
-            <MillimetreField
-              label="Pin diameter"
-              value={connector.diameter}
-              disabled={disabled}
-              onCommit={(diameter) => {
-                set({ diameter });
-              }}
-              testId="split-pin-diameter"
-            />
-            <MillimetreField
-              label="Depth"
-              value={connector.depth}
-              disabled={disabled}
-              onCommit={(depth) => {
-                set({ depth });
-              }}
-              testId="split-depth"
-            />
-            <MillimetreField
-              label="Clearance, per side"
-              value={connector.clearance}
-              step={0.05}
-              allowZero
-              disabled={disabled}
-              onCommit={(clearance) => {
-                set({ clearance });
-              }}
-              testId="split-clearance"
-            />
-          </div>
-          <p className="split-params__derived" data-testid="split-socket-size">
-            Pin Ø {formatNumber2(connector.diameter)} mm → socket Ø{' '}
-            {formatNumber2(socketDiameter(connector.diameter, connector.clearance))} mm (radial
-            clearance, applied once per side)
-          </p>
-        </>
-      ) : (
-        <>
-          <div className="split-params__grid">
-            <MillimetreField
-              label="Width"
-              value={connector.dovetailWidth}
-              disabled={disabled}
-              onCommit={(dovetailWidth) => {
-                set({ dovetailWidth });
-              }}
-              testId="split-dovetail-width"
-            />
-            <MillimetreField
-              label="Length"
-              value={connector.dovetailLength}
-              disabled={disabled}
-              onCommit={(dovetailLength) => {
-                set({ dovetailLength });
-              }}
-              testId="split-dovetail-length"
-            />
-            <MillimetreField
-              label="Depth"
-              value={connector.depth}
-              disabled={disabled}
-              onCommit={(depth) => {
-                set({ depth });
-              }}
-              testId="split-depth"
-            />
-            <MillimetreField
-              label="Clearance, per side"
-              value={connector.clearance}
-              step={0.05}
-              allowZero
-              disabled={disabled}
-              onCommit={(clearance) => {
-                set({ clearance });
-              }}
-              testId="split-clearance"
-            />
-          </div>
-          <p className="split-params__derived" data-testid="split-slot-size">
-            Slot {formatNumber2(slot.width)} × {formatNumber2(slot.length)} mm (each side grows by
-            the clearance)
-          </p>
-          <p className="format-options__label">Orientation on the cut</p>
-          <SegmentedControl
-            label="Dovetail orientation"
-            options={angleOptions}
-            value={String(connector.dovetailAngle)}
-            onChange={(value) => {
-              set({ dovetailAngle: value === '90' ? 90 : 0 });
-            }}
-            disabled={disabled}
-          />
-        </>
-      )}
+      <p className="format-options__label">Count per cut</p>
+      <SegmentedControl
+        label="Pin count"
+        options={countOptions}
+        value={String(connector.count)}
+        onChange={(value) => {
+          set({ count: Number(value) as 1 | 2 | 3 | 4 });
+        }}
+        disabled={disabled}
+      />
+      <div className="split-params__grid">
+        <MillimetreField
+          label="Pin diameter"
+          value={connector.diameter}
+          disabled={disabled}
+          onCommit={(diameter) => {
+            set({ diameter });
+          }}
+          testId="split-pin-diameter"
+        />
+        <MillimetreField
+          label="Depth"
+          value={connector.depth}
+          disabled={disabled}
+          onCommit={(depth) => {
+            set({ depth });
+          }}
+          testId="split-depth"
+        />
+        <MillimetreField
+          label="Clearance, per side"
+          value={connector.clearance}
+          step={0.05}
+          allowZero
+          disabled={disabled}
+          onCommit={(clearance) => {
+            set({ clearance });
+          }}
+          testId="split-clearance"
+        />
+      </div>
+      <p className="split-params__derived" data-testid="split-socket-size">
+        Pin Ø {formatNumber2(connector.diameter)} mm → socket Ø{' '}
+        {formatNumber2(socketDiameter(connector.diameter, connector.clearance))} mm (radial
+        clearance, applied once per side)
+      </p>
       <p className="format-options__label">Male side</p>
       <SegmentedControl
         label="Male connector side"
@@ -852,7 +782,7 @@ function ResultSection({ split }: { readonly split: SplitControls }): ReactNode 
             <div className="property-row">
               <dt className="property-row__label">Checks</dt>
               <dd className="property-row__value" data-testid="split-result-validation">
-                {SPLIT_COPY.piecesValidated}
+                {describeSplitChecks(preview.metrics.volumeInterpretable)}
               </dd>
             </div>
             {preview.metrics.volumeInterpretable === false ? null : (

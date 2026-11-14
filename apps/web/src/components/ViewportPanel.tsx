@@ -1,4 +1,7 @@
-import { connectorAtAssemblyPoint } from '../state/assembly-presentation';
+import {
+  connectorAtAssemblyPoint,
+  type AssemblyPresentation,
+} from '../state/assembly-presentation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   createViewport,
@@ -21,7 +24,7 @@ import {
   useTextureControls,
 } from '../state/workflow-controllers';
 import { WorkflowId } from '../state/workflows';
-import { analysisKey } from '../state/workspace-store';
+import { analysisKey, type WorkspaceState } from '../state/workspace-store';
 import { IssueHud } from './IssueHud';
 import { SplitHud } from './SplitHud';
 import { TextureHud } from './TextureHud';
@@ -36,6 +39,21 @@ import { IconButton, SegmentedControl, type SegmentedOption } from './shell/prim
  * pushed into it imperatively rather than by recreating it, so switching models
  * does not tear down and rebuild the WebGL context.
  */
+/**
+ * The assembly stored with a split preview, only while that preview describes THIS document
+ * revision. One function for the render and the effect, so they cannot disagree.
+ */
+function previewAssemblyOf(
+  splitPreview: WorkspaceState['splitPreview'],
+  model: WorkspaceState['model'],
+): AssemblyPresentation | undefined {
+  if (splitPreview?.assembly === undefined || model === undefined) return undefined;
+  return splitPreview.source.documentId === model.handle.documentId &&
+    splitPreview.source.revision === model.handle.revision
+    ? splitPreview.assembly
+    : undefined;
+}
+
 export function ViewportPanel(): ReactNode {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<ViewportHandle | undefined>(undefined);
@@ -58,6 +76,7 @@ export function ViewportPanel(): ReactNode {
     repair,
     holeFill,
     splitPreview,
+    previewExploded,
     splitPlane,
     texturePreview,
     textureSelection,
@@ -252,12 +271,39 @@ export function ViewportPanel(): ReactNode {
     assembly?.documentId === model?.handle.documentId &&
     assembly?.revision === model?.handle.revision &&
     splitPreview === undefined;
+  /*
+   * THE PREVIEW'S OWN ASSEMBLY (display only). It exists while a split preview of THIS document
+   * revision is on screen; `previewExploded` is the one visual choice and lives apart from
+   * `splitPreview`, so flipping it never rebuilds the scene. An applied split's assembly takes over
+   * after Apply, exactly as before.
+   */
+  const storedPreviewAssembly = previewAssemblyOf(splitPreview, model);
+  const previewAssembly =
+    storedPreviewAssembly === undefined
+      ? undefined
+      : { ...storedPreviewAssembly, exploded: previewExploded };
+  const shownAssembly = previewAssembly ?? (assemblyCurrent ? assembly : undefined);
+  /*
+   * Whether this effect has put offsets on screen. An ASSEMBLED preview must not call
+   * `setAssemblyOffsets` at all: it hides the axes and refits the camera, so publishing a preview
+   * would redraw twice and reframe a view the user had set. Only a preview that is or was exploded
+   * reaches the viewport.
+   */
+  const offsetsShownRef = useRef(false);
   useEffect(() => {
-    if (assemblyCurrent && assembly)
-      viewportRef.current?.setAssemblyOffsets(
-        assembly.exploded ? new Map(assembly.offsets.map((p) => [p.partId, p.offset])) : undefined,
-      );
-  }, [assembly, assemblyCurrent, model, splitPreview]);
+    const stored = previewAssemblyOf(splitPreview, model);
+    const shown = stored ?? (assemblyCurrent ? assembly : undefined);
+    if (shown === undefined) {
+      offsetsShownRef.current = false;
+      return;
+    }
+    const exploded = stored === undefined ? shown.exploded : previewExploded;
+    if (stored !== undefined && !exploded && !offsetsShownRef.current) return;
+    viewportRef.current?.setAssemblyOffsets(
+      exploded ? new Map(shown.offsets.map((p) => [p.partId, p.offset])) : undefined,
+    );
+    offsetsShownRef.current = exploded;
+  }, [splitPreview, previewExploded, assembly, assemblyCurrent, model]);
 
   useEffect(() => {
     const pair = assemblyCurrent
@@ -719,19 +765,20 @@ export function ViewportPanel(): ReactNode {
           operation, is where "not applied" is said. The workspace HUDs above it
           describe what is selected or measured and do not repeat it. */}
       <div className="viewport__hud">
-        {assemblyCurrent && assembly ? (
+        {shownAssembly ? (
           <div
             role="group"
             aria-label="Assembly view"
             className="assembly-view"
             data-testid="assembly-view"
           >
-            <span role="status">{assembly.labels[activePartId ?? ''] ?? 'Assembly'}</span>
+            <span role="status">{shownAssembly.labels[activePartId ?? ''] ?? 'Assembly'}</span>
             <button
               type="button"
-              aria-pressed={assembly.exploded}
+              aria-pressed={shownAssembly.exploded}
               onClick={() => {
-                store.setAssemblyExploded(true);
+                if (previewAssembly) store.setPreviewExploded(true);
+                else store.setAssemblyExploded(true);
               }}
               data-testid="assembly-exploded"
             >
@@ -739,9 +786,10 @@ export function ViewportPanel(): ReactNode {
             </button>
             <button
               type="button"
-              aria-pressed={!assembly.exploded}
+              aria-pressed={!shownAssembly.exploded}
               onClick={() => {
-                store.setAssemblyExploded(false);
+                if (previewAssembly) store.setPreviewExploded(false);
+                else store.setAssemblyExploded(false);
               }}
               data-testid="assembly-assembled"
             >
