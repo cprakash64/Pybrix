@@ -24,7 +24,11 @@ export type AutomaticConnectorReason =
   | 'INSUFFICIENT_CLEARANCE'
   | 'INSUFFICIENT_WALL'
   | 'UNSUPPORTED_INTERFACE'
-  | 'NO_SAFE_SITE';
+  | 'NO_SAFE_SITE'
+  /** Release 2, Slice 2B: a proposed site's footprint is not inside the generated interface. Typed detail is on the refusal. */
+  | 'FOOTPRINT_NOT_CONTAINED'
+  /** Release 2, Slice 2B: the generated interface could not be read as a material region, so no footprint was judged. */
+  | 'INTERFACE_REGION_UNAVAILABLE';
 export interface AutomaticConnectorDiagnostics {
   reason: AutomaticConnectorReason;
   proposedSites: number;

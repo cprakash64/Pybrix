@@ -25,7 +25,9 @@ import {
 } from './closed-plane-kernel';
 import { splitMeshSHA } from './split-source-identity';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
+import { containFootprints, describeFootprintFailure } from './connector-footprint';
 import {
+  ConnectorRefusal,
   REFUSAL_TO_LEGACY_DETAILS_CODE,
   connectorManifestOf,
   draftFromRequest,
@@ -947,6 +949,33 @@ export async function splitWithConnectors(
           clip.interface,
         );
         sites = toLegacyConnectorPlan(validatedPlan).centers;
+      }
+      // RELEASE 2, SLICE 2B. The ONE footprint-containment check, for the manual sites just resolved and the automatic sites
+      // proposed above alike. It reads the GENERATED interface (not the compatibility surface the resolvers searched) and
+      // runs after every earlier refusal and before the first Boolean, so a refused plan has built nothing. It does not
+      // search for another site: the sites the existing resolvers chose are validated, or the plan is refused whole.
+      const containment = containFootprints(defined(validatedPlan), clip.interface, tolerance);
+      if (!containment.ok) {
+        const [failure] = containment.failures;
+        const refusal = defined(failure).refusal;
+        if (automatic)
+          automaticDiagnostics.reason =
+            refusal === ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE
+              ? 'INTERFACE_REGION_UNAVAILABLE'
+              : 'FOOTPRINT_NOT_CONTAINED';
+        throw invalidState(describeFootprintFailure(refusal), {
+          code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
+          refusal,
+          pairId: defined(failure).pairId,
+          footprintU: defined(failure).footprint.u,
+          footprintV: defined(failure).footprint.v,
+          footprintRadius: defined(failure).footprint.radius,
+          centerInMaterial: defined(failure).centerInMaterial,
+          ...(failure?.loopId === undefined ? {} : { loopId: failure.loopId }),
+          ...(failure?.overreach === undefined ? {} : { overreach: failure.overreach }),
+          invalidPairs: containment.failures.length,
+          checkedPairs: containment.checked,
+        });
       }
       for (const center of sites) {
         if (automatic) automaticDiagnostics.placementAttempts++;

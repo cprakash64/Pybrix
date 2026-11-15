@@ -47,10 +47,28 @@ export const ConnectorRefusal = {
   DOES_NOT_FIT_COUNT: 'DOES_NOT_FIT_COUNT',
   /** A plan that contradicts itself (count, roles, ids). Unreachable from the legacy resolvers. */
   INVALID_PLAN: 'INVALID_PLAN',
-  // ---- declared for later slices; NOT produced by Slice 1 ----
+  // ---- produced by Slice 2B (footprint containment) ----
+  /**
+   * A footprint's centre is in the exterior, or its circle reaches past an outline of the generated interface.
+   * Legacy details code: `CONNECTOR_FOOTPRINT_OUTSIDE_INTERFACE`.
+   */
+  FOOTPRINT_OUTSIDE_INTERFACE: 'FOOTPRINT_OUTSIDE_INTERFACE',
+  /**
+   * A footprint's centre is inside an opening of the generated interface, or its circle reaches the edge of one.
+   * Legacy details code: `CONNECTOR_FOOTPRINT_INTERSECTS_VOID`.
+   */
+  FOOTPRINT_INTERSECTS_VOID: 'FOOTPRINT_INTERSECTS_VOID',
+  /**
+   * The generated interface could not be read as a material region (no loops, a loop under three vertices, a non-finite
+   * coordinate, or a nesting whose area disagrees with the kernel's). Fails closed.
+   * Legacy details code: `CONNECTOR_INTERFACE_REGION_UNAVAILABLE`.
+   */
+  INTERFACE_REGION_UNAVAILABLE: 'INTERFACE_REGION_UNAVAILABLE',
+  // ---- declared for later slices; NOT produced yet ----
   UNSUPPORTED_TRANSFORM: 'UNSUPPORTED_TRANSFORM',
   RESOURCE_LIMIT: 'RESOURCE_LIMIT',
   DIMENSION_OUT_OF_POLICY: 'DIMENSION_OUT_OF_POLICY',
+  /** Reserved. Slice 2B reports the whole FOOTPRINT (the stronger statement) rather than the site alone. */
   SITE_OUTSIDE_INTERFACE: 'SITE_OUTSIDE_INTERFACE',
   INSUFFICIENT_WALL_BEHIND: 'INSUFFICIENT_WALL_BEHIND',
   INSUFFICIENT_WALL_AROUND: 'INSUFFICIENT_WALL_AROUND',
@@ -62,6 +80,19 @@ export const ConnectorRefusal = {
   CANCELLED: 'CANCELLED',
 } as const;
 export type ConnectorRefusal = (typeof ConnectorRefusal)[keyof typeof ConnectorRefusal];
+
+/** The reasons the footprint-containment check can give. */
+export type FootprintRefusal =
+  | typeof ConnectorRefusal.FOOTPRINT_OUTSIDE_INTERFACE
+  | typeof ConnectorRefusal.FOOTPRINT_INTERSECTS_VOID
+  | typeof ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE;
+
+/** Codes Slice 2B adds. A test keeps this honest, and keeps it disjoint from Slice 1's. */
+export const PRODUCED_IN_SLICE_2B: readonly FootprintRefusal[] = Object.freeze([
+  ConnectorRefusal.FOOTPRINT_OUTSIDE_INTERFACE,
+  ConnectorRefusal.FOOTPRINT_INTERSECTS_VOID,
+  ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE,
+]);
 
 /** Codes Slice 1 can actually emit. A test keeps this honest. */
 export const PRODUCED_IN_SLICE_1: readonly ConnectorRefusal[] = Object.freeze([
@@ -84,6 +115,9 @@ export const LEGACY_DETAILS_CODE_TO_REFUSAL: Readonly<Record<string, ConnectorRe
     OPEN_SPLIT_CONNECTOR_UNSUPPORTED: ConnectorRefusal.OPEN_SURFACE_UNSUPPORTED,
     CONNECTOR_TOO_CLOSE_TO_EDGE: ConnectorRefusal.EDGE_CLEARANCE,
     CONNECTOR_DOES_NOT_FIT: ConnectorRefusal.DOES_NOT_FIT_COUNT,
+    CONNECTOR_FOOTPRINT_OUTSIDE_INTERFACE: ConnectorRefusal.FOOTPRINT_OUTSIDE_INTERFACE,
+    CONNECTOR_FOOTPRINT_INTERSECTS_VOID: ConnectorRefusal.FOOTPRINT_INTERSECTS_VOID,
+    CONNECTOR_INTERFACE_REGION_UNAVAILABLE: ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE,
   });
 
 /** The legacy `details.code` for a refusal this module can produce, so a plan failure keeps the code the page knows. */
@@ -93,6 +127,9 @@ export const REFUSAL_TO_LEGACY_DETAILS_CODE: Readonly<Partial<Record<ConnectorRe
     [ConnectorRefusal.OPEN_SURFACE_UNSUPPORTED]: 'OPEN_SPLIT_CONNECTOR_UNSUPPORTED',
     [ConnectorRefusal.EDGE_CLEARANCE]: 'CONNECTOR_TOO_CLOSE_TO_EDGE',
     [ConnectorRefusal.DOES_NOT_FIT_COUNT]: 'CONNECTOR_DOES_NOT_FIT',
+    [ConnectorRefusal.FOOTPRINT_OUTSIDE_INTERFACE]: 'CONNECTOR_FOOTPRINT_OUTSIDE_INTERFACE',
+    [ConnectorRefusal.FOOTPRINT_INTERSECTS_VOID]: 'CONNECTOR_FOOTPRINT_INTERSECTS_VOID',
+    [ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE]: 'CONNECTOR_INTERFACE_REGION_UNAVAILABLE',
   });
 
 /** The typed refusal for a legacy `details.code`, or `undefined` for a code this vocabulary does not name. */
@@ -204,8 +241,14 @@ function insideLoop(uv: Float64Array, start: number, end: number, pu: number, pv
 
 /**
  * Derives loop structure from the interface's own arrays. Cost is proportional to the interface boundary (and the
- * number of loops squared for nesting), never to the source triangle count. NOT called by the split itself: nothing
- * in Slice 1 consumes it, and a derivation that could throw has no place on a path that works today.
+ * number of loops squared for nesting), never to the source triangle count. Since Release 2 Slice 2B it is the region
+ * the footprint-containment check reads (`connector-footprint.ts`). It never throws: an interface it cannot make sense of
+ * comes back with no loops or with a nesting the caller's area check will refuse, and the caller fails closed.
+ *
+ * The role rule is the kernel's own: a loop is an OUTER outline at even nesting depth and an opening at odd depth, where
+ * depth counts the loops that contain it. The kernel's cap triangulation applies the same parity to the same loops, and the
+ * kernel refuses any two loops that touch or cross, so containment by one probe vertex is exact. A loop's containers are
+ * limited to loops of larger area, which a container of a disjoint simple loop always is.
  */
 export function deriveInterfaceRegion(face: GeneratedSeparationInterface): InterfaceRegion {
   const { uv, loops } = face.sharedRegion;
