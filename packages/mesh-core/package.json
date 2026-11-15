@@ -7,7 +7,8 @@
   "description": "Canonical in-memory mesh contract and structural validation for CAD Fixer.",
   "exports": {
     ".": "./src/index.ts",
-    "./fixtures": "./src/document-fixtures.ts"
+    "./fixtures": "./src/document-fixtures.ts",
+    "./spatial": "./src/spatial/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"

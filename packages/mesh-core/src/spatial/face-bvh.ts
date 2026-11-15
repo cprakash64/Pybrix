@@ -1,42 +1,33 @@
 /**
- * A BOUNDED, PATCH-QUERYABLE BROADPHASE.
+ * A BOUNDED, BOX-QUERYABLE BROADPHASE OVER TRIANGLE FACES — shared spatial infrastructure.
  *
- * WHY THIS EXISTS AT ALL, stated plainly because §29 asks for reuse first.
+ * OWNERSHIP. This module belongs to no feature. It was written for hole-fill validation (Stage 4B-1B1) and moved here,
+ * unchanged apart from this comment, in Release 2 Slice 2A so that other consumers (the connector planner, later) can
+ * use the SAME tree instead of growing a second one. It imports nothing, so it can never pull a feature with it.
  *
- * CAD Fixer already owns a qualified broadphase: `si_bvh.h`, the abortable
- * median-split AABB tree written for Stage 3C-1A-R1. It is not reusable here,
- * for two independent reasons that are facts about the code rather than
- * preferences:
+ * WHY IT IS NOT THE GEOGRAM TREE. CAD Fixer already owns a qualified broadphase, `si_bvh.h` (the abortable median-split
+ * AABB tree written for Stage 3C-1A-R1). It is not reusable from TypeScript, for two independent reasons that are facts
+ * about the code rather than preferences:
  *
- *   1. IT IS C++ COMPILED INTO THE GEOGRAM WASM MODULE, and its only exported
- *      surface is the flat `cf_si_*` C ABI. There is no way to call it from
- *      TypeScript, and no way to hand it a JavaScript visitor.
- *   2. ITS ONLY QUERY IS ALL-PAIRS. `for_each_overlapping_pair` enumerates every
- *      overlapping pair of ONE mesh; there is no box query, so it cannot answer
- *      "which source faces might this patch triangle hit". Asking it the
- *      all-pairs question instead would make hole-fill validation cost a full
- *      self-intersection scan of the whole part — the ~9.4 s at 250,000 faces
- *      that ADR 0012 measured — to answer a question about at most 510
- *      triangles.
+ *   1. IT IS C++ COMPILED INTO THE GEOGRAM WASM MODULE, and its only exported surface is the flat `cf_si_*` C ABI.
+ *      There is no way to call it from TypeScript, and no way to hand it a JavaScript visitor.
+ *   2. ITS ONLY QUERY IS ALL-PAIRS. `for_each_overlapping_pair` enumerates every overlapping pair of ONE mesh; there
+ *      is no box query, so it cannot answer "which faces of this mesh might that box hit".
  *
- * Adding a box query to `si_bvh.h` is not available either: `kernel-integrity.test.ts`
- * pins that file BYTE-IDENTICAL to `experiments/self-intersection/si_bvh.h`, and
- * editing it would edit the evidence that describes what ships.
+ * Adding a box query to `si_bvh.h` is not available either: `kernel-integrity.test.ts` pins that file BYTE-IDENTICAL to
+ * `experiments/self-intersection/si_bvh.h`, and editing it would edit the evidence that describes what ships.
  *
- * SO THIS IS A PORT, NOT AN INVENTION, and it is deliberately the same tree:
- * median split on the widest axis, leaf size 8, INCLUSIVE box overlap so exact
- * contact is never discarded, and a deterministic tie-break on face index. It
- * is validated against a brute-force all-pairs oracle in `bvh.test.ts` for the
- * same reason `si_bvh.h` was — a broadphase that MISSES a pair turns a defect
- * into a clean bill of health, which is the one failure this stage cannot have.
+ * SO THIS IS A PORT, NOT AN INVENTION, and it is deliberately the same tree: median split on the widest axis, leaf
+ * size 8, INCLUSIVE box overlap so exact contact is never discarded, and a deterministic tie-break on face index. It is
+ * validated against a brute-force all-pairs oracle in `face-bvh.test.ts` for the same reason `si_bvh.h` was — a
+ * broadphase that MISSES a pair turns a defect into a clean bill of health.
  *
- * WHAT IS NOT PORTED: the narrowphase. That stays the qualified Geogram kernel,
- * which is where the safety-critical exactness lives.
+ * WHAT IS NOT HERE: any narrowphase, ray query or distance query. This is a candidate generator and nothing else; the
+ * exactness of whatever consumes the candidates lives with the consumer.
  *
- * NO TOLERANCE ANYWHERE. Boxes are the exact min/max of the Float64 coordinates
- * and overlap is inclusive (`<=`), so faces touching exactly at a shared plane,
- * edge or vertex remain candidates. A strict inequality would silently discard
- * every exact contact that has to be classified rather than assumed benign.
+ * NO TOLERANCE ANYWHERE. Boxes are the exact min/max of the Float64 coordinates and overlap is inclusive (`<=`), so
+ * faces touching exactly at a shared plane, edge or vertex remain candidates. A strict inequality would silently
+ * discard every exact contact that has to be classified rather than assumed benign.
  */
 
 /** Node fan-out below which a node becomes a leaf. Matches `si_bvh.h`. */
@@ -70,7 +61,7 @@ export function createCounters(): BroadphaseCounters {
  * The caller's arrays are never touched: the tree owns its own permutation of
  * face indices and its own boxes. Face ids are ABSOLUTE indices into the
  * caller's triangle array, so a tree built over the patch range still reports
- * the ids the rest of the engine uses.
+ * the ids the rest of the caller's code uses.
  */
 export class FaceBvh {
   private readonly boxLo: Float64Array;
