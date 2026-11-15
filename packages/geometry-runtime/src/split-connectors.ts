@@ -25,6 +25,19 @@ import {
 } from './closed-plane-kernel';
 import { splitMeshSHA } from './split-source-identity';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
+import {
+  REFUSAL_TO_LEGACY_DETAILS_CODE,
+  connectorManifestOf,
+  draftFromRequest,
+  planAutomaticPins,
+  planManualPins,
+  toLegacyAutomaticPlan,
+  toLegacyConnectorPlan,
+  validateConnectorPlan,
+  type ConnectorManifest,
+  type ConnectorPlan,
+  type ValidatedConnectorPlan,
+} from './connector-plan';
 
 export type SplitVector = readonly [number, number, number];
 export interface SplitPlane {
@@ -179,6 +192,11 @@ export interface SplitResult {
   readonly cutA: CutSurfaceSummary;
   readonly cutB: CutSurfaceSummary;
   readonly connector: SplitConnector;
+  /**
+   * Release 2, Slice 1: a bounded, JSON-safe description of the connector plan the pieces were built from. Present only
+   * when connectors were applied. Descriptive, never an input to geometry.
+   */
+  readonly connectorPlan?: ConnectorManifest;
   readonly metrics: SplitMetrics;
   readonly placements: readonly SplitVector[];
 }
@@ -880,7 +898,12 @@ export async function splitWithConnectors(
     milliseconds: 0,
     scratchBytes: 0,
   };
-  const plan =
+  // PLANNING FOUNDATION (Release 2, Slice 1). The draft states what was asked for against the generated interface it
+  // is being cut from. The resolvers below are the existing ones, called with the same arguments in the same order;
+  // the plan re-expresses their answer and `toLegacy…` hands the construction code exactly what it used before.
+  const draft = draftFromRequest(request.connector, clip.interface, physicalScale);
+  let validatedPlan: ValidatedConnectorPlan | undefined;
+  const proposal =
     request.connector.kind === 'automatic'
       ? automaticPinPlan(
           pieceA,
@@ -894,6 +917,9 @@ export async function splitWithConnectors(
           automaticDiagnostics,
         )
       : undefined;
+  if (proposal)
+    validatedPlan = issuePlan(planAutomaticPins(draft, clip.interface, proposal), clip.interface);
+  const plan = validatedPlan ? toLegacyAutomaticPlan(validatedPlan) : undefined;
   let c: SplitConnector =
     request.connector.kind === 'automatic'
       ? (plan?.connector ?? { kind: 'none' })
@@ -908,13 +934,21 @@ export async function splitWithConnectors(
       dimension(c.depth, 'Pin depth');
       dimension(c.clearance, 'Pin clearance', true);
       const r = c.diameter / 2;
-      for (const center of plan?.centers ??
-        connectorCenters(
+      let sites = plan?.centers;
+      if (!sites) {
+        const centers = connectorCenters(
           defined(selection),
           c.count,
           r + c.clearance,
           Math.max(tolerance * 8, r * 0.35),
-        )) {
+        );
+        validatedPlan = issuePlan(
+          planManualPins(draft, clip.interface, c, centers),
+          clip.interface,
+        );
+        sites = toLegacyConnectorPlan(validatedPlan).centers;
+      }
+      for (const center of sites) {
         if (automatic) automaticDiagnostics.placementAttempts++;
         throwIfCancelled(cancellation);
         if (plan) {
@@ -1032,6 +1066,9 @@ export async function splitWithConnectors(
     cutA: translateCutSurface(cutA, clip.outputAnchor),
     cutB: translateCutSurface(cutB, clip.outputAnchor),
     connector: c,
+    ...(c.kind === 'pin' && validatedPlan
+      ? { connectorPlan: connectorManifestOf(validatedPlan) }
+      : {}),
     interface: {
       plane: request.plane,
       connectorEligible: true,
@@ -1081,4 +1118,18 @@ function translateCutSurface(cut: CutSurfaceSummary, offset: SplitVector): CutSu
 function defined<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
   return value;
+}
+
+/** Identity-only validation of a plan; a refusal keeps the legacy `details.code` the page already knows. */
+function issuePlan(
+  plan: ConnectorPlan,
+  face: GeneratedSeparationInterface,
+): ValidatedConnectorPlan {
+  const checked = validateConnectorPlan(plan, face);
+  if (!checked.ok)
+    throw invalidState(checked.message, {
+      code: REFUSAL_TO_LEGACY_DETAILS_CODE[checked.refusal] ?? checked.refusal,
+      refusal: checked.refusal,
+    });
+  return checked.validated;
 }

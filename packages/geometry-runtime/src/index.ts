@@ -247,6 +247,7 @@ export type {
   SplitCandidateSummary,
   SplitTransactionStatus,
 } from './split-candidates';
+export type { ConnectorManifest } from './connector-plan';
 export type {
   CutSurfaceSummary,
   SplitConnector,
