@@ -25,6 +25,7 @@ import {
 } from './closed-plane-kernel';
 import { splitMeshSHA } from './split-source-identity';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
+import { describeAxialFailure, validateSocketDepth } from './connector-axial';
 import { containFootprints, describeFootprintFailure } from './connector-footprint';
 import {
   ConnectorRefusal,
@@ -977,6 +978,56 @@ export async function splitWithConnectors(
           checkedPairs: containment.checked,
         });
       }
+      // RELEASE 2, SLICE 2C. Is there receiving material throughout the socket the Booleans below will cut? The socket's
+      // axis, radius and depth are decided HERE, once, and the same three values are handed to the validator and to the
+      // primitive: nothing is derived twice. Every socket of the plan is checked against the receiving piece as the kernel
+      // produced it (before any socket of this plan is cut), so a plan with one bad socket builds nothing.
+      const socketVolume = {
+        axis: c.maleSide === 'A' ? scale(unit(plane.normal), -1) : unit(plane.normal),
+        radius: roundSocketRadius(c.diameter, c.clearance),
+        depth: c.depth,
+      };
+      const planPairs = defined(validatedPlan).plan.pairs;
+      const axial = validateSocketDepth(
+        c.maleSide === 'A'
+          ? {
+              mesh: clip.pieceB,
+              provenance: clip.provenanceB,
+              closed: isClosedSolid(clip.reports[1]),
+            }
+          : {
+              mesh: clip.pieceA,
+              provenance: clip.provenanceA,
+              closed: isClosedSolid(clip.reports[0]),
+            },
+        sites.map((center, index) => ({
+          pairId: planPairs[index]?.pairId ?? `pin-${String(index + 1)}`,
+          center,
+          ...socketVolume,
+        })),
+        tolerance,
+        cancellation,
+      );
+      if (!axial.ok) {
+        const refusal = axial.refusal;
+        if (automatic)
+          automaticDiagnostics.reason =
+            refusal === ConnectorRefusal.SOCKET_BREAKTHROUGH
+              ? 'SOCKET_BREAKTHROUGH'
+              : 'AXIAL_VALIDATION_UNAVAILABLE';
+        const first = 'failures' in axial ? axial.failures[0] : undefined;
+        throw invalidState(describeAxialFailure(refusal), {
+          code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
+          refusal,
+          socketRadius: socketVolume.radius,
+          socketDepth: socketVolume.depth,
+          ...('reason' in axial ? { reason: axial.reason } : {}),
+          ...(first === undefined ? {} : { pairId: first.pairId, faceIndex: first.faceIndex }),
+          ...('failures' in axial
+            ? { invalidPairs: axial.failures.length, checkedPairs: axial.checked }
+            : {}),
+        });
+      }
       for (const center of sites) {
         if (automatic) automaticDiagnostics.placementAttempts++;
         throwIfCancelled(cancellation);
@@ -1004,17 +1055,12 @@ export async function splitWithConnectors(
           }
         }
         placements.push(center);
-        const axis = c.maleSide === 'A' ? scale(unit(plane.normal), -1) : unit(plane.normal),
+        const axis = socketVolume.axis,
           overlap = Math.max(tolerance * 8, c.depth * 1e-4),
           primitiveDepth = c.depth + overlap,
           primitiveCenter = add(center, scale(axis, (c.depth - overlap) / 2)),
           male = cylinder(primitiveCenter, axis, r, primitiveDepth),
-          socket = cylinder(
-            primitiveCenter,
-            axis,
-            roundSocketRadius(c.diameter, c.clearance),
-            primitiveDepth,
-          );
+          socket = cylinder(primitiveCenter, axis, socketVolume.radius, primitiveDepth);
         if (c.maleSide === 'A') {
           pieceA = (await runValidatedBoolean(backend, 'union', pieceA, male, cancellation)).mesh;
           pieceB = (await runValidatedBoolean(backend, 'difference', pieceB, socket, cancellation))
@@ -1142,6 +1188,21 @@ function translateCutSurface(cut: CutSurfaceSummary, offset: SplitVector): CutSu
     })),
     outline,
   };
+}
+
+/** The kernel's own closed-solid verdict for one output piece. */
+function isClosedSolid(report: {
+  readonly valid: boolean;
+  readonly boundaryEdges: number;
+  readonly nonManifoldVertices: number;
+  readonly windingConflicts: number;
+}): boolean {
+  return (
+    report.valid &&
+    report.boundaryEdges === 0 &&
+    report.nonManifoldVertices === 0 &&
+    report.windingConflicts === 0
+  );
 }
 
 function defined<T>(value: T | undefined): T {

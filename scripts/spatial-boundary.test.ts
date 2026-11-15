@@ -82,13 +82,15 @@ describe('every consumer imports the one neutral authority', () => {
     (file) =>
       /\bFaceBvh\b/.test(stripComments(read(file))) && relative(REPO_ROOT, file) !== AUTHORITY,
   );
-  it('finds exactly the four hole-fill modules that build a tree', () => {
+  it('finds exactly the four hole-fill modules and the connector axial check', () => {
     expect(consumers.map((file) => relative(REPO_ROOT, file)).sort()).toEqual(
       [
         join('packages', 'mesh-hole-fill', 'src', 'appended-face-index.ts'),
         join('packages', 'mesh-hole-fill', 'src', 'engine.ts'),
         join('packages', 'mesh-hole-fill', 'src', 'local-intersection.ts'),
         join('packages', 'mesh-hole-fill', 'src', 'surgery-gate.ts'),
+        // Release 2, Slice 2C: the connector's receiving-material check is the first consumer outside hole fill
+        join('packages', 'geometry-runtime', 'src', 'connector-axial.ts'),
         join('packages', 'mesh-core', 'src', 'spatial', 'index.ts'),
       ].sort(),
     );

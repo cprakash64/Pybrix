@@ -64,15 +64,28 @@ export const ConnectorRefusal = {
    * Legacy details code: `CONNECTOR_INTERFACE_REGION_UNAVAILABLE`.
    */
   INTERFACE_REGION_UNAVAILABLE: 'INTERFACE_REGION_UNAVAILABLE',
+  // ---- produced by Slice 2C (axial receiving material) ----
+  /**
+   * The socket volume meets a boundary of the receiving piece (its outside, an internal cavity or another shell) before its
+   * full depth. Legacy details code: `CONNECTOR_SOCKET_BREAKTHROUGH`.
+   */
+  SOCKET_BREAKTHROUGH: 'SOCKET_BREAKTHROUGH',
+  /**
+   * The receiving piece could not be examined (not a closed solid, provenance missing, an unusable sweep, or the broadphase
+   * stopped). Fails closed. Legacy details code: `CONNECTOR_AXIAL_VALIDATION_UNAVAILABLE`.
+   */
+  AXIAL_VALIDATION_UNAVAILABLE: 'AXIAL_VALIDATION_UNAVAILABLE',
   // ---- declared for later slices; NOT produced yet ----
   UNSUPPORTED_TRANSFORM: 'UNSUPPORTED_TRANSFORM',
   RESOURCE_LIMIT: 'RESOURCE_LIMIT',
   DIMENSION_OUT_OF_POLICY: 'DIMENSION_OUT_OF_POLICY',
   /** Reserved. Slice 2B reports the whole FOOTPRINT (the stronger statement) rather than the site alone. */
   SITE_OUTSIDE_INTERFACE: 'SITE_OUTSIDE_INTERFACE',
+  /** Reserved for the wall-thickness slice. Slice 2C answers breakthrough, not thickness. */
   INSUFFICIENT_WALL_BEHIND: 'INSUFFICIENT_WALL_BEHIND',
   INSUFFICIENT_WALL_AROUND: 'INSUFFICIENT_WALL_AROUND',
   INSUFFICIENT_ROOT_MATERIAL: 'INSUFFICIENT_ROOT_MATERIAL',
+  /** Reserved. Slice 2C reports SOCKET_BREAKTHROUGH, which also covers cavities and other shells. */
   EXTERIOR_BREAKTHROUGH: 'EXTERIOR_BREAKTHROUGH',
   CONNECTOR_COLLISION: 'CONNECTOR_COLLISION',
   INSERTION_PATH_BLOCKED: 'INSERTION_PATH_BLOCKED',
@@ -86,6 +99,17 @@ export type FootprintRefusal =
   | typeof ConnectorRefusal.FOOTPRINT_OUTSIDE_INTERFACE
   | typeof ConnectorRefusal.FOOTPRINT_INTERSECTS_VOID
   | typeof ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE;
+
+/** The reasons the axial receiving-material check can give. */
+export type AxialRefusal =
+  | typeof ConnectorRefusal.SOCKET_BREAKTHROUGH
+  | typeof ConnectorRefusal.AXIAL_VALIDATION_UNAVAILABLE;
+
+/** Codes Slice 2C adds. A test keeps this honest, and keeps it disjoint from the earlier slices'. */
+export const PRODUCED_IN_SLICE_2C: readonly AxialRefusal[] = Object.freeze([
+  ConnectorRefusal.SOCKET_BREAKTHROUGH,
+  ConnectorRefusal.AXIAL_VALIDATION_UNAVAILABLE,
+]);
 
 /** Codes Slice 2B adds. A test keeps this honest, and keeps it disjoint from Slice 1's. */
 export const PRODUCED_IN_SLICE_2B: readonly FootprintRefusal[] = Object.freeze([
@@ -118,6 +142,8 @@ export const LEGACY_DETAILS_CODE_TO_REFUSAL: Readonly<Record<string, ConnectorRe
     CONNECTOR_FOOTPRINT_OUTSIDE_INTERFACE: ConnectorRefusal.FOOTPRINT_OUTSIDE_INTERFACE,
     CONNECTOR_FOOTPRINT_INTERSECTS_VOID: ConnectorRefusal.FOOTPRINT_INTERSECTS_VOID,
     CONNECTOR_INTERFACE_REGION_UNAVAILABLE: ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE,
+    CONNECTOR_SOCKET_BREAKTHROUGH: ConnectorRefusal.SOCKET_BREAKTHROUGH,
+    CONNECTOR_AXIAL_VALIDATION_UNAVAILABLE: ConnectorRefusal.AXIAL_VALIDATION_UNAVAILABLE,
   });
 
 /** The legacy `details.code` for a refusal this module can produce, so a plan failure keeps the code the page knows. */
@@ -130,6 +156,8 @@ export const REFUSAL_TO_LEGACY_DETAILS_CODE: Readonly<Partial<Record<ConnectorRe
     [ConnectorRefusal.FOOTPRINT_OUTSIDE_INTERFACE]: 'CONNECTOR_FOOTPRINT_OUTSIDE_INTERFACE',
     [ConnectorRefusal.FOOTPRINT_INTERSECTS_VOID]: 'CONNECTOR_FOOTPRINT_INTERSECTS_VOID',
     [ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE]: 'CONNECTOR_INTERFACE_REGION_UNAVAILABLE',
+    [ConnectorRefusal.SOCKET_BREAKTHROUGH]: 'CONNECTOR_SOCKET_BREAKTHROUGH',
+    [ConnectorRefusal.AXIAL_VALIDATION_UNAVAILABLE]: 'CONNECTOR_AXIAL_VALIDATION_UNAVAILABLE',
   });
 
 /** The typed refusal for a legacy `details.code`, or `undefined` for a code this vocabulary does not name. */

@@ -28,7 +28,11 @@ export type AutomaticConnectorReason =
   /** Release 2, Slice 2B: a proposed site's footprint is not inside the generated interface. Typed detail is on the refusal. */
   | 'FOOTPRINT_NOT_CONTAINED'
   /** Release 2, Slice 2B: the generated interface could not be read as a material region, so no footprint was judged. */
-  | 'INTERFACE_REGION_UNAVAILABLE';
+  | 'INTERFACE_REGION_UNAVAILABLE'
+  /** Release 2, Slice 2C: the socket volume meets another boundary of the receiving piece before its full depth. */
+  | 'SOCKET_BREAKTHROUGH'
+  /** Release 2, Slice 2C: the receiving piece could not be examined, so no socket was judged. */
+  | 'AXIAL_VALIDATION_UNAVAILABLE';
 export interface AutomaticConnectorDiagnostics {
   reason: AutomaticConnectorReason;
   proposedSites: number;
