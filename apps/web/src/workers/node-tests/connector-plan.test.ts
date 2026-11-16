@@ -189,8 +189,9 @@ describe('Slice 1 planner on the real kernel', () => {
       partScaleApplied: true,
     });
     expect(plan.pairs).toHaveLength(result.placements.length);
-    // oracle S10: two automatic pairs, four Booleans each (two guard intersections, then union and difference)
-    expect(booleans).toHaveLength(8);
+    // oracle S10: two automatic pairs, two Booleans each (the union and the difference). Slice 2D retired the two guard
+    // intersections each pair used to run first: material support is judged by `support-v1` before any Boolean, not by a Boolean.
+    expect(booleans).toHaveLength(4);
   });
   it('states, instead of hiding, that a manual size ignores the part scale (audit C03 stays open)', async () => {
     const { result } = await observe(cube(40), pin(1, 4, 6, 'A'), Z, 2.5);

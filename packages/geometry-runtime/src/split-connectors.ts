@@ -25,7 +25,13 @@ import {
 } from './closed-plane-kernel';
 import { splitMeshSHA } from './split-source-identity';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
-import { describeAxialFailure, validateSocketDepth } from './connector-axial';
+import {
+  createReceivingBroadphase,
+  describeAxialFailure,
+  validateSocketDepth,
+  type ReceivingPiece,
+} from './connector-axial';
+import { describeSupportFailure, validateConnectorSupport } from './connector-support';
 import { containFootprints, describeFootprintFailure } from './connector-footprint';
 import { connectorSupportMargin } from './connector-policy';
 import {
@@ -745,6 +751,10 @@ function dovetail(
   }
   return boxFrom(points);
 }
+/** What a person can be told when a connector is refused because the part is placed with a non-uniform scale or a shear. */
+function describeTransformFailure(): string {
+  return 'Connectors cannot be added to a part that is placed with a non-uniform scale or a shear: the material around a connector is not one distance there.';
+}
 function dimension(value: number, label: string, zero = false): void {
   if (!Number.isFinite(value) || value < (zero ? 0 : 0.01) || value > 1000)
     throw invalidState(`${label} is outside the supported range.`, { value });
@@ -859,6 +869,17 @@ export async function splitWithConnectors(
         : {}),
     };
   }
+  // RELEASE 2, SLICE 2D. The support of a connector is a distance in the part's own coordinates. It means the same thing in the
+  // world only if the part's placement is a similarity (translation, rotation, reflection, one uniform scale); the worker
+  // reduces the placement to its uniform scale and reports NaN for a non-uniform scale, a shear or a degenerate one. A pin on such
+  // a part is refused before any work is done. This is a refusal, not an interpretation: C03 decides what such a transform means.
+  if (request.connector.kind === 'pin' && !(Number.isFinite(physicalScale) && physicalScale > 0))
+    throw invalidState(describeTransformFailure(), {
+      code:
+        REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.UNSUPPORTED_TRANSFORM] ??
+        'UNSUPPORTED_TRANSFORM',
+      refusal: ConnectorRefusal.UNSUPPORTED_TRANSFORM,
+    });
   onStage?.(SplitStage.Intersecting);
   const clip = clipPlane(source, preparation.plane, {
     binding: preparation.binding,
@@ -989,25 +1010,43 @@ export async function splitWithConnectors(
         depth: c.depth,
       };
       const planPairs = defined(validatedPlan).plan.pairs;
-      const axial = validateSocketDepth(
-        c.maleSide === 'A'
-          ? {
-              mesh: clip.pieceB,
-              provenance: clip.provenanceB,
-              closed: isClosedSolid(clip.reports[1]),
-            }
-          : {
-              mesh: clip.pieceA,
-              provenance: clip.provenanceA,
-              closed: isClosedSolid(clip.reports[0]),
-            },
-        sites.map((center, index) => ({
+      const femaleSide: ReceivingPiece =
+          c.maleSide === 'A'
+            ? {
+                mesh: clip.pieceB,
+                provenance: clip.provenanceB,
+                closed: isClosedSolid(clip.reports[1]),
+              }
+            : {
+                mesh: clip.pieceA,
+                provenance: clip.provenanceA,
+                closed: isClosedSolid(clip.reports[0]),
+              },
+        maleSide: ReceivingPiece =
+          c.maleSide === 'A'
+            ? {
+                mesh: clip.pieceA,
+                provenance: clip.provenanceA,
+                closed: isClosedSolid(clip.reports[0]),
+              }
+            : {
+                mesh: clip.pieceB,
+                provenance: clip.provenanceB,
+                closed: isClosedSolid(clip.reports[1]),
+              },
+        // ONE female tree per plan, built by whichever of the two checks below needs it first.
+        femaleBroadphase = createReceivingBroadphase(femaleSide),
+        socketSweeps = sites.map((center, index) => ({
           pairId: planPairs[index]?.pairId ?? `pin-${String(index + 1)}`,
           center,
           ...socketVolume,
-        })),
+        }));
+      const axial = validateSocketDepth(
+        femaleSide,
+        socketSweeps,
         tolerance,
         cancellation,
+        femaleBroadphase,
       );
       if (!axial.ok) {
         const refusal = axial.refusal;
@@ -1029,32 +1068,62 @@ export async function splitWithConnectors(
             : {}),
         });
       }
+      // RELEASE 2, SLICE 2D. `support-v1`: is there at least as much material around the socket and behind the pin root as Pybrix
+      // already requires around a connector at the cut face? The same shared validator for a manual and an automatic plan, run
+      // after every earlier check and before the first Boolean, over EVERY socket of the plan: one unsupported socket refuses the
+      // whole plan with nothing built. No other site, size or depth is tried.
+      const supportMargin = connectorSupportMargin(r, tolerance);
+      const support = validateConnectorSupport({
+        female: femaleSide,
+        femaleBroadphase,
+        male: maleSide,
+        sockets: socketSweeps,
+        pinRadius: r,
+        margin: supportMargin,
+        tolerance,
+        cancellation,
+      });
+      if (!support.ok) {
+        const refusal = support.refusal;
+        if (automatic)
+          automaticDiagnostics.reason =
+            refusal === ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT
+              ? 'SOCKET_SUPPORT_INSUFFICIENT'
+              : refusal === ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT
+                ? 'PIN_ROOT_SUPPORT_INSUFFICIENT'
+                : 'SUPPORT_VALIDATION_UNAVAILABLE';
+        const first = 'failures' in support ? support.failures[0] : undefined;
+        throw invalidState(describeSupportFailure(refusal), {
+          code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
+          refusal,
+          policy: support.policy,
+          pinRadius: r,
+          socketRadius: socketVolume.radius,
+          socketDepth: socketVolume.depth,
+          ...('margin' in support ? { margin: support.margin } : {}),
+          ...('reason' in support ? { reason: support.reason, role: support.role } : {}),
+          ...(first === undefined
+            ? {}
+            : {
+                role: first.role,
+                pairId: first.pairId,
+                faceIndex: first.faceIndex,
+                ...(first.dimension === undefined ? {} : { dimension: first.dimension }),
+              }),
+          ...('failures' in support
+            ? {
+                invalidPairs: new Set(support.failures.map((failure) => failure.pairId)).size,
+                checkedPairs: support.checked,
+                femaleFailures: support.failures.filter((failure) => failure.role === 'FEMALE')
+                  .length,
+                maleFailures: support.failures.filter((failure) => failure.role === 'MALE').length,
+              }
+            : {}),
+        });
+      }
       for (const center of sites) {
         if (automatic) automaticDiagnostics.placementAttempts++;
         throwIfCancelled(cancellation);
-        if (plan) {
-          const n = unit(plane.normal),
-            extent = c.depth + plan.wall;
-          for (const [piece, sign, depth] of [
-            [pieceA, 1, plan.wall],
-            [pieceB, -1, extent],
-          ] as const) {
-            const axis = scale(n, sign),
-              guard = cylinder(
-                add(center, scale(axis, depth / 2 + tolerance * 8)),
-                axis,
-                r + c.clearance + plan.wall,
-                depth,
-              );
-            const inside = (
-              await runValidatedBoolean(backend, 'intersection', piece, guard, cancellation)
-            ).mesh;
-            if (meshVolume(inside) < meshVolume(guard) * (1 - 1e-4)) {
-              automaticDiagnostics.reason = 'INSUFFICIENT_WALL';
-              throw invalidState('Safe connector wall clearance could not be proven.');
-            }
-          }
-        }
         placements.push(center);
         const axis = socketVolume.axis,
           overlap = Math.max(tolerance * 8, c.depth * 1e-4),

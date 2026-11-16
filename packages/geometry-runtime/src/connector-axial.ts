@@ -32,11 +32,13 @@
  * the axis point to that polygon with `radius - tolerance`. A point is within radius of the axis iff its projection is, so
  * the polygon meets the open cylinder iff that distance is below the radius.
  *
- * `FaceBvh` is the BROADPHASE ONLY. One tree is built per call over the receiving piece and reused by every socket of the
- * plan; a candidate is a triangle whose box meets the socket's box, and is then tested exactly. Candidacy proves nothing.
+ * `FaceBvh` is the BROADPHASE ONLY. One tree is built per PLAN over the receiving piece (lazily, by the first check that needs
+ * it: `createReceivingBroadphase`) and reused by every socket of the plan AND by the Slice 2D support check, which asks the same
+ * question of a larger sweep; a candidate is a triangle whose box meets the sweep's box, and is then tested exactly. Candidacy
+ * proves nothing.
  *
- * It decides nothing about lateral wall thickness, root support, units, or another site; it runs no Boolean and searches for
- * nothing. It imports a TYPE from the kernel family and the shared broadphase, and nothing from React, Three.js, `apps/**`,
+ * It decides nothing about lateral wall thickness, root support (Slice 2D asks those of a larger sweep through the same
+ * predicate), units, or another site; it runs no Boolean and searches for nothing. It imports a TYPE from the kernel family and the shared broadphase, and nothing from React, Three.js, `apps/**`,
  * `mesh-hole-fill`, `file-formats` or any network API.
  */
 import { createCounters, FaceBvh, type BroadphaseBudget } from '@cadfixer/mesh-core/spatial';
@@ -77,7 +79,7 @@ export type AxialUnavailableReason =
   | 'RESOURCE_LIMIT';
 
 export interface AxialStats {
-  /** Trees built: 0 when there was nothing to check, otherwise exactly 1 per call. */
+  /** Trees the shared broadphase has built so far: 0 when nothing needed one, otherwise exactly 1 per plan. */
   readonly builds: number;
   readonly queries: number;
   readonly candidates: number;
@@ -125,7 +127,7 @@ const ORIGIN: Vec3 = [0, 0, 0];
 const dot3 = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 /** An orthonormal pair perpendicular to a unit axis, chosen deterministically from the axis alone. */
-function perpendicularBasis(axis: Vec3): { readonly u: Vec3; readonly v: Vec3 } {
+export function perpendicularBasis(axis: Vec3): { readonly u: Vec3; readonly v: Vec3 } {
   const reference: Vec3 = Math.abs(axis[0]) < 0.8 ? [1, 0, 0] : [0, 1, 0],
     cross = (a: Vec3, b: Vec3): Vec3 => [
       a[1] * b[2] - a[2] * b[1],
@@ -207,11 +209,173 @@ export function triangleBreachesSocket(
   return (inside ? 0 : nearest) < reach;
 }
 
+/** Why a piece cannot be examined, or `undefined` when it can. The same preconditions guard every check that reads a piece. */
+export function pieceProblem(
+  piece: ReceivingPiece,
+  tolerance: number,
+): AxialUnavailableReason | undefined {
+  const faces = piece.mesh.indices.length / 3;
+  if (!piece.closed) return 'PIECE_NOT_CLOSED';
+  if (!Number.isInteger(faces) || faces < 4 || piece.provenance.length !== faces)
+    return 'PROVENANCE_MISMATCH';
+  if (!Number.isFinite(tolerance) || !(tolerance >= 0)) return 'INVALID_SWEEP';
+  return undefined;
+}
+
+/** Whether a sweep can be tested at all: finite, a unit axis, a radius above the tolerance, a positive depth. */
+export function sweepIsUsable(sweep: SocketSweep, tolerance: number): boolean {
+  return (
+    sweep.center.every(Number.isFinite) &&
+    sweep.axis.every(Number.isFinite) &&
+    Math.abs(Math.hypot(...sweep.axis) - 1) <= 1e-9 &&
+    Number.isFinite(sweep.radius) &&
+    sweep.radius > tolerance &&
+    Number.isFinite(sweep.depth) &&
+    sweep.depth > 0
+  );
+}
+
+/** The box of a sweep (a cylinder): its two end centres' box, grown by the end disc's extent on each axis, plus the tolerance. */
+export function sweepBox(
+  sweep: SocketSweep,
+  tolerance: number,
+): { readonly lo: [number, number, number]; readonly hi: [number, number, number] } {
+  const near: Vec3 = [
+      sweep.center[0] - sweep.axis[0] * tolerance,
+      sweep.center[1] - sweep.axis[1] * tolerance,
+      sweep.center[2] - sweep.axis[2] * tolerance,
+    ],
+    far: Vec3 = [
+      sweep.center[0] + sweep.axis[0] * (sweep.depth + tolerance),
+      sweep.center[1] + sweep.axis[1] * (sweep.depth + tolerance),
+      sweep.center[2] + sweep.axis[2] * (sweep.depth + tolerance),
+    ],
+    lo: [number, number, number] = [0, 0, 0],
+    hi: [number, number, number] = [0, 0, 0];
+  for (let k = 0; k < 3; k++) {
+    const spread = sweep.radius * Math.sqrt(Math.max(0, 1 - (sweep.axis[k] ?? 0) ** 2)) + tolerance;
+    lo[k] = Math.min(near[k] ?? 0, far[k] ?? 0) - spread;
+    hi[k] = Math.max(near[k] ?? 0, far[k] ?? 0) + spread;
+  }
+  return { lo, hi };
+}
+
+/** A built broadphase over one receiving piece: the tree and the Float64 positions it was built from. */
+export interface BuiltBroadphase {
+  readonly tree: FaceBvh;
+  readonly positions: Float64Array;
+}
+
+/**
+ * THE ONE FEMALE BROADPHASE OF A PLAN. Created cheaply (nothing is built); the first `acquire` builds the tree, every later one
+ * returns the same object, so the Slice 2C depth check and the Slice 2D support check share exactly one build, whichever asks
+ * first. `builds` is the number of trees built so far (0 or 1) and is what the stats report.
+ * The build is one synchronous pass that cannot poll a flag: a Cancel is honoured before it, not inside it.
+ */
+export interface ReceivingBroadphase {
+  readonly builds: number;
+  acquire(cancellation: CancellationToken): BuiltBroadphase | 'RESOURCE_LIMIT';
+}
+
+export function createReceivingBroadphase(piece: ReceivingPiece): ReceivingBroadphase {
+  let built: BuiltBroadphase | 'RESOURCE_LIMIT' | undefined,
+    builds = 0;
+  return {
+    get builds(): number {
+      return builds;
+    },
+    acquire(cancellation: CancellationToken): BuiltBroadphase | 'RESOURCE_LIMIT' {
+      if (built !== undefined) return built;
+      throwIfCancelled(cancellation);
+      const { mesh } = piece;
+      try {
+        const positions = Float64Array.from(mesh.positions);
+        const tree = FaceBvh.build(positions, mesh.indices, 0, mesh.indices.length / 3);
+        builds = 1;
+        built = { tree, positions };
+      } catch (error) {
+        // An allocation failure is a resource refusal of THIS check, never a pass and never an untyped internal failure.
+        if (error instanceof RangeError) {
+          built = 'RESOURCE_LIMIT';
+          return built;
+        }
+        throw error;
+      }
+      return built;
+    },
+  };
+}
+
+export interface TreeQuery {
+  /** The first breaching face in the broadphase's deterministic order, or -1. */
+  readonly breach: number;
+  /** False when the broadphase stopped on its budget before the traversal finished. */
+  readonly finished: boolean;
+  readonly candidates: number;
+  readonly exactTests: number;
+}
+
+/**
+ * One sweep against the shared tree: the box query, then the exact test of every candidate that is not the entry cap.
+ * Slice 2C calls it with the socket as it is; Slice 2D calls it with the socket grown by the support margin.
+ */
+export function queryTreeForBreach(
+  built: BuiltBroadphase,
+  piece: ReceivingPiece,
+  sweep: SocketSweep,
+  tolerance: number,
+): TreeQuery {
+  const faces = piece.mesh.indices.length / 3,
+    { tree, positions } = built,
+    indices = piece.mesh.indices,
+    // A correct traversal enters each node once and tests each leaf face once, so these can never fire spuriously; they guard
+    // a defect in the tree, which must fail closed rather than pass a socket unexamined.
+    budget: BroadphaseBudget = {
+      maxNodeVisits: tree.nodeCount,
+      maxAabbTests: tree.nodeCount + faces,
+      maxCandidates: faces,
+    },
+    basis = perpendicularBasis(sweep.axis),
+    { lo, hi } = sweepBox(sweep, tolerance),
+    counters = createCounters();
+  let breach = -1,
+    exactTests = 0;
+  const finished = tree.queryBox(
+    lo,
+    hi,
+    (face) => {
+      if (piece.provenance[face] === ENTRY_CAP_PROVENANCE) return true;
+      exactTests++;
+      const ia = (indices[face * 3] ?? 0) * 3,
+        ib = (indices[face * 3 + 1] ?? 0) * 3,
+        ic = (indices[face * 3 + 2] ?? 0) * 3;
+      if (
+        triangleBreachesSocket(
+          sweep,
+          basis,
+          tolerance,
+          [positions[ia] ?? 0, positions[ia + 1] ?? 0, positions[ia + 2] ?? 0],
+          [positions[ib] ?? 0, positions[ib + 1] ?? 0, positions[ib + 2] ?? 0],
+          [positions[ic] ?? 0, positions[ic + 1] ?? 0, positions[ic + 2] ?? 0],
+        )
+      ) {
+        breach = face;
+        return false;
+      }
+      return true;
+    },
+    counters,
+    budget,
+  );
+  return { breach, finished, candidates: counters.candidates, exactTests };
+}
+
 export function validateSocketDepth(
   piece: ReceivingPiece,
   sweeps: readonly SocketSweep[],
   tolerance: number,
   cancellation: CancellationToken,
+  broadphase: ReceivingBroadphase = createReceivingBroadphase(piece),
 ): AxialValidation {
   if (sweeps.length === 0) return { ok: true, checked: 0, stats: NO_STATS };
   const unavailable = (
@@ -223,111 +387,35 @@ export function validateSocketDepth(
     reason,
     stats,
   });
-  const { mesh, provenance } = piece,
-    faces = mesh.indices.length / 3;
-  if (!piece.closed) return unavailable('PIECE_NOT_CLOSED');
-  if (!Number.isInteger(faces) || faces < 4 || provenance.length !== faces)
-    return unavailable('PROVENANCE_MISMATCH');
-  if (!Number.isFinite(tolerance) || !(tolerance >= 0)) return unavailable('INVALID_SWEEP');
+  const problem = pieceProblem(piece, tolerance);
+  if (problem !== undefined) return unavailable(problem);
   for (const sweep of sweeps)
-    if (
-      !sweep.center.every(Number.isFinite) ||
-      !sweep.axis.every(Number.isFinite) ||
-      Math.abs(Math.hypot(...sweep.axis) - 1) > 1e-9 ||
-      !Number.isFinite(sweep.radius) ||
-      !(sweep.radius > tolerance) ||
-      !Number.isFinite(sweep.depth) ||
-      !(sweep.depth > 0)
-    )
-      return unavailable('INVALID_SWEEP');
+    if (!sweepIsUsable(sweep, tolerance)) return unavailable('INVALID_SWEEP');
 
-  // ONE tree per call, over the receiving piece alone, bound to this exact mesh object for the call's lifetime. Positions are
-  // widened to Float64 (exact); nothing is cached beyond this function.
-  // The build is one synchronous pass that cannot poll a flag, so a Cancel is honoured before it and between sockets.
+  // ONE tree per plan, over the receiving piece alone, bound to this exact mesh object. Positions are widened to Float64
+  // (exact); nothing is cached beyond the plan. The build cannot poll a flag, so a Cancel is honoured before it and between sockets.
   throwIfCancelled(cancellation);
-  let positions: Float64Array, tree: FaceBvh;
-  try {
-    positions = Float64Array.from(mesh.positions);
-    tree = FaceBvh.build(positions, mesh.indices, 0, faces);
-  } catch (error) {
-    // An allocation failure is a resource refusal of THIS check, never a pass and never an untyped internal failure.
-    if (error instanceof RangeError) return unavailable('RESOURCE_LIMIT');
-    throw error;
-  }
-  const indices = mesh.indices,
-    // A correct traversal enters each node once and tests each leaf face once, so these can never fire spuriously; they guard
-    // a defect in the tree, which must fail closed rather than pass a socket unexamined.
-    budget: BroadphaseBudget = {
-      maxNodeVisits: tree.nodeCount,
-      maxAabbTests: tree.nodeCount + faces,
-      maxCandidates: faces,
-    };
+  const built = broadphase.acquire(cancellation);
+  if (built === 'RESOURCE_LIMIT') return unavailable('RESOURCE_LIMIT');
   let queries = 0,
     candidates = 0,
     exactTests = 0;
-  const stats = (): AxialStats => ({ builds: 1, queries, candidates, exactTests });
+  const stats = (): AxialStats => ({ builds: broadphase.builds, queries, candidates, exactTests });
   const failures: AxialFailure[] = [];
   for (const sweep of sweeps) {
     throwIfCancelled(cancellation);
-    const basis = perpendicularBasis(sweep.axis),
-      near: Vec3 = [
-        sweep.center[0] - sweep.axis[0] * tolerance,
-        sweep.center[1] - sweep.axis[1] * tolerance,
-        sweep.center[2] - sweep.axis[2] * tolerance,
-      ],
-      far: Vec3 = [
-        sweep.center[0] + sweep.axis[0] * (sweep.depth + tolerance),
-        sweep.center[1] + sweep.axis[1] * (sweep.depth + tolerance),
-        sweep.center[2] + sweep.axis[2] * (sweep.depth + tolerance),
-      ],
-      lo: [number, number, number] = [0, 0, 0],
-      hi: [number, number, number] = [0, 0, 0];
-    for (let k = 0; k < 3; k++) {
-      // the box of a cylinder: the box of its two end centres, grown by the end disc's extent on that axis (plus the tolerance)
-      const spread =
-        sweep.radius * Math.sqrt(Math.max(0, 1 - (sweep.axis[k] ?? 0) ** 2)) + tolerance;
-      lo[k] = Math.min(near[k] ?? 0, far[k] ?? 0) - spread;
-      hi[k] = Math.max(near[k] ?? 0, far[k] ?? 0) + spread;
-    }
-    let breach = -1;
-    const counters = createCounters(),
-      finished = tree.queryBox(
-        lo,
-        hi,
-        (face) => {
-          if (provenance[face] === ENTRY_CAP_PROVENANCE) return true;
-          exactTests++;
-          const ia = (indices[face * 3] ?? 0) * 3,
-            ib = (indices[face * 3 + 1] ?? 0) * 3,
-            ic = (indices[face * 3 + 2] ?? 0) * 3;
-          if (
-            triangleBreachesSocket(
-              sweep,
-              basis,
-              tolerance,
-              [positions[ia] ?? 0, positions[ia + 1] ?? 0, positions[ia + 2] ?? 0],
-              [positions[ib] ?? 0, positions[ib + 1] ?? 0, positions[ib + 2] ?? 0],
-              [positions[ic] ?? 0, positions[ic + 1] ?? 0, positions[ic + 2] ?? 0],
-            )
-          ) {
-            breach = face;
-            return false;
-          }
-          return true;
-        },
-        counters,
-        budget,
-      );
+    const result = queryTreeForBreach(built, piece, sweep, tolerance);
     queries++;
-    candidates += counters.candidates;
-    if (breach >= 0)
+    candidates += result.candidates;
+    exactTests += result.exactTests;
+    if (result.breach >= 0)
       failures.push({
         pairId: sweep.pairId,
-        faceIndex: breach,
+        faceIndex: result.breach,
         radius: sweep.radius,
         depth: sweep.depth,
       });
-    else if (!finished) return unavailable('BROADPHASE_BUDGET', stats());
+    else if (!result.finished) return unavailable('BROADPHASE_BUDGET', stats());
   }
   return failures.length === 0
     ? { ok: true, checked: sweeps.length, stats: stats() }

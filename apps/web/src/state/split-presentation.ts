@@ -322,7 +322,7 @@ export const SPLIT_COPY = Object.freeze({
   connectorsMeta: 'Placed automatically',
   connectorsGroup: 'Connector type',
   placementNote:
-    'Placed automatically on the cut face, away from its edges. Pybrix checks that the connector sits within the cut face; it does not measure the wall behind it. There is no manual placement.',
+    'Placed automatically on the cut face, away from its edges. Pybrix checks that the connector sits within the cut face, that its socket stays inside the receiving piece, and that the material around the socket and the pin base is no thinner than the edge margin it already requires at the cut face. That is a geometric check, not a claim about strength. There is no manual placement.',
   connectorsNeedMillimetres:
     'Connectors have physical sizes, so Pybrix needs to know what this model’s numbers mean. Choose its units to continue.',
   fitNote: 'Printers vary: 0.2 mm is a starting point, not a guarantee of fit.',

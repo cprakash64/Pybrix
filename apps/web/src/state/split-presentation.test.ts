@@ -276,9 +276,15 @@ describe('export and wording', () => {
     expect(surface).not.toContain('both pieces closed');
   });
 
-  it('does not claim connectors are placed inside material or measured behind the face', () => {
-    expect(SPLIT_COPY.placementNote.toLowerCase()).not.toContain('inside its material');
-    expect(SPLIT_COPY.placementNote).toContain('does not measure the wall behind it');
+  it('says what is checked about a connector and claims no strength, measured thickness or printability', () => {
+    const note = SPLIT_COPY.placementNote.toLowerCase();
+    expect(note).not.toContain('inside its material');
+    // Slice 2D: the socket's depth and the material around it ARE checked, and the note says so in the same words the refusals use
+    expect(SPLIT_COPY.placementNote).toContain('its socket stays inside the receiving piece');
+    expect(SPLIT_COPY.placementNote).toContain('no thinner than the edge margin');
+    expect(SPLIT_COPY.placementNote).toContain('not a claim about strength');
+    for (const banned of ['does not measure the wall', 'strong', 'durable', 'safe', 'printable'])
+      expect(note.replace('not a claim about strength', '')).not.toContain(banned);
   });
 
   it('claims no printability, fit or capability CAD Fixer lacks', () => {

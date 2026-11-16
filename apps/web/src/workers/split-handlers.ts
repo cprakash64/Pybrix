@@ -5,6 +5,7 @@ import {
   releaseScopeReceipt,
 } from './semantic-scope-authority';
 import { semanticScopeBinding } from './semantic-native-finalists';
+import { uniformPhysicalScale } from './placement-scale';
 import { qualifySemanticFinalists } from '@cadfixer/auto-split';
 import {
   recordSemanticNativeRefusal,
@@ -62,26 +63,6 @@ const STAGE_PROGRESS: Readonly<Record<SplitStage, readonly [number, string]>> = 
   [SplitStage.BuildingCutSurfaces]: [0.6, 'Building cut surfaces…'],
   [SplitStage.AddingConnectors]: [0.7, 'Adding connectors…'],
 });
-
-/** Physical sizing only supports an orthogonal uniform source transform. */
-function uniformPhysicalScale(t: readonly number[]): number {
-  const axes = [
-      [defined(t[0]), defined(t[1]), defined(t[2])],
-      [defined(t[3]), defined(t[4]), defined(t[5])],
-      [defined(t[6]), defined(t[7]), defined(t[8])],
-    ],
-    lengths = axes.map((a) => Math.hypot(...a)),
-    scale = defined(lengths[0]);
-  if (!(scale > 0) || lengths.some((x) => Math.abs(x - scale) > scale * 1e-6)) return NaN;
-  for (let i = 0; i < 3; i++)
-    for (let j = i + 1; j < 3; j++)
-      if (
-        Math.abs(defined(axes[i]).reduce((v, x, k) => v + x * defined(defined(axes[j])[k]), 0)) >
-        scale * scale * 1e-6
-      )
-        return NaN;
-  return scale;
-}
 
 const createSingleSplit: OperationHandler<'split/create'> = async (payload, context) => {
   context.throwIfCancelled();
@@ -301,11 +282,6 @@ export const splitDiscardHandler: OperationHandler<'split/discard'> = (payload) 
   cancelScopeReceipt(payload.candidate);
   return Promise.resolve({ value: { released: splitCandidates.discard(payload.candidate) } });
 };
-
-function defined<T>(value: T | undefined): T {
-  if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
-  return value;
-}
 
 /** These operations expose only bounded authority metadata, never candidate geometry. */
 export const splitCommitStatusHandler: OperationHandler<'split/commit-status'> = (payload) =>

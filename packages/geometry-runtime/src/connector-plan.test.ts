@@ -5,6 +5,9 @@ import {
   LEGACY_CONNECTOR_POLICY,
   LEGACY_DETAILS_CODE_TO_REFUSAL,
   PRODUCED_IN_SLICE_1,
+  PRODUCED_IN_SLICE_2B,
+  PRODUCED_IN_SLICE_2C,
+  PRODUCED_IN_SLICE_2D,
   REFUSAL_TO_LEGACY_DETAILS_CODE,
   ValidatedConnectorPlan,
   connectorManifestOf,
@@ -224,7 +227,6 @@ describe('plan and validation (identity only)', () => {
     const draft = draftFromRequest({ kind: 'automatic', unit: 'furlong' }, face, 1);
     const plan = planAutomaticPins(draft, face, {
       connector: { ...PIN, count: 2 },
-      wall: 1,
       centers: SITES,
     });
     const checked = validateConnectorPlan(plan, face);
@@ -256,18 +258,16 @@ describe('plan and validation (identity only)', () => {
   it('recovers the automatic path shape only for an automatic plan', () => {
     const draft = draftFromRequest({ kind: 'automatic', unit: 'millimeter' }, face, 1);
     const checked = validateConnectorPlan(
-      planAutomaticPins(draft, face, { connector: PIN, wall: 0.9, centers: SITES }),
+      planAutomaticPins(draft, face, { connector: PIN, centers: SITES }),
       face,
     );
     if (!checked.ok) throw new Error('expected a valid automatic plan');
-    expect(toLegacyAutomaticPlan(checked.validated)).toEqual({
-      connector: PIN,
-      wall: 0.9,
-      centers: SITES,
-    });
+    // Slice 2D retired the automatic guard wall from the plan: material support is judged by `support-v1`, not carried here.
+    expect(toLegacyAutomaticPlan(checked.validated)).toEqual({ connector: PIN, centers: SITES });
+    expect('wall' in checked.validated.plan.legacy).toBe(false);
     const manual = validateConnectorPlan(manualPlan(face), face);
     if (!manual.ok) throw new Error('expected a valid manual plan');
-    expect(() => toLegacyAutomaticPlan(manual.validated)).toThrow(/guard wall/);
+    expect(() => toLegacyAutomaticPlan(manual.validated)).toThrow(/automatic pin plan/);
   });
 });
 
@@ -357,15 +357,33 @@ describe('typed refusal vocabulary', () => {
     const declared = Object.values(ConnectorRefusal);
     for (const code of PRODUCED_IN_SLICE_1) expect(declared).toContain(code);
     // the physical codes later slices need exist, and are NOT produced yet
-    for (const later of [
-      'INSUFFICIENT_WALL_BEHIND',
-      'EXTERIOR_BREAKTHROUGH',
-      'RESOURCE_LIMIT',
-      'UNSUPPORTED_TRANSFORM',
-    ] as const) {
+    for (const later of ['EXTERIOR_BREAKTHROUGH', 'RESOURCE_LIMIT'] as const) {
       expect(declared).toContain(later);
       expect(PRODUCED_IN_SLICE_1).not.toContain(later);
     }
+  });
+  it('Slice 2D produces exactly the support and transform codes, disjoint from every earlier slice', () => {
+    expect([...PRODUCED_IN_SLICE_2D].sort()).toEqual(
+      [
+        'PIN_ROOT_SUPPORT_INSUFFICIENT',
+        'SOCKET_SUPPORT_INSUFFICIENT',
+        'SUPPORT_VALIDATION_UNAVAILABLE',
+        'UNSUPPORTED_TRANSFORM',
+      ].sort(),
+    );
+    const declared = Object.values(ConnectorRefusal);
+    for (const code of PRODUCED_IN_SLICE_2D) {
+      expect(declared).toContain(code);
+      for (const earlier of [PRODUCED_IN_SLICE_1, PRODUCED_IN_SLICE_2B, PRODUCED_IN_SLICE_2C])
+        expect(earlier).not.toContain(code);
+    }
+    // the reserved wall names were replaced by the codes that are actually produced, not left to carry a second meaning
+    for (const retired of [
+      'INSUFFICIENT_WALL_BEHIND',
+      'INSUFFICIENT_WALL_AROUND',
+      'INSUFFICIENT_ROOT_MATERIAL',
+    ])
+      expect(declared).not.toContain(retired);
   });
   it('maps every legacy details.code the product throws to its typed refusal, and back', () => {
     expect(refusalForLegacyCode('UNKNOWN_UNITS')).toBe(ConnectorRefusal.UNIT_UNKNOWN);

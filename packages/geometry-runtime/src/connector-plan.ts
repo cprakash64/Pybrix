@@ -75,16 +75,35 @@ export const ConnectorRefusal = {
    * stopped). Fails closed. Legacy details code: `CONNECTOR_AXIAL_VALIDATION_UNAVAILABLE`.
    */
   AXIAL_VALIDATION_UNAVAILABLE: 'AXIAL_VALIDATION_UNAVAILABLE',
-  // ---- declared for later slices; NOT produced yet ----
+  // ---- produced by Slice 2D (material support, `support-v1`) ----
+  /**
+   * The material around the socket (beside it, or beyond its far end) is geometrically weaker than the margin Pybrix already
+   * requires at the cut face: the socket volume grown by that margin reaches another boundary of the receiving piece. This is
+   * NOT a breakthrough (Slice 2C) and says nothing about strength. Legacy details code: `CONNECTOR_SOCKET_SUPPORT_INSUFFICIENT`.
+   */
+  SOCKET_SUPPORT_INSUFFICIENT: 'SOCKET_SUPPORT_INSUFFICIENT',
+  /**
+   * The material around or behind the pin root is geometrically weaker than the same margin: the cylinder of the pin radius
+   * grown by it, and the margin deep, reaches another boundary of the male piece.
+   * Legacy details code: `CONNECTOR_PIN_ROOT_SUPPORT_INSUFFICIENT`.
+   */
+  PIN_ROOT_SUPPORT_INSUFFICIENT: 'PIN_ROOT_SUPPORT_INSUFFICIENT',
+  /**
+   * A piece could not be examined for support (not a closed solid, provenance missing, an unusable envelope, the broadphase
+   * stopped, or an allocation failed). Fails closed. Legacy details code: `CONNECTOR_SUPPORT_VALIDATION_UNAVAILABLE`.
+   */
+  SUPPORT_VALIDATION_UNAVAILABLE: 'SUPPORT_VALIDATION_UNAVAILABLE',
+  /**
+   * The part's placement is not a similarity (a non-uniform scale or a shear, or a degenerate one), so the support of a
+   * connector is not one number in physical space. Fails closed until audit C03 defines the transform semantics.
+   * Legacy details code: `CONNECTOR_UNSUPPORTED_TRANSFORM`.
+   */
   UNSUPPORTED_TRANSFORM: 'UNSUPPORTED_TRANSFORM',
+  // ---- declared for later slices; NOT produced yet ----
   RESOURCE_LIMIT: 'RESOURCE_LIMIT',
   DIMENSION_OUT_OF_POLICY: 'DIMENSION_OUT_OF_POLICY',
   /** Reserved. Slice 2B reports the whole FOOTPRINT (the stronger statement) rather than the site alone. */
   SITE_OUTSIDE_INTERFACE: 'SITE_OUTSIDE_INTERFACE',
-  /** Reserved for the wall-thickness slice. Slice 2C answers breakthrough, not thickness. */
-  INSUFFICIENT_WALL_BEHIND: 'INSUFFICIENT_WALL_BEHIND',
-  INSUFFICIENT_WALL_AROUND: 'INSUFFICIENT_WALL_AROUND',
-  INSUFFICIENT_ROOT_MATERIAL: 'INSUFFICIENT_ROOT_MATERIAL',
   /** Reserved. Slice 2C reports SOCKET_BREAKTHROUGH, which also covers cavities and other shells. */
   EXTERIOR_BREAKTHROUGH: 'EXTERIOR_BREAKTHROUGH',
   CONNECTOR_COLLISION: 'CONNECTOR_COLLISION',
@@ -104,6 +123,20 @@ export type FootprintRefusal =
 export type AxialRefusal =
   | typeof ConnectorRefusal.SOCKET_BREAKTHROUGH
   | typeof ConnectorRefusal.AXIAL_VALIDATION_UNAVAILABLE;
+
+/** The reasons the material-support check can give. */
+export type SupportRefusal =
+  | typeof ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT
+  | typeof ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT
+  | typeof ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE;
+
+/** Codes Slice 2D adds. A test keeps this honest, and keeps it disjoint from the earlier slices'. */
+export const PRODUCED_IN_SLICE_2D: readonly ConnectorRefusal[] = Object.freeze([
+  ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT,
+  ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT,
+  ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE,
+  ConnectorRefusal.UNSUPPORTED_TRANSFORM,
+]);
 
 /** Codes Slice 2C adds. A test keeps this honest, and keeps it disjoint from the earlier slices'. */
 export const PRODUCED_IN_SLICE_2C: readonly AxialRefusal[] = Object.freeze([
@@ -144,6 +177,10 @@ export const LEGACY_DETAILS_CODE_TO_REFUSAL: Readonly<Record<string, ConnectorRe
     CONNECTOR_INTERFACE_REGION_UNAVAILABLE: ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE,
     CONNECTOR_SOCKET_BREAKTHROUGH: ConnectorRefusal.SOCKET_BREAKTHROUGH,
     CONNECTOR_AXIAL_VALIDATION_UNAVAILABLE: ConnectorRefusal.AXIAL_VALIDATION_UNAVAILABLE,
+    CONNECTOR_SOCKET_SUPPORT_INSUFFICIENT: ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT,
+    CONNECTOR_PIN_ROOT_SUPPORT_INSUFFICIENT: ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT,
+    CONNECTOR_SUPPORT_VALIDATION_UNAVAILABLE: ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE,
+    CONNECTOR_UNSUPPORTED_TRANSFORM: ConnectorRefusal.UNSUPPORTED_TRANSFORM,
   });
 
 /** The legacy `details.code` for a refusal this module can produce, so a plan failure keeps the code the page knows. */
@@ -158,6 +195,10 @@ export const REFUSAL_TO_LEGACY_DETAILS_CODE: Readonly<Partial<Record<ConnectorRe
     [ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE]: 'CONNECTOR_INTERFACE_REGION_UNAVAILABLE',
     [ConnectorRefusal.SOCKET_BREAKTHROUGH]: 'CONNECTOR_SOCKET_BREAKTHROUGH',
     [ConnectorRefusal.AXIAL_VALIDATION_UNAVAILABLE]: 'CONNECTOR_AXIAL_VALIDATION_UNAVAILABLE',
+    [ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT]: 'CONNECTOR_SOCKET_SUPPORT_INSUFFICIENT',
+    [ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT]: 'CONNECTOR_PIN_ROOT_SUPPORT_INSUFFICIENT',
+    [ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE]: 'CONNECTOR_SUPPORT_VALIDATION_UNAVAILABLE',
+    [ConnectorRefusal.UNSUPPORTED_TRANSFORM]: 'CONNECTOR_UNSUPPORTED_TRANSFORM',
   });
 
 /** The typed refusal for a legacy `details.code`, or `undefined` for a code this vocabulary does not name. */
@@ -485,8 +526,6 @@ export interface ConnectorPlan {
   readonly legacy: {
     readonly connector: SplitConnector;
     readonly centers: readonly SplitVector[];
-    /** Present for automatic plans only: the guard wall the automatic path proves around each site. */
-    readonly wall?: number;
   };
 }
 
@@ -536,18 +575,13 @@ export function planAutomaticPins(
   face: GeneratedSeparationInterface,
   proposal: {
     readonly connector: PinConnector;
-    readonly wall: number;
     readonly centers: readonly SplitVector[];
   },
 ): ConnectorPlan {
   return Object.freeze({
     draft,
     pairs: pairsFor(face, proposal.connector, proposal.centers),
-    legacy: Object.freeze({
-      connector: proposal.connector,
-      centers: proposal.centers,
-      wall: proposal.wall,
-    }),
+    legacy: Object.freeze({ connector: proposal.connector, centers: proposal.centers }),
   });
 }
 
@@ -624,7 +658,7 @@ export function validateConnectorPlan(
   return { ok: true, validated: ValidatedConnectorPlan.issue(ISSUE, plan) };
 }
 
-/** What the existing construction code takes: the connector, its sites, and (automatic) the guard wall. */
+/** What the existing construction code takes: the connector and its sites. */
 export function toLegacyConnectorPlan(validated: ValidatedConnectorPlan): ConnectorPlan['legacy'] {
   return validated.plan.legacy;
 }
@@ -632,13 +666,12 @@ export function toLegacyConnectorPlan(validated: ValidatedConnectorPlan): Connec
 /** The automatic path's own shape (`automaticPinPlan`'s return type), recovered from a validated automatic plan. */
 export function toLegacyAutomaticPlan(validated: ValidatedConnectorPlan): {
   readonly connector: PinConnector;
-  readonly wall: number;
   readonly centers: readonly SplitVector[];
 } {
-  const { connector, centers, wall } = validated.plan.legacy;
-  if (connector.kind !== 'pin' || wall === undefined)
-    throw new Error('Only a validated automatic pin plan carries a guard wall.');
-  return { connector, wall, centers };
+  const { connector, centers } = validated.plan.legacy;
+  if (connector.kind !== 'pin' || validated.plan.draft.kind !== 'automatic-pin')
+    throw new Error('Only a validated automatic pin plan is an automatic plan.');
+  return { connector, centers };
 }
 
 // ---------------------------------------------------------------- manifest

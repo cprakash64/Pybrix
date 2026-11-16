@@ -217,8 +217,15 @@ describe('centre inside the interface, circle crosses its exterior edge (case B,
     const { error } = await observe(await ledgeOffset(), pin(1, 3.8), DOWN);
     expect(details(error).code).toBe('CONNECTOR_FOOTPRINT_OUTSIDE_INTERFACE');
     expect(details(error).overreach as number).toBeCloseTo(0.1, 6);
-    const smaller = await observe(await ledgeOffset(), pin(1, 3.4), DOWN);
+    // a pin whose socket mouth (1.3 + 0.2) clears the edge by more than the cut-face margin (0.35 r) is accepted
+    const smaller = await observe(await ledgeOffset(), pin(1, 2.6), DOWN);
     expect(smaller.result?.connector.kind).toBe('pin');
+    // a socket mouth that fits the interface (1.9 against an edge 2 away) but not with the support margin beside it is NOT a
+    // footprint failure: it is refused by Slice 2D, which is the point of keeping the two questions apart
+    const tight = await observe(await ledgeOffset(), pin(1, 3.4), DOWN);
+    expect(tight.result).toBeUndefined();
+    expect(details(tight.error).code).toBe('CONNECTOR_SOCKET_SUPPORT_INSUFFICIENT');
+    expect(tight.booleans).toEqual([]);
   });
   it('accepts the same solid when the ledge is on the other piece, where the pole is the middle of the cap itself', async () => {
     const { result } = await observe(await ledgeOffset(), pin(1, 6), UP);

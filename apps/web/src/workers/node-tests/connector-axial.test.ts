@@ -316,22 +316,38 @@ describe('fixtures: the verdict of the production check equals the Boolean-kerne
     () => Promise<CanonicalMesh> | CanonicalMesh,
     Extract<SplitRequest['connector'], { kind: 'pin' }>,
     boolean,
+    boolean?,
   ])[] = [
     ['thin back wall, depth 6 into 3', thinBack, PIN_A(6), false],
     ['thin back wall, depth 2 into 3', thinBack, PIN_A(2), true],
     ['thick solid, depth 6', thick, PIN_A(6), true],
     ['sloped back, socket 2.2 wide (edge reaches the slope early)', sloped, PIN_A(6), false],
-    ['sloped back, socket 1.2 wide (stays inside the thicker part)', sloped, PIN_A(6, 2), true],
+    // the last column: does the plan ALSO pass Slice 2D (`support-v1`)? These two pass the depth check by the width of a hair and
+    // are the plans the support rule exists to refuse (a socket whose far corner or side wall comes within the cut-face margin).
+    [
+      'sloped back, socket 1.2 wide (stays inside the thicker part)',
+      sloped,
+      PIN_A(6, 2),
+      true,
+      false,
+    ],
     ['internal cavity under the site, depth 6', cavity, PIN_A(6), false],
     ['internal cavity under the site, depth 3', cavity, PIN_A(3), true],
-    ['cavity beside the socket but inside its bounding box', cavityNear, PIN_A(6), true],
+    ['cavity beside the socket but inside its bounding box', cavityNear, PIN_A(6), true, false],
   ];
-  for (const [name, make, connector, holds] of cases)
-    it(`${name}: ${holds ? 'accepted' : 'refused'}, as the reference says`, async () => {
+  for (const [name, make, connector, holds, supported = true] of cases)
+    it(`${name}: ${holds ? (supported ? 'accepted' : 'passes the depth check, refused by support') : 'refused'}, as the reference says`, async () => {
       const mesh = await make();
       expect(await referenceHolds(mesh, connector)).toBe(holds);
       const observed = await observe(mesh, connector);
+      // Slice 2C's question is answered the same way whatever Slice 2D then says
       expect(refusedAxially(observed)).toBe(!holds);
+      if (holds && !supported) {
+        expect(details(observed.error).code).toBe('CONNECTOR_SOCKET_SUPPORT_INSUFFICIENT');
+        expect(observed.result).toBeUndefined();
+        expect(observed.booleans).toEqual([]);
+        return;
+      }
       expect(observed.booleans.length).toBe(holds ? 2 : 0);
       if (holds) expect(observed.result?.connector.kind).toBe('pin');
     });

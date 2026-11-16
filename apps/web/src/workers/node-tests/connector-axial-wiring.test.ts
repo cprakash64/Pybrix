@@ -45,6 +45,7 @@ vi.mock('../../../../../packages/geometry-runtime/src/connector-axial', async (i
       sweeps: readonly SocketSweep[],
       tolerance: number,
       token: Parameters<typeof real.validateSocketDepth>[3],
+      broadphase: Parameters<typeof real.validateSocketDepth>[4],
     ): AxialValidation => {
       hooks.calls.push({ piece, sweeps, tolerance, token });
       const stats = { builds: 1, queries: 1, candidates: 0, exactTests: 0 };
@@ -70,7 +71,7 @@ vi.mock('../../../../../packages/geometry-runtime/src/connector-axial', async (i
           ],
           stats,
         };
-      return real.validateSocketDepth(piece, sweeps, tolerance, token);
+      return real.validateSocketDepth(piece, sweeps, tolerance, token, broadphase);
     },
   };
 });

@@ -32,7 +32,15 @@ export type AutomaticConnectorReason =
   /** Release 2, Slice 2C: the socket volume meets another boundary of the receiving piece before its full depth. */
   | 'SOCKET_BREAKTHROUGH'
   /** Release 2, Slice 2C: the receiving piece could not be examined, so no socket was judged. */
-  | 'AXIAL_VALIDATION_UNAVAILABLE';
+  | 'AXIAL_VALIDATION_UNAVAILABLE'
+  /** Release 2, Slice 2D: the grown socket (`support-v1`) reaches another boundary of the receiving piece. */
+  | 'SOCKET_SUPPORT_INSUFFICIENT'
+  /** Release 2, Slice 2D: the envelope behind the pin root (`support-v1`) reaches another boundary of the male piece. */
+  | 'PIN_ROOT_SUPPORT_INSUFFICIENT'
+  /** Release 2, Slice 2D: a piece could not be examined for support, so no connector was judged. */
+  | 'SUPPORT_VALIDATION_UNAVAILABLE'
+  /** Release 2, Slice 2D: the part's placement is a non-uniform scale or a shear (or degenerate); no connector is proposed. */
+  | 'UNSUPPORTED_TRANSFORM';
 export interface AutomaticConnectorDiagnostics {
   reason: AutomaticConnectorReason;
   proposedSites: number;
@@ -86,7 +94,16 @@ function exitDistance(
   }
   return Number.isFinite(nearest) ? nearest : undefined;
 }
-/** A bounded conservative proposal. The kernel subsequently proves full guard-volume containment. */
+/**
+ * A bounded conservative PROPOSAL: where the sites could go and how large a pin to try. It decides nothing about material support.
+ *
+ * SIZING, NOT VERIFICATION (Slice 2D). `wall` below is a sizing allowance the proposal leaves around its own sites and behind its own
+ * depth; the old Boolean guard-volume test that used to PROVE it in `splitWithConnectors` is retired, and the one verdict on material
+ * support is `support-v1` (`connector-support.ts`), applied to manual and automatic plans alike. The millimetre terms in this file
+ * (the 0.6 mm part of `wall`, the 6 mm depth, the 1–6 mm diameter range, the 0.2 mm clearance) are automatic-connector SIZING
+ * defaults: they choose what to propose, they refuse nothing on physical grounds, and they are the absolute connector sizing audit
+ * C03 still owns. A proposal that is too thin is refused by `support-v1`, in coordinates, with no unit.
+ */
 export function automaticPinPlan(
   a: CanonicalMesh,
   b: CanonicalMesh,
@@ -97,7 +114,7 @@ export function automaticPinPlan(
   tolerance: number,
   cancellation: CancellationToken,
   diagnostics?: AutomaticConnectorDiagnostics,
-): { connector: Pin; wall: number; centers: readonly SplitVector[] } | undefined {
+): { connector: Pin; centers: readonly SplitVector[] } | undefined {
   const started = Date.now(),
     budget = { visits: 0 };
   const record = (reason: AutomaticConnectorReason): void => {
@@ -116,7 +133,12 @@ export function automaticPinPlan(
     refuse('UNKNOWN_UNITS');
     return;
   }
-  if (!Number.isFinite(scale) || scale <= 0 || cut.outlineTruncated) {
+  if (!Number.isFinite(scale) || scale <= 0) {
+    // Slice 2D: a placement that is not a similarity (the worker reports NaN) has no single physical scale.
+    refuse('UNSUPPORTED_TRANSFORM');
+    return;
+  }
+  if (cut.outlineTruncated) {
     refuse('UNSUPPORTED_INTERFACE');
     return;
   }
@@ -200,7 +222,6 @@ export function automaticPinPlan(
   return {
     centers: points,
     connector: { kind: 'pin', count, diameter, depth, clearance, maleSide: 'A' },
-    wall,
   };
 }
 
