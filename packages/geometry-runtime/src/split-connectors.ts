@@ -27,6 +27,7 @@ import { splitMeshSHA } from './split-source-identity';
 import { runValidatedBoolean, type BooleanBackend } from './boolean-adapter';
 import { describeAxialFailure, validateSocketDepth } from './connector-axial';
 import { containFootprints, describeFootprintFailure } from './connector-footprint';
+import { connectorSupportMargin } from './connector-policy';
 import {
   ConnectorRefusal,
   REFUSAL_TO_LEGACY_DETAILS_CODE,
@@ -943,7 +944,7 @@ export async function splitWithConnectors(
           defined(selection),
           c.count,
           r + c.clearance,
-          Math.max(tolerance * 8, r * 0.35),
+          connectorSupportMargin(r, tolerance),
         );
         validatedPlan = issuePlan(
           planManualPins(draft, clip.interface, c, centers),
