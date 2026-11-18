@@ -1,3 +1,4 @@
+import { type PlacementClass, type PlacementRefusal } from '@cadfixer/mesh-core';
 import { isLengthUnit, millimetresPerUnit } from '@cadfixer/shared';
 
 /**
@@ -34,16 +35,30 @@ export type ConnectorScaleRefusal = 'UNKNOWN_UNITS' | 'UNSUPPORTED_TRANSFORM';
 
 export type MillimetresPerCoordinate =
   | { readonly ok: true; readonly mmPerCoordinate: number }
-  | { readonly ok: false; readonly refusal: ConnectorScaleRefusal };
+  | { readonly ok: false; readonly refusal: 'UNKNOWN_UNITS' }
+  | {
+      readonly ok: false;
+      readonly refusal: 'UNSUPPORTED_TRANSFORM';
+      /** WHY the placement is not a similarity: the classifier's own reason, carried, never recomputed or collapsed. */
+      readonly transformReason: PlacementRefusal;
+    };
 
-export interface ConnectorPhysicalContext {
-  /** The unit the coordinates are read in. Anything that is not a known unit is refused, never defaulted. */
-  readonly unit: string | undefined;
-  /** The placement's uniform scale, or NaN when the placement has none (`classifyPlacement`). */
-  readonly placementScale: number;
-  /** Whether the placement scale takes part in the factor. See the note above on why this is a parameter in C03-A. */
-  readonly placementScaleApplied: boolean;
-}
+/**
+ * What the factor depends on. A caller that does NOT apply the placement scale does not state a placement at all: there is nothing
+ * for the factor to read, and a placeholder would be a value that looks meaningful and is not.
+ */
+export type ConnectorPhysicalContext =
+  | {
+      /** The unit the coordinates are read in. Anything that is not a known unit is refused, never defaulted. */
+      readonly unit: string | undefined;
+      /** The part's placement as `classifyPlacement` answered it. See the note above on why this is a parameter in C03-A. */
+      readonly placement: PlacementClass;
+      readonly placementScaleApplied: true;
+    }
+  | {
+      readonly unit: string | undefined;
+      readonly placementScaleApplied: false;
+    };
 
 /** Millimetres per coordinate unit, or the reason there is none. The one place the factor is formed. */
 export function resolveMillimetresPerCoordinate(
@@ -53,9 +68,10 @@ export function resolveMillimetresPerCoordinate(
   if (unit === undefined || !isLengthUnit(unit)) return { ok: false, refusal: 'UNKNOWN_UNITS' };
   if (!context.placementScaleApplied)
     return { ok: true, mmPerCoordinate: millimetresPerUnit(unit) };
-  if (!Number.isFinite(context.placementScale) || context.placementScale <= 0)
-    return { ok: false, refusal: 'UNSUPPORTED_TRANSFORM' };
-  return { ok: true, mmPerCoordinate: millimetresPerUnit(unit) * context.placementScale };
+  const { placement } = context;
+  if (placement.kind === 'UNSUPPORTED')
+    return { ok: false, refusal: 'UNSUPPORTED_TRANSFORM', transformReason: placement.reason };
+  return { ok: true, mmPerCoordinate: millimetresPerUnit(unit) * placement.scale };
 }
 
 /** A physical length in the part's own coordinates. The only mm → coordinate conversion. */
@@ -71,7 +87,7 @@ export type ResolvedConnectorDimensions =
       readonly depth: number;
       readonly clearance: number;
     }
-  | { readonly ok: false; readonly refusal: ConnectorScaleRefusal };
+  | Exclude<MillimetresPerCoordinate, { readonly ok: true }>;
 
 /**
  * The three sizes of a round pin, in the part's coordinates. Values are converted, not judged: a NaN, a negative or an

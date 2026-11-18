@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  classifyPlacement,
   createIndexArray,
   createPositionArray,
+  IDENTITY_PLACEMENT,
   triangleCount,
   singlePartDocument,
   partId,
@@ -560,9 +562,9 @@ describe('bounded automatic connector realization', () => {
   });
   it('declines unsafe thin caps and nonuniform physical scaling without losing the plain split', async () => {
     const backend = await createManifoldBooleanBackend(binary);
-    for (const [source, scale] of [
-      [cube(4), 1],
-      [cube(30), NaN],
+    for (const [source, placement] of [
+      [cube(4), IDENTITY_PLACEMENT],
+      [cube(30), classifyPlacement([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])],
     ] as const) {
       const result = await splitWithConnectors(
         backend,
@@ -573,7 +575,7 @@ describe('bounded automatic connector realization', () => {
         },
         new CancellationSource().token,
         undefined,
-        scale,
+        placement,
       );
       expect(result.automaticConnector).toBe('unavailable');
       expect(result.connector.kind).toBe('none');
@@ -702,7 +704,7 @@ it('retains the exact wall/depth-proven automatic sites on an oblique cap', asyn
     identifyConnectorCompatibilitySurface(plain.pieceA, plane, splitTolerance(source)),
     plane.normal,
     'millimeter',
-    1,
+    IDENTITY_PLACEMENT,
     plain.metrics.tolerance,
     uncancellable,
   );
@@ -744,7 +746,7 @@ it('connector site search observes cancellation without returning a partial plan
       identifyConnectorCompatibilitySurface(plain.pieceA, plane, splitTolerance(source)),
       plane.normal,
       'millimeter',
-      1,
+      IDENTITY_PLACEMENT,
       plain.metrics.tolerance,
       {
         get isCancelled(): boolean {

@@ -1,5 +1,6 @@
 import { automaticPinPlan, type AutomaticConnectorDiagnostics } from './automatic-connectors';
 import { isLengthUnit } from '@cadfixer/shared';
+import { describeTransformRefusal } from './connector-transform-refusal';
 import {
   assertMeshStructure,
   IDENTITY_PART_TRANSFORM,
@@ -9,6 +10,8 @@ import {
   createPositionArray,
   triangleCount,
   type CanonicalMesh,
+  IDENTITY_PLACEMENT,
+  type PlacementClass,
 } from '@cadfixer/mesh-core';
 import { invalidState, throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
 import { analyseTopology } from '@cadfixer/mesh-topology';
@@ -113,7 +116,7 @@ function resolvePhysicalRequest(request: SplitRequest): EngineSplitRequest {
       depthMm: connector.depthMm,
       clearanceMm: connector.clearanceMm,
     },
-    { unit: connector.unit, placementScale: Number.NaN, placementScaleApplied: false },
+    { unit: connector.unit, placementScaleApplied: false },
   );
   if (!resolved.ok)
     throw invalidState('A known unit is required to size a connector.', { code: 'UNKNOWN_UNITS' });
@@ -803,10 +806,6 @@ function dovetail(
   }
   return boxFrom(points);
 }
-/** What a person can be told when a connector is refused because the part is placed with a non-uniform scale or a shear. */
-function describeTransformFailure(): string {
-  return 'Connectors cannot be added to a part that is placed with a non-uniform scale or a shear: the material around a connector is not one distance there.';
-}
 function dimension(value: number, label: string, zero = false): void {
   if (!Number.isFinite(value) || value < (zero ? 0 : 0.01) || value > 1000)
     throw invalidState(`${label} is outside the supported range.`, { value });
@@ -869,7 +868,7 @@ export async function splitWithConnectors(
   requested: SplitRequest,
   cancellation: CancellationToken,
   onStage?: (stage: SplitStage) => void,
-  physicalScale = 1,
+  placement: PlacementClass = IDENTITY_PLACEMENT,
   prepared?: PreparedPlaneSplitSource,
 ): Promise<SplitResult> {
   throwIfCancelled(cancellation);
@@ -924,14 +923,16 @@ export async function splitWithConnectors(
   }
   // RELEASE 2, SLICE 2D. The support of a connector is a distance in the part's own coordinates. It means the same thing in the
   // world only if the part's placement is a similarity (translation, rotation, reflection, one uniform scale); the worker
-  // reduces the placement to its uniform scale and reports NaN for a non-uniform scale, a shear or a degenerate one. A pin on such
-  // a part is refused before any work is done. This is a refusal, not an interpretation: C03 decides what such a transform means.
-  if (request.connector.kind === 'pin' && !(Number.isFinite(physicalScale) && physicalScale > 0))
-    throw invalidState(describeTransformFailure(), {
+  // classifies the placement once and hands it here. A pin on a part whose placement is not one is refused before any work is done,
+  // and (Stage C03-B) the refusal carries WHY: one code, `CONNECTOR_UNSUPPORTED_TRANSFORM`, with the classifier's reason beside it.
+  // This is a refusal, not an interpretation.
+  if (request.connector.kind === 'pin' && placement.kind === 'UNSUPPORTED')
+    throw invalidState(describeTransformRefusal(placement.reason), {
       code:
         REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.UNSUPPORTED_TRANSFORM] ??
         'UNSUPPORTED_TRANSFORM',
       refusal: ConnectorRefusal.UNSUPPORTED_TRANSFORM,
+      transformReason: placement.reason,
     });
   onStage?.(SplitStage.Intersecting);
   const clip = clipPlane(source, preparation.plane, {
@@ -979,7 +980,12 @@ export async function splitWithConnectors(
   // PLANNING FOUNDATION (Release 2, Slice 1). The draft states what was asked for against the generated interface it
   // is being cut from. The resolvers below are the existing ones, called with the same arguments in the same order;
   // the plan re-expresses their answer and `toLegacy…` hands the construction code exactly what it used before.
-  const draft = draftFromRequest(request.connector, clip.interface, physicalScale);
+  // The draft RECORDS the part scale; a placement with none records NaN, as it always has (the plan digest is unchanged).
+  const draft = draftFromRequest(
+    request.connector,
+    clip.interface,
+    placement.kind === 'SIMILARITY' ? placement.scale : Number.NaN,
+  );
   let validatedPlan: ValidatedConnectorPlan | undefined;
   const proposal =
     request.connector.kind === 'automatic'
@@ -989,7 +995,7 @@ export async function splitWithConnectors(
           defined(selection),
           plane.normal,
           request.connector.unit,
-          physicalScale,
+          placement,
           tolerance,
           cancellation,
           automaticDiagnostics,

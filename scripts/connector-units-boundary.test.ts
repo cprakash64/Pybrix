@@ -100,9 +100,74 @@ describe('there is ONE placement classifier', () => {
     expect(read(classifier)).toContain('PLACEMENT_CLASSIFICATION_TOLERANCE = 1e-6');
     expect(read(classifier).match(/scale \* scale \*/g)).toHaveLength(1);
   });
-  it('the worker classifies the placement once and hands the engine a number', () => {
+  it('the worker classifies the placement once and hands the engine the WHOLE classification, never a number that has lost its reason', () => {
     const handler = read(join(ROOT, 'apps/web/src/workers/split-handlers.ts'));
     expect(handler.match(/classifyPlacement\(/g)).toHaveLength(1);
+    // Stage C03-B: the NaN that used to stand for "no usable placement" is gone from the handler and from the engine's entry
+    expect(handler).not.toMatch(/Number\.NaN|physicalScale/);
+    const engine = read(join(ROOT, 'packages/geometry-runtime/src/split-connectors.ts'));
+    const entry = engine.slice(
+      engine.indexOf('export async function splitWithConnectors('),
+      engine.indexOf(
+        'throwIfCancelled(cancellation);',
+        engine.indexOf('export async function splitWithConnectors('),
+      ),
+    );
+    expect(entry).toContain('placement: PlacementClass = IDENTITY_PLACEMENT');
+    expect(entry).not.toContain('physicalScale');
+  });
+  it('every classifier tolerance read, and every sign of a determinant, is in the classifier', () => {
+    const classifier = join(ROOT, 'packages/mesh-core/src/placement.ts');
+    const reading = everything.filter(
+      (file) => file !== classifier && read(file).includes('PLACEMENT_CLASSIFICATION_TOLERANCE'),
+    );
+    // the index re-exports it for the tests and nothing else reads it
+    expect(rel(reading)).toEqual(['packages/mesh-core/src/index.ts']);
+  });
+});
+
+describe('there is ONE transform refusal mapper (Stage C03-B)', () => {
+  const mapper = 'packages/geometry-runtime/src/connector-transform-refusal.ts';
+  it('is defined once, and the sentences a person is shown exist nowhere else', () => {
+    const definitions = everything.filter((file) =>
+      read(file).includes('export function describeTransformRefusal('),
+    );
+    expect(rel(definitions)).toEqual([mapper]);
+    for (const sentence of [
+      'Connectors require uniform model scale.',
+      "Connectors aren't supported on sheared model placements.",
+      'This model placement has an invalid scale.',
+      'This model placement is invalid.',
+    ]) {
+      const holding = everything.filter((file) => read(file).includes(sentence));
+      expect(rel(holding), sentence).toEqual([mapper]);
+    }
+    // the single-sentence message this replaced is gone, with its function
+    for (const file of everything)
+      expect(read(file), relative(ROOT, file)).not.toMatch(
+        /describeTransformFailure|non-uniform scale or a shear: the material/,
+      );
+  });
+  it('the engine words a refusal only through the mapper, and the mapper is exhaustive with no default', () => {
+    const engine = read(join(ROOT, 'packages/geometry-runtime/src/split-connectors.ts'));
+    expect(engine.match(/describeTransformRefusal\(/g)).toHaveLength(1);
+    const text = read(join(ROOT, mapper));
+    expect(text).not.toMatch(/\bdefault\s*:/);
+    for (const reason of ['NonUniformScale', 'Shear', 'Degenerate', 'Malformed', 'NonFinite'])
+      expect(text, reason).toContain(`PlacementRefusal.${reason}`);
+  });
+  it("neither the automatic planner nor the page re-derives a reason: the planner carries the resolver's", () => {
+    const planner = read(join(ROOT, 'packages/geometry-runtime/src/automatic-connectors.ts'));
+    expect(planner).not.toMatch(/classifyPlacement\(|PlacementRefusal\./);
+    const page = everything.filter(
+      (file) =>
+        file.includes(`${sep}apps${sep}web${sep}src${sep}`) &&
+        !file.includes(`${sep}workers${sep}`),
+    );
+    for (const file of page)
+      expect(read(file), relative(ROOT, file)).not.toMatch(
+        /transformReason|describeTransformRefusal/,
+      );
   });
 });
 

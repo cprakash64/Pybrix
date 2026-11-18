@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { IDENTITY_PLACEMENT, PlacementRefusal, type PlacementClass } from '@cadfixer/mesh-core';
 import { LengthUnit, millimetresPerUnit } from '@cadfixer/shared';
 import {
   millimetresToLocal,
@@ -7,6 +8,11 @@ import {
 } from './connector-dimensions';
 
 const UNITS = Object.values(LengthUnit);
+const similarity = (scale: number): PlacementClass => ({
+  kind: 'SIMILARITY',
+  scale,
+  mirrored: false,
+});
 const VALUES = [0.01, 0.2, 1, 3, 4, 6, 25.4, 1000, 0, -1, Number.NaN, Infinity, 1e-300, 1e300];
 
 describe('resolveConnectorDimensions — the one conversion', () => {
@@ -16,7 +22,7 @@ describe('resolveConnectorDimensions — the one conversion', () => {
         for (const depthMm of [6, 0.5]) {
           const resolved = resolveConnectorDimensions(
             { diameterMm, depthMm, clearanceMm: 0.2 },
-            { unit, placementScale: Number.NaN, placementScaleApplied: false },
+            { unit, placementScaleApplied: false },
           );
           expect(resolved.ok).toBe(true);
           if (!resolved.ok) continue;
@@ -32,7 +38,7 @@ describe('resolveConnectorDimensions — the one conversion', () => {
       for (const scale of [1, 0.5, 2, 3, 25.4, 1e-3, 1 + 1e-9]) {
         const factor = resolveMillimetresPerCoordinate({
           unit,
-          placementScale: scale,
+          placement: similarity(scale),
           placementScaleApplied: true,
         });
         expect(factor.ok).toBe(true);
@@ -42,17 +48,21 @@ describe('resolveConnectorDimensions — the one conversion', () => {
   });
   it('a manual size does not take the placement scale (KNOWN LEGACY BEHAVIOUR, pinned until the stage that changes it)', () => {
     const intent = { diameterMm: 4, depthMm: 6, clearanceMm: 0.2 };
-    const a = resolveConnectorDimensions(intent, {
+    // The unscaled context states no placement at all; the applied one is what a placement scale reaches.
+    const manual = resolveConnectorDimensions(intent, {
       unit: 'millimeter',
-      placementScale: 1,
       placementScaleApplied: false,
     });
-    const b = resolveConnectorDimensions(intent, {
+    const scaled = resolveConnectorDimensions(intent, {
       unit: 'millimeter',
-      placementScale: 2,
-      placementScaleApplied: false,
+      placement: similarity(2),
+      placementScaleApplied: true,
     });
-    expect(b).toEqual(a);
+    expect(manual.ok && scaled.ok).toBe(true);
+    if (manual.ok && scaled.ok) {
+      expect(manual.mmPerCoordinate).toBe(1);
+      expect(scaled.mmPerCoordinate).toBe(2);
+    }
   });
   it('an unknown unit is refused, never defaulted — including names an object table would answer to', () => {
     for (const unit of [
@@ -67,42 +77,52 @@ describe('resolveConnectorDimensions — the one conversion', () => {
     ])
       for (const applied of [true, false])
         expect(
-          resolveMillimetresPerCoordinate({
-            unit,
-            placementScale: 1,
-            placementScaleApplied: applied,
-          }),
+          resolveMillimetresPerCoordinate(
+            applied
+              ? { unit, placement: IDENTITY_PLACEMENT, placementScaleApplied: true }
+              : { unit, placementScaleApplied: false },
+          ),
         ).toEqual({ ok: false, refusal: 'UNKNOWN_UNITS' });
   });
-  it('a placement with no uniform scale is refused only where the scale is applied, and the unit is judged first', () => {
-    for (const scale of [Number.NaN, 0, -1, Infinity])
+  it("a placement with no uniform scale is refused only where the scale is applied, with the classifier's own reason, and the unit is judged first", () => {
+    for (const reason of Object.values(PlacementRefusal))
       expect(
         resolveMillimetresPerCoordinate({
           unit: 'millimeter',
-          placementScale: scale,
+          placement: { kind: 'UNSUPPORTED', reason },
           placementScaleApplied: true,
         }),
-      ).toEqual({ ok: false, refusal: 'UNSUPPORTED_TRANSFORM' });
+      ).toEqual({ ok: false, refusal: 'UNSUPPORTED_TRANSFORM', transformReason: reason });
     expect(
       resolveMillimetresPerCoordinate({
         unit: 'furlong',
-        placementScale: Number.NaN,
+        placement: { kind: 'UNSUPPORTED', reason: PlacementRefusal.NonFinite },
         placementScaleApplied: true,
       }),
     ).toEqual({ ok: false, refusal: 'UNKNOWN_UNITS' });
+    // not applied: no placement is stated, so none can refuse
     expect(
-      resolveMillimetresPerCoordinate({
-        unit: 'millimeter',
-        placementScale: Number.NaN,
-        placementScaleApplied: false,
-      }),
+      resolveMillimetresPerCoordinate({ unit: 'millimeter', placementScaleApplied: false }),
     ).toEqual({ ok: true, mmPerCoordinate: 1 });
+  });
+  it('a mirrored similarity has the same factor as its unmirrored twin: a mirror changes no distance', () => {
+    const plain = resolveMillimetresPerCoordinate({
+      unit: 'inch',
+      placement: similarity(2),
+      placementScaleApplied: true,
+    });
+    const mirrored = resolveMillimetresPerCoordinate({
+      unit: 'inch',
+      placement: { kind: 'SIMILARITY', scale: 2, mirrored: true },
+      placementScaleApplied: true,
+    });
+    expect(mirrored).toEqual(plain);
   });
   it('the local length is a single division, and the resolver never judges a value', () => {
     expect(millimetresToLocal(6, 25.4)).toBe(6 / 25.4);
     const resolved = resolveConnectorDimensions(
       { diameterMm: Number.NaN, depthMm: -3, clearanceMm: Infinity },
-      { unit: 'inch', placementScale: 1, placementScaleApplied: false },
+      { unit: 'inch', placementScaleApplied: false },
     );
     expect(resolved.ok).toBe(true);
     if (resolved.ok) {

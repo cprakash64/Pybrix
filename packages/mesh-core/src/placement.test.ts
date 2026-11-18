@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { IDENTITY_PART_TRANSFORM } from './document';
 import {
   classifyPlacement,
+  IDENTITY_PLACEMENT,
   PLACEMENT_CLASSIFICATION_TOLERANCE,
   PlacementRefusal,
   type PlacementClass,
@@ -47,7 +48,12 @@ const reasonOf = (transform: readonly number[]): PlacementRefusal | undefined =>
 
 describe('classifyPlacement — the placements that may carry a connector', () => {
   it('identity is a similarity of scale 1', () => {
-    expect(classifyPlacement(IDENTITY_PART_TRANSFORM)).toEqual({ kind: 'SIMILARITY', scale: 1 });
+    expect(classifyPlacement(IDENTITY_PART_TRANSFORM)).toEqual({
+      kind: 'SIMILARITY',
+      scale: 1,
+      mirrored: false,
+    });
+    expect(classifyPlacement(IDENTITY_PART_TRANSFORM)).toEqual(IDENTITY_PLACEMENT);
   });
   it('a translation does not change it, however far', () => {
     expect(scaleOf(linear([1, 0, 0], [0, 1, 0], [0, 0, 1], [100, -50, 30]))).toBe(1);
@@ -66,9 +72,14 @@ describe('classifyPlacement — the placements that may carry a connector', () =
     turned[11] = 9;
     expect(scaleOf(turned)).toBeCloseTo(2, 12);
   });
-  it('a reflection is a similarity: it preserves every distance', () => {
+  it('a reflection is a similarity: it preserves every distance, and it is reported as mirrored', () => {
     expect(scaleOf(linear([-1, 0, 0], [0, 1, 0], [0, 0, 1]))).toBe(1);
     expect(scaleOf(linear([-3, 0, 0], [0, 3, 0], [0, 0, 3]))).toBe(3);
+    expect(classifyPlacement(linear([-1, 0, 0], [0, 1, 0], [0, 0, 1]))).toEqual({
+      kind: 'SIMILARITY',
+      scale: 1,
+      mirrored: true,
+    });
   });
   it('a non-uniform scale is refused as such, along any axis, and a turn does not hide it', () => {
     for (const t of [
@@ -131,6 +142,132 @@ describe('classifyPlacement — the placements that may carry a connector', () =
     expect([...t]).toEqual(before);
     expect(Object.isFrozen(a)).toBe(true);
     expect(Object.isFrozen(classifyPlacement([]))).toBe(true);
+  });
+});
+
+const mirroredOf = (transform: readonly number[]): boolean | undefined => {
+  const placement = classifyPlacement(transform);
+  return placement.kind === 'SIMILARITY' ? placement.mirrored : undefined;
+};
+
+describe('classifyPlacement — the REFLECTION audit (Stage C03-B): reported, never folded into a rotation', () => {
+  it('a proper rotation is not mirrored, however it is turned or scaled', () => {
+    for (const t of [
+      linear([1, 0, 0], [0, 1, 0], [0, 0, 1]),
+      linear([1, 0, 0], [0, 0, 1], [0, -1, 0]),
+      ROT_Y(1),
+      ROT_Y(25.4),
+      linear([-1, 0, 0], [0, -1, 0], [0, 0, 1]), // a half turn about Z: two flips make a rotation
+      linear([0, 1, 0], [0, 0, 1], [1, 0, 0]), // a cyclic permutation of the axes
+    ])
+      expect(mirroredOf(t)).toBe(false);
+  });
+  it('every odd number of axis flips, a point inversion, and a swap of two axes is mirrored', () => {
+    for (const t of [
+      linear([-1, 0, 0], [0, 1, 0], [0, 0, 1]),
+      linear([1, 0, 0], [0, -1, 0], [0, 0, 1]),
+      linear([1, 0, 0], [0, 1, 0], [0, 0, -1]),
+      linear([-1, 0, 0], [0, -1, 0], [0, 0, -1]),
+      linear([0, 1, 0], [1, 0, 0], [0, 0, 1]), // a swap of two axes
+      linear([-0.8, 0, 0.6], [0, 1, 0], [0.6, 0, 0.8]), // a reflection composed with an oblique turn
+      linear([-3, 0, 0], [0, 3, 0], [0, 0, 3]), // with a scale
+    ])
+      expect(mirroredOf(t)).toBe(true);
+  });
+  it('a mirrored placement has the SAME scale, to the bit, as the unmirrored placement it is the reflection of', () => {
+    for (const s of [0.5, 1, 2, 25.4, 1e-3, 1e3]) {
+      const plain = classifyPlacement(linear([s, 0, 0], [0, s, 0], [0, 0, s]));
+      const flipped = classifyPlacement(linear([-s, 0, 0], [0, s, 0], [0, 0, s]));
+      expect(plain.kind === 'SIMILARITY' && flipped.kind === 'SIMILARITY').toBe(true);
+      if (plain.kind === 'SIMILARITY' && flipped.kind === 'SIMILARITY') {
+        expect(Object.is(plain.scale, flipped.scale)).toBe(true);
+        expect([plain.mirrored, flipped.mirrored]).toEqual([false, true]);
+      }
+    }
+  });
+  it('translation never changes it', () => {
+    expect(mirroredOf(linear([-1, 0, 0], [0, 1, 0], [0, 0, 1], [1e9, -1e9, 1e9]))).toBe(true);
+    expect(mirroredOf(linear([1, 0, 0], [0, 1, 0], [0, 0, 1], [1e9, -1e9, 1e9]))).toBe(false);
+  });
+  it('an unsupported placement carries no mirror claim at all', () => {
+    const refused = classifyPlacement(linear([-2, 0, 0], [0, 1, 0], [0, 0, 1]));
+    expect(refused.kind).toBe('UNSUPPORTED');
+    expect(refused).not.toHaveProperty('mirrored');
+  });
+});
+
+describe('classifyPlacement — the tolerance boundary, in semantic terms (Stage C03-B)', () => {
+  const T = PLACEMENT_CLASSIFICATION_TOLERANCE;
+  /** Fractions of the tolerance: clearly below, just below, just above, clearly above. */
+  const FRACTIONS = [0.5, 0.99, 1.01, 2] as const;
+  const accepted = (fraction: number): boolean => fraction < 1;
+  const SCALES = [1e-9, 1e-3, 1, 25.4, 1e6, 1e12];
+  it('an axis length that differs from the first by a fraction of the tolerance is accepted exactly below it, along every axis, at any scale', () => {
+    for (const s of SCALES)
+      for (const fraction of FRACTIONS)
+        for (const axis of [1, 2] as const) {
+          const rows: [number, number, number][] = [
+            [s, 0, 0],
+            [0, s, 0],
+            [0, 0, s],
+          ];
+          const row = rows[axis];
+          if (row === undefined) throw new Error('axis');
+          row[axis] = s * (1 + fraction * T);
+          const [r0, r1, r2] = rows;
+          if (r0 === undefined || r1 === undefined || r2 === undefined) throw new Error('rows');
+          const t = linear(r0, r1, r2);
+          expect(
+            classifyPlacement(t).kind,
+            `s=${String(s)} f=${String(fraction)} axis=${String(axis)}`,
+          ).toBe(accepted(fraction) ? 'SIMILARITY' : 'UNSUPPORTED');
+          if (!accepted(fraction)) expect(reasonOf(t)).toBe(PlacementRefusal.NonUniformScale);
+        }
+  });
+  it('the same holds when the first axis is the odd one out', () => {
+    for (const fraction of FRACTIONS) {
+      const t = linear([1 + fraction * T, 0, 0], [0, 1, 0], [0, 0, 1]);
+      // the first axis defines the scale, so the OTHER two are the ones that differ from it, by about the same fraction
+      expect(classifyPlacement(t).kind).toBe(accepted(fraction) ? 'SIMILARITY' : 'UNSUPPORTED');
+    }
+  });
+  it('axes that depart from orthogonal by a fraction of the tolerance are accepted exactly below it, at any scale', () => {
+    for (const s of SCALES)
+      for (const fraction of FRACTIONS) {
+        const e = fraction * T;
+        // unit axes whose dot product is e (lengths stay equal): a shear of angle ~e
+        const second: [number, number, number] = [e * s, Math.sqrt(1 - e * e) * s, 0];
+        const t = linear([s, 0, 0], second, [0, 0, s]);
+        expect(classifyPlacement(t).kind, `s=${String(s)} f=${String(fraction)}`).toBe(
+          accepted(fraction) ? 'SIMILARITY' : 'UNSUPPORTED',
+        );
+        if (!accepted(fraction)) expect(reasonOf(t)).toBe(PlacementRefusal.Shear);
+      }
+  });
+  it('translation never moves the boundary, however large', () => {
+    for (const fraction of FRACTIONS) {
+      const base = linear([1, 0, 0], [0, 1 + fraction * T, 0], [0, 0, 1]);
+      const far = [...base.slice(0, 9), 1e12, -1e12, 1e12];
+      expect(classifyPlacement(far).kind).toBe(classifyPlacement(base).kind);
+    }
+  });
+  it('a rotation carrying floating-point noise is accepted: a producer that writes 9 significant digits sits three orders inside the tolerance', () => {
+    const u = sequence(18112026);
+    for (let n = 0; n < 500; n++) {
+      const axes = rotationFrom(u);
+      const noisy = (digits: number): number[] =>
+        axes.flatMap((axis) => axis.map((x) => Number(x.toFixed(digits))));
+      const t = [...noisy(9), 1, 2, 3];
+      expect(classifyPlacement(t).kind).toBe('SIMILARITY');
+      // 8 significant digits is still inside; the line is drawn by the tolerance, not by the digit count
+      expect(classifyPlacement([...noisy(8), 1, 2, 3]).kind).toBe('SIMILARITY');
+    }
+  });
+  it('a very small and a very large uniform scale are similarities, and a collapse is not', () => {
+    for (const s of [1e-300, 1e-12, 1e12, 1e100])
+      expect(scaleOf(linear([s, 0, 0], [0, s, 0], [0, 0, s]))).toBe(s);
+    expect(reasonOf(linear([1e-200, 0, 0], [0, 1e-200, 0], [0, 0, 1e-200]))).toBeUndefined();
+    expect(reasonOf(linear([0, 0, 0], [0, 0, 0], [0, 0, 0]))).toBe(PlacementRefusal.Degenerate);
   });
 });
 
@@ -236,6 +373,7 @@ describe('classifyPlacement against the function it replaced', () => {
       cases.push(special);
     let similarities = 0,
       refusals = 0;
+    const similarityCases: { transform: number[]; mirrored: boolean }[] = [];
     for (const transform of cases) {
       const legacy = legacyUniformPhysicalScale(transform);
       const now: PlacementClass = classifyPlacement(transform);
@@ -246,7 +384,28 @@ describe('classifyPlacement against the function it replaced', () => {
         similarities++;
         expect(now.kind).toBe('SIMILARITY');
         if (now.kind === 'SIMILARITY') expect(Object.is(now.scale, legacy)).toBe(true);
+        similarityCases.push({ transform, mirrored: now.kind === 'SIMILARITY' && now.mirrored });
       }
+    }
+    // `mirrored` against its INDEPENDENT construction: the grid flips the first axis of every fifth placement, and nothing else
+    // can mirror it (the other rows come from a right-handed frame)
+    const flipped = similarityCases.filter((c) => c.mirrored).length;
+    expect(flipped).toBeGreaterThan(50);
+    expect(flipped).toBeLessThan(similarityCases.length);
+    for (const c of similarityCases) {
+      const rows: V3[] = [
+        [c.transform[0] ?? 0, c.transform[1] ?? 0, c.transform[2] ?? 0],
+        [c.transform[3] ?? 0, c.transform[4] ?? 0, c.transform[5] ?? 0],
+        [c.transform[6] ?? 0, c.transform[7] ?? 0, c.transform[8] ?? 0],
+      ];
+      const [r0, r1, r2] = rows;
+      if (r0 === undefined || r1 === undefined || r2 === undefined) throw new Error('rows');
+      // an independent determinant (cofactor expansion along the LAST row), not the classifier's expression
+      const det =
+        r2[0] * (r0[1] * r1[2] - r0[2] * r1[1]) -
+        r2[1] * (r0[0] * r1[2] - r0[2] * r1[0]) +
+        r2[2] * (r0[0] * r1[1] - r0[1] * r1[0]);
+      expect(c.mirrored).toBe(det < 0);
     }
     // the grid exercises both sides, or it would prove nothing
     expect(similarities).toBeGreaterThan(500);

@@ -1,5 +1,5 @@
 import { throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
-import type { CanonicalMesh } from '@cadfixer/mesh-core';
+import type { CanonicalMesh, PlacementClass, PlacementRefusal } from '@cadfixer/mesh-core';
 import { millimetresToLocal, resolveMillimetresPerCoordinate } from './connector-dimensions';
 import {
   connectorCenters,
@@ -35,10 +35,15 @@ export type AutomaticConnectorReason =
   | 'PIN_ROOT_SUPPORT_INSUFFICIENT'
   /** Release 2, Slice 2D: a piece could not be examined for support, so no connector was judged. */
   | 'SUPPORT_VALIDATION_UNAVAILABLE'
-  /** Release 2, Slice 2D: the part's placement is a non-uniform scale or a shear (or degenerate); no connector is proposed. */
+  /**
+   * Release 2, Slice 2D: the part's placement is not a similarity; no connector is proposed. Stage C03-B: the diagnostics' `transformReason`
+   * says which kind of placement it is.
+   */
   | 'UNSUPPORTED_TRANSFORM';
 export interface AutomaticConnectorDiagnostics {
   reason: AutomaticConnectorReason;
+  /** Present exactly when `reason` is `UNSUPPORTED_TRANSFORM`: why the placement cannot carry a connector (`classifyPlacement`). */
+  transformReason?: PlacementRefusal;
   proposedSites: number;
   placementAttempts: number;
   rayTriangleVisits: number;
@@ -106,7 +111,7 @@ export function automaticPinPlan(
   cut: ConnectorCompatibilitySurface,
   normal: SplitVector,
   unit: string,
-  scale: number,
+  placement: PlacementClass,
   tolerance: number,
   cancellation: CancellationToken,
   diagnostics?: AutomaticConnectorDiagnostics,
@@ -120,23 +125,29 @@ export function automaticPinPlan(
       diagnostics.milliseconds = Date.now() - started;
     }
   };
-  const refuse = (reason: AutomaticConnectorReason): undefined => {
+  const refuse = (
+    reason: AutomaticConnectorReason,
+    transformReason?: PlacementRefusal,
+  ): undefined => {
     record(reason);
+    if (diagnostics && transformReason !== undefined) diagnostics.transformReason = transformReason;
     return undefined;
   };
   throwIfCancelled(cancellation);
   /*
-   * The unit and the part's placement scale arrive as two facts; the one factor that joins them is formed in `connector-dimensions`
+   * The unit and the part's placement arrive as two facts; the one factor that joins them is formed in `connector-dimensions`
    * (millimetres per coordinate unit, the placement scale applied) and nowhere in this file. A unit that is not a known one and a
-   * placement with no uniform scale (the worker reports NaN) each refuse BEFORE anything is proposed.
+   * placement that is not a similarity each refuse BEFORE anything is proposed, the latter with the classifier's own reason.
    */
   const physical = resolveMillimetresPerCoordinate({
     unit,
-    placementScale: scale,
+    placement,
     placementScaleApplied: true,
   });
   if (!physical.ok) {
-    refuse(physical.refusal);
+    if (physical.refusal === 'UNSUPPORTED_TRANSFORM')
+      refuse(physical.refusal, physical.transformReason);
+    else refuse(physical.refusal);
     return;
   }
   if (cut.outlineTruncated) {

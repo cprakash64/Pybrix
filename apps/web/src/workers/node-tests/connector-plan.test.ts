@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createIndexArray, createPositionArray, type CanonicalMesh } from '@cadfixer/mesh-core';
+import {
+  classifyPlacement,
+  createIndexArray,
+  createPositionArray,
+  IDENTITY_PLACEMENT,
+  type CanonicalMesh,
+  type PlacementClass,
+} from '@cadfixer/mesh-core';
 import { CancellationSource, isAppError } from '@cadfixer/shared';
 import {
   splitWithConnectors,
@@ -60,7 +67,7 @@ async function observe(
   mesh: CanonicalMesh,
   connector: SplitRequest['connector'],
   plane: SplitPlane = Z,
-  scale = 1,
+  placement: PlacementClass = IDENTITY_PLACEMENT,
 ): Promise<Observed> {
   const base = await createManifoldBooleanBackend(binary),
     stages: string[] = [],
@@ -77,7 +84,7 @@ async function observe(
       { plane, connector },
       new CancellationSource().token,
       (stage) => stages.push(stage),
-      scale,
+      placement,
     );
     return { result, stages, booleans };
   } catch (error) {
@@ -194,7 +201,12 @@ describe('Slice 1 planner on the real kernel', () => {
     expect(booleans).toHaveLength(4);
   });
   it('states, instead of hiding, that a manual size ignores the part scale (audit C03 stays open)', async () => {
-    const { result } = await observe(cube(40), pin(1, 4, 6, 'A'), Z, 2.5);
+    const { result } = await observe(
+      cube(40),
+      pin(1, 4, 6, 'A'),
+      Z,
+      classifyPlacement([2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0]),
+    );
     expect(result?.connectorPlan?.unitContext).toEqual({
       basis: 'COORDINATES',
       partScale: 1,
@@ -211,7 +223,9 @@ describe('Slice 1 planner on the real kernel', () => {
         mesh,
         connector,
         Z,
-        expectedKeys === 'nan-scale' ? NaN : 1,
+        expectedKeys === 'nan-scale'
+          ? classifyPlacement([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])
+          : IDENTITY_PLACEMENT,
       );
       expect(result).toBeDefined();
       expect(result?.connectorPlan).toBeUndefined();

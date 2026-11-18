@@ -1,5 +1,6 @@
 /** Node/browser shared prevalidation oracle. Imports production safety paths without changing them. */
 import { splitWithConnectors } from '@cadfixer/geometry-runtime';
+import { IDENTITY_PLACEMENT } from '@cadfixer/mesh-core';
 import {
   identifyConnectorCompatibilitySurface,
   splitTolerance,
@@ -68,7 +69,7 @@ export async function prevalidatePlanes(
         identifyConnectorCompatibilitySurface(plain.pieceA, plane, splitTolerance(f.mesh)),
         p.normal,
         'millimeter',
-        1,
+        IDENTITY_PLACEMENT,
         plain.metrics.tolerance,
         uncancellable,
       );

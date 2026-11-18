@@ -74,6 +74,7 @@ export type { ImportGeometryCost } from './import-cost';
 export { isWithinSplitTriangleCeiling, MAX_SUPPORTED_SPLIT_TRIANGLES } from './split-limits';
 export {
   classifyPlacement,
+  IDENTITY_PLACEMENT,
   PLACEMENT_CLASSIFICATION_TOLERANCE,
   PlacementRefusal,
 } from './placement';

@@ -15,10 +15,21 @@
  * a degenerate placement and a non-finite entry send a person to different places. The classifier neither reinterprets nor
  * corrects a placement.
  *
- * WHAT THIS STAGE (C03-A) DELIBERATELY DOES NOT CHANGE. The tolerance is the one the check has always had — lengths agree and
- * axes are orthogonal to one part in a million of the scale — and the scale it reports is the length of the first basis vector,
- * exactly as before. A real producer that rounds a rotation to six decimals can fall outside that tolerance; whether to widen it
- * is a measured decision for a later stage, and it is not made here.
+ * REFLECTION POLICY (Stage C03-B). A placement whose linear part has a NEGATIVE determinant mirrors the part. A mirror preserves every
+ * distance, and a round pin and its round socket are each symmetric about their own axis, so a mirrored part carries a connector with
+ * exactly the physical sizes, clearance and material margins of its unmirrored twin: the engine works in the part's own coordinates,
+ * where no reflection exists, and the two pieces a split makes inherit the same mirror through their placements, so a pin and its
+ * socket stay one world-space pair. A reflection is therefore SUPPORTED, and it is reported (`mirrored`), never silently folded
+ * into "a rotation". The determinant is read only after the placement is known to be a similarity, where its magnitude is the cube of
+ * the scale and its sign cannot be a rounding artefact. If a later connector kind has a handedness (a dovetail, a keyed or chiral
+ * feature), it must refuse `mirrored` itself: this module does not decide that for a kind that does not exist.
+ *
+ * TOLERANCE (Stage C03-B). The tolerance is the one the check has always had — lengths agree and axes are orthogonal to one part in
+ * a million of the scale — and the scale it reports is the length of the first basis vector, exactly as before. C03-B measured it
+ * against the real 3MF files available (see the C03-B evidence) and found nothing that contradicts it; it is preserved, not
+ * re-derived. Widening it needs a producer that writes fewer significant digits than six AND evidence that its transforms are
+ * rigid by intent, neither of which exists in the corpus. It is a CLASSIFICATION tolerance: it is never a welding distance, a snap
+ * or a geometric tolerance, and nothing else may read it.
  */
 
 /** Why a placement is not a similarity. */
@@ -39,12 +50,21 @@ export type PlacementRefusal = (typeof PlacementRefusal)[keyof typeof PlacementR
 export type PlacementClass =
   | {
       readonly kind: 'SIMILARITY';
-      /** The uniform scale: the length of the first basis vector. 1 for a rigid placement. */
+      /** The uniform scale: the length of the first basis vector. 1 for a rigid placement. Always finite and positive. */
       readonly scale: number;
+      /** The determinant is negative: the placement mirrors the part. See the reflection policy above. */
+      readonly mirrored: boolean;
     }
   | { readonly kind: 'UNSUPPORTED'; readonly reason: PlacementRefusal };
 
-/** Lengths agree, and axes are orthogonal, to this fraction of the scale. Unchanged by Stage C03-A. */
+/** The placement of a part that has none: no scale, no mirror. What an engine call that names no placement means. */
+export const IDENTITY_PLACEMENT: PlacementClass = Object.freeze({
+  kind: 'SIMILARITY',
+  scale: 1,
+  mirrored: false,
+});
+
+/** Lengths agree, and axes are orthogonal, to this fraction of the scale. Unchanged by Stages C03-A and C03-B. */
 export const PLACEMENT_CLASSIFICATION_TOLERANCE = 1e-6;
 
 const UNSUPPORTED = (reason: PlacementRefusal): PlacementClass =>
@@ -86,5 +106,13 @@ export function classifyPlacement(transform: readonly number[]): PlacementClass 
       )
         return UNSUPPORTED(PlacementRefusal.Shear);
     }
-  return Object.freeze({ kind: 'SIMILARITY', scale });
+  const [a, b, c] = axes;
+  if (a === undefined || b === undefined || c === undefined)
+    return UNSUPPORTED(PlacementRefusal.Malformed);
+  // The triple product a · (b × c). For a similarity its magnitude is scale³, so only its sign is read.
+  const determinant =
+    a[0] * (b[1] * c[2] - b[2] * c[1]) -
+    a[1] * (b[0] * c[2] - b[2] * c[0]) +
+    a[2] * (b[0] * c[1] - b[1] * c[0]);
+  return Object.freeze({ kind: 'SIMILARITY', scale, mirrored: determinant < 0 });
 }

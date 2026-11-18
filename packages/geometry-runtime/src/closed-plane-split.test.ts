@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyPartTransform,
+  IDENTITY_PLACEMENT,
   partId,
   singlePartDocument,
   type CanonicalMesh,
@@ -100,7 +101,7 @@ describe('production closed plane strategy', () => {
       { plane, connector: { kind: 'none' } },
       uncancellable,
       undefined,
-      1,
+      IDENTITY_PLACEMENT,
       prepared,
     );
 
@@ -148,7 +149,7 @@ describe('production closed plane strategy', () => {
       { plane, connector: { kind: 'none' } },
       uncancellable,
       undefined,
-      1,
+      IDENTITY_PLACEMENT,
       first,
     );
     store.preparePlaneSource(ticket, { ...plane, origin: [0, 0, 1] }, uncancellable);

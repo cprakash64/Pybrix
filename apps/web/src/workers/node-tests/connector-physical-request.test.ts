@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { createIndexArray, createPositionArray, type CanonicalMesh } from '@cadfixer/mesh-core';
+import {
+  classifyPlacement,
+  createIndexArray,
+  createPositionArray,
+  IDENTITY_PLACEMENT,
+  type CanonicalMesh,
+  type PlacementClass,
+} from '@cadfixer/mesh-core';
 import { CancellationSource, isAppError } from '@cadfixer/shared';
 import {
   splitWithConnectors,
@@ -34,7 +41,7 @@ const X_PLANE = { origin: [0, 0, 0], normal: [1, 0, 0] } as const;
 async function run(
   connector: SplitRequest['connector'],
   size = 20,
-  physicalScale = 1,
+  placement: PlacementClass = IDENTITY_PLACEMENT,
 ): Promise<SplitResult> {
   const backend = await createManifoldBooleanBackend(binary);
   return splitWithConnectors(
@@ -43,7 +50,7 @@ async function run(
     { plane: X_PLANE, connector },
     new CancellationSource().token,
     undefined,
-    physicalScale,
+    placement,
   );
 }
 const digest = (result: SplitResult): string => {
@@ -115,7 +122,11 @@ describe('a physical pin request resolves to the coordinate pin it replaces', ()
   it('KNOWN LEGACY BEHAVIOUR, pinned until the stage that changes it: a manual pin does not take the placement scale', async () => {
     const [unscaled, scaled] = [
       await run(physical('millimeter')),
-      await run(physical('millimeter'), 20, 2),
+      await run(
+        physical('millimeter'),
+        20,
+        classifyPlacement([2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0]),
+      ),
     ];
     expect(digest(scaled)).toBe(digest(unscaled));
   });

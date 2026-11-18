@@ -78,11 +78,11 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
   try {
     context.reportProgress(0.02, 'Preparing cut…');
     /*
-     * The part's placement, classified once by the one classifier. The engine takes a number: a similarity's scale, or NaN for a
-     * placement that has none (non-uniform scale, shear, degenerate, non-finite), which it refuses as `UNSUPPORTED_TRANSFORM`.
+     * The part's placement, classified once by the one classifier and handed to the engine whole: a similarity's scale, or the
+     * REASON the placement has none (non-uniform scale, shear, degenerate, malformed, non-finite). The engine refuses a connector on
+     * the latter as `UNSUPPORTED_TRANSFORM` and carries the reason with it.
      */
     const placement = classifyPlacement(sourcePart.transform);
-    const physicalScale = placement.kind === 'SIMILARITY' ? placement.scale : Number.NaN;
     const prepared = splitCandidates.preparePlaneSource(
       ticket,
       payload.request.plane,
@@ -122,7 +122,7 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
             stats: booleanOperations.stats,
           });
       },
-      physicalScale,
+      placement,
       prepared,
     );
     context.reportProgress(0.85, 'Checking parts…');

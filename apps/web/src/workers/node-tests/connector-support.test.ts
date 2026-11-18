@@ -4,8 +4,10 @@ import {
   classifyPlacement,
   createIndexArray,
   createPositionArray,
+  IDENTITY_PLACEMENT,
   singlePartDocument,
   type CanonicalMesh,
+  type PlacementClass,
 } from '@cadfixer/mesh-core';
 import { FaceBvh } from '@cadfixer/mesh-core/spatial';
 import { CancellationSource, isAppError } from '@cadfixer/shared';
@@ -23,11 +25,10 @@ import { connectorSupportMargin } from '../../../../../packages/geometry-runtime
 import { validateSocketDepth } from '../../../../../packages/geometry-runtime/src/connector-axial';
 import { createManifoldBooleanBackend } from '../manifold-boolean-backend';
 
-/** The scale the worker hands the engine: a similarity's, or NaN for a placement that has none. */
-const physicalScaleOf = (transform: readonly number[]): number => {
-  const placement = classifyPlacement(transform);
-  return placement.kind === 'SIMILARITY' ? placement.scale : Number.NaN;
-};
+/** The placement the worker hands the engine: `classifyPlacement`'s own answer, whole. */
+const placementOf = (transform: readonly number[]): PlacementClass => classifyPlacement(transform);
+/** A placement that is not a similarity (a non-uniform scale). */
+const NON_SIMILARITY: PlacementClass = classifyPlacement([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
 
 /*
  * Release 2, Slice 2D — `support-v1` on the REAL kernel and the REAL Manifold backend.
@@ -102,7 +103,7 @@ async function observe(
   mesh: CanonicalMesh,
   connector: SplitRequest['connector'],
   plane: SplitPlane = Z,
-  scale = 1,
+  placement: PlacementClass = IDENTITY_PLACEMENT,
 ): Promise<Observed> {
   const base = await createManifoldBooleanBackend(binary),
     stages: string[] = [],
@@ -119,7 +120,7 @@ async function observe(
       { plane, connector },
       new CancellationSource().token,
       (stage) => stages.push(stage),
-      scale,
+      placement,
     );
     return { result, stages, booleans };
   } catch (error) {
@@ -635,7 +636,7 @@ describe('UNSUPPORTED_TRANSFORM: a placement that is not a similarity is refused
     it(`${name}: ${allowed ? 'a connector is added' : 'refused, nothing built, input untouched'}`, async () => {
       const mesh = slab(-30, 30),
         before = copy(mesh),
-        observed = await observe(mesh, pin(1, 4, 6), Z, physicalScaleOf(transform));
+        observed = await observe(mesh, pin(1, 4, 6), Z, placementOf(transform));
       if (allowed) {
         expect(observed.result?.connector.kind).toBe('pin');
         expect(observed.booleans).toHaveLength(2);
@@ -654,7 +655,7 @@ describe('UNSUPPORTED_TRANSFORM: a placement that is not a similarity is refused
       boxAt(30, 30, 30),
       { kind: 'automatic', unit: 'millimeter' },
       Z,
-      physicalScaleOf([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+      placementOf([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
     );
     expect(observed.result?.automaticConnector).toBe('unavailable');
     expect(observed.result?.automaticConnectorDiagnostics?.reason).toBe('UNSUPPORTED_TRANSFORM');
@@ -662,7 +663,7 @@ describe('UNSUPPORTED_TRANSFORM: a placement that is not a similarity is refused
     expect(observed.booleans).toEqual([]);
   });
   it('a plain cut and an open-surface cut are not refused for their placement: only a connector depends on it', async () => {
-    const observed = await observe(slab(-30, 30), { kind: 'none' }, Z, Number.NaN);
+    const observed = await observe(slab(-30, 30), { kind: 'none' }, Z, NON_SIMILARITY);
     expect(observed.result?.connector.kind).toBe('none');
   });
 });
@@ -693,7 +694,7 @@ describe('one validator, one female tree, no male tree, and the automatic guard 
   it('builds nothing when the plan is refused before the support check, and one tree when it is refused by it', async () => {
     const spy = vi.spyOn(FaceBvh, 'build');
     try {
-      const early = await observe(slab(-30, 30), pin(1, 4, 6), Z, Number.NaN);
+      const early = await observe(slab(-30, 30), pin(1, 4, 6), Z, NON_SIMILARITY);
       expect(code(early)).toBe('CONNECTOR_UNSUPPORTED_TRANSFORM');
       expect(spy).toHaveBeenCalledTimes(0);
       const refused = await observe(await wallBeside(0.3), pin(1, 4, 6));
