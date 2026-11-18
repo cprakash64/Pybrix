@@ -281,6 +281,19 @@ export function socketDiameter(pinDiameter: number, radialClearance: number): nu
   return pinDiameter + 2 * radialClearance;
 }
 
+/**
+ * The worker's refusals about what a connector was asked to BE, not about the cut: no unit to size it in, a placement that is not a
+ * similarity, a size outside the physical range, a request that is not physical. They are decisions about the request, each with
+ * its own sentence from the engine's mapper, and none of them is a finding about the model's geometry. The worker names them by the
+ * legacy `details.code` the page already knows; a test holds this list to the engine's own codes.
+ */
+export const CONNECTOR_INPUT_REFUSAL_CODES: readonly string[] = Object.freeze([
+  'UNKNOWN_UNITS',
+  'CONNECTOR_UNSUPPORTED_TRANSFORM',
+  'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+  'CONNECTOR_REQUEST_NOT_PHYSICAL',
+]);
+
 /** The engine's accepted dimension range (Stage 7B `dimension`). */
 export function isValidDimension(value: number, allowZero = false): boolean {
   return Number.isFinite(value) && value >= (allowZero ? 0 : 0.01) && value <= 1000;
@@ -326,6 +339,12 @@ export const SPLIT_COPY = Object.freeze({
   connectorsNeedMillimetres:
     'Connectors have physical sizes, so Pybrix needs to know what this model’s numbers mean. Choose its units to continue.',
   fitNote: 'Printers vary: 0.2 mm is a starting point, not a guarantee of fit.',
+  /**
+   * After a refusal about what was ASKED FOR — the model's unit, its placement, a size outside the range. The sentence above it is the
+   * worker's own (one mapper per cause); this says only what is still true, and sends nowhere: the cut was not examined, so
+   * "move the cut" would be wrong advice.
+   */
+  connectorInputUnchanged: 'Your model is unchanged.',
   resultSection: 'Result',
   noPart: 'Open a model to split it.',
   pieceA: 'Piece A',

@@ -235,6 +235,8 @@ export {
   dovetailFemaleDimensions,
   splitTolerance,
   splitWithConnectors,
+  assertProductConnectorRequest,
+  withStatedUnit,
   splitSourceReasons,
   describeSplitSourceRefusal,
   SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
@@ -251,6 +253,8 @@ export type { ConnectorManifest } from './connector-plan';
 export type {
   CutSurfaceSummary,
   PhysicalPinRequest,
+  ProductConnectorRequest,
+  ProductSplitRequest,
   SplitConnector,
   SplitMetrics,
   SplitPlane,

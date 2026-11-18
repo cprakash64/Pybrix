@@ -19,7 +19,7 @@ import type { RepairCandidateHandle } from './repair-candidates';
 import type { HoleFillCandidateHandle } from './hole-fill-candidates';
 import type { GeometryEditCandidateHandle, GeometryEditResourceAccounting } from './geometry-edit';
 import type { SplitCandidateHandle, SplitCandidateSummary } from './split-candidates';
-import type { SplitRequest } from './split-connectors';
+import type { ProductSplitRequest, SplitRequest } from './split-connectors';
 // Type-only, like the repair and hole-fill contracts: the Auto Split engine runs in the worker and its
 // code must not reach the main-thread bundle through the protocol.
 import type { ComponentSummary, Suggestion } from '@cadfixer/auto-split';
@@ -329,7 +329,8 @@ export interface SplitCreatePayload {
   };
   readonly source: DocumentHandle;
   readonly partId: string;
-  readonly request: SplitRequest;
+  /** Stated PHYSICALLY: what the page may ask for (Stage C03-C2). A coordinate pin is not on this type, and the worker refuses one. */
+  readonly request: ProductSplitRequest;
 }
 export interface SplitCreateResult extends SplitCandidateSummary {
   readonly semanticQualification?: {

@@ -353,11 +353,16 @@ describe('module boundary (G7)', () => {
     expect([...imports].sort()).toEqual(
       [
         './closed-plane-kernel',
+        // the one sentence for a model with no unit: a leaf module that imports nothing (Stage C03-C2)
+        './connector-unit-refusal',
         './split-connectors',
         './split-source-identity',
         '@cadfixer/shared',
       ].sort(),
     );
+    expect(
+      readFileSync('packages/geometry-runtime/src/connector-unit-refusal.ts', 'utf8'),
+    ).not.toMatch(/^import /m);
   });
   it('takes only TYPES from split-connectors, so there is no runtime import cycle', () => {
     expect(source).toMatch(/^import type \{[^}]*\} from '\.\/split-connectors';/m);

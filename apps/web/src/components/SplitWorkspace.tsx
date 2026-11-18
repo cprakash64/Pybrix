@@ -872,6 +872,11 @@ function SplitOutcome({
     <WorkspaceOutcome revealKey={key === '' ? undefined : key}>
       {split.error === undefined ? null : split.errorIsResourceLimit ? (
         <ResourceRefusalCard testId="split-resource-limit" />
+      ) : split.errorIsConnectorInput === true ? (
+        <section className="workflow-limitation" role="status" data-testid="split-connector-input">
+          <p>{split.error}</p>
+          <p>{SPLIT_COPY.connectorInputUnchanged}</p>
+        </section>
       ) : split.errorIsOperationFailure ? (
         <OutcomeAlert testId="split-error">
           Split could not be completed. Your model is unchanged.

@@ -48,6 +48,7 @@ import {
   type ResolvedConnectorDimensions,
 } from './connector-dimensions';
 import { describeDimensionRefusal } from './connector-dimension-refusal';
+import { describeUnknownUnitRefusal } from './connector-unit-refusal';
 import {
   ConnectorRefusal,
   REFUSAL_TO_LEGACY_DETAILS_CODE,
@@ -113,7 +114,61 @@ export interface SplitRequest {
   readonly connector:
     SplitConnector | { readonly kind: 'automatic'; readonly unit: string } | PhysicalPinRequest;
 }
+/**
+ * WHAT MAY CROSS THE WORKER BOUNDARY FROM THE PAGE (Stage C03-C2): no connector, an automatic connector, or a PHYSICAL pin. A connector
+ * the page names always names millimetres (and the unit its coordinates are read in); a pin in raw COORDINATES is the engine's own
+ * pinned legacy request, for tests and oracles, and is not a thing the page can ask for. Keeping it off the boundary means no flow can
+ * route around the unit policy by sending numbers it has already converted (or has not).
+ */
+export type ProductConnectorRequest =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'automatic'; readonly unit: string }
+  | PhysicalPinRequest;
+export interface ProductSplitRequest {
+  readonly plane: SplitPlane;
+  readonly connector: ProductConnectorRequest;
+}
+/** The connector kinds the worker accepts from the page. A message is untrusted, so the kind is checked at run time as well. */
+export const PRODUCT_CONNECTOR_KINDS: readonly string[] = Object.freeze([
+  'none',
+  'automatic',
+  'physical-pin',
+]);
+/** Refuses, before anything is touched, a connector request that is not stated physically. */
+export function assertProductConnectorRequest(connector: { readonly kind: string }): void {
+  if (!PRODUCT_CONNECTOR_KINDS.includes(connector.kind))
+    throw invalidState('Connector sizes must be requested in millimetres.', {
+      code:
+        REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.REQUEST_NOT_PHYSICAL] ??
+        'REQUEST_NOT_PHYSICAL',
+      refusal: ConnectorRefusal.REQUEST_NOT_PHYSICAL,
+    });
+}
+/**
+ * The unit a physical connector is sized in. A unit the FILE states wins over the one the request names — "a stated unit always
+ * wins" is the product's rule for the page, and the worker is the authority, so a page that holds a stale mirror of the document
+ * cannot size a connector in the wrong unit. A document that states none takes the one the user assigned, which the request carries.
+ */
+export function withStatedUnit(
+  connector: ProductConnectorRequest,
+  statedUnit: string | undefined,
+): ProductConnectorRequest {
+  if (statedUnit === undefined || connector.kind === 'none') return connector;
+  return connector.unit === statedUnit ? connector : { ...connector, unit: statedUnit };
+}
 type PinConnector = Extract<SplitConnector, { readonly kind: 'pin' }>;
+
+/**
+ * The refusal for a model whose unit is not one the product knows: a physical connector has no physical length without one.
+ * One legacy code (`UNKNOWN_UNITS`, which the page and the tests know), the typed refusal beside it, one sentence, and nothing was
+ * built. Never defaulted to millimetres and never read as the model's own units.
+ */
+function unknownUnitError(): ReturnType<typeof invalidState> {
+  return invalidState(describeUnknownUnitRefusal(), {
+    code: REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.UNIT_UNKNOWN] ?? 'UNKNOWN_UNITS',
+    refusal: ConnectorRefusal.UNIT_UNKNOWN,
+  });
+}
 
 /** The refusal for a placement that is not a similarity: one code, the classifier's reason beside it, one sentence. */
 function unsupportedTransformError(reason: PlacementRefusal): ReturnType<typeof invalidState> {
@@ -167,9 +222,7 @@ function resolvePhysicalPin(
       case 'UNSUPPORTED_TRANSFORM':
         throw unsupportedTransformError(resolved.transformReason);
       case 'UNKNOWN_UNITS':
-        throw invalidState('A known unit is required to size a connector.', {
-          code: 'UNKNOWN_UNITS',
-        });
+        throw unknownUnitError();
     }
   }
   return {
@@ -963,7 +1016,7 @@ export async function splitWithConnectors(
   // A physical pin on a model with no known unit is refused FIRST, as it always was: with no unit there is no physical length, and the
   // refusal must not depend on anything else about the request. The sizes themselves are resolved later, once the placement is known.
   if (requested.connector.kind === 'physical-pin' && !resolveModelUnit(requested.connector.unit).ok)
-    throw invalidState('A known unit is required to size a connector.', { code: 'UNKNOWN_UNITS' });
+    throw unknownUnitError();
   const request = requested;
   onStage?.(SplitStage.PreparingCut);
   const preparation =
@@ -984,9 +1037,7 @@ export async function splitWithConnectors(
   const { capability } = preparation;
   if (capability.strategy === 'unsupported') throw invalidState('This cut cannot be made safely.');
   if (request.connector.kind === 'automatic' && !isLengthUnit(request.connector.unit))
-    throw invalidState('A known unit is required for automatic connectors.', {
-      code: 'UNKNOWN_UNITS',
-    });
+    throw unknownUnitError();
   if (capability.strategy === 'open-surface') {
     if (request.connector.kind !== 'none' && request.connector.kind !== 'automatic')
       throw invalidState('Choose None for this split.', {
@@ -1054,10 +1105,7 @@ export async function splitWithConnectors(
           splitTolerance(source),
         );
   const automatic = request.connector.kind === 'automatic';
-  if (automatic && !isLengthUnit(request.connector.unit))
-    throw invalidState('A known unit is required for automatic connectors.', {
-      code: 'UNKNOWN_UNITS',
-    });
+  if (automatic && !isLengthUnit(request.connector.unit)) throw unknownUnitError();
   const automaticDiagnostics: AutomaticConnectorDiagnostics = {
     reason: 'NO_SAFE_SITE',
     proposedSites: 0,

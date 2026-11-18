@@ -11,8 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   OperationHandle,
   PartDescriptor,
-  PhysicalPinRequest,
-  SplitConnector,
+  ProductConnectorRequest,
   SplitCreatePayload,
   SplitCreateResult,
   SplitTransactionStatus,
@@ -22,6 +21,7 @@ import { useGeometryClient } from '../runtime/client-context';
 import { deriveSplitPartExportName, downloadBytes } from '../runtime/download';
 import {
   clampOffset,
+  CONNECTOR_INPUT_REFUSAL_CODES,
   clampRoll,
   type SplitPieceView,
   clampTilt,
@@ -161,6 +161,11 @@ export interface SplitControls {
   /** Presentation only: an unexpected runtime failure or a failed commit, rather than an unsafe cut. */
   readonly errorIsOperationFailure?: boolean;
   /**
+   * True when `error` is the worker refusing what the connector was asked to BE (no unit, a placement that is not a similarity, a size
+   * outside the physical range) rather than anything about the cut. Shown as its own sentence, without advice about the cut.
+   */
+  readonly errorIsConnectorInput?: boolean;
+  /**
    * The reasons, when the worker refused the split because the part is not a closed solid. A status
    * with Repair as the next step, never an alert and never a retry.
    */
@@ -204,6 +209,12 @@ export interface SplitControls {
 const messageOf = (cause: unknown, fallback: string): string =>
   cause instanceof Error && cause.message !== '' ? cause.message : fallback;
 
+/** The worker refused what the connector was asked to be (its unit, its placement, its size), not the cut. */
+const isConnectorInputRefusal = (cause: unknown): boolean =>
+  isAppError(cause) &&
+  typeof cause.details.code === 'string' &&
+  CONNECTOR_INPUT_REFUSAL_CODES.includes(cause.details.code);
+
 /** The worker declined for resources: a limit it enforces, as opposed to a cut it found unsound. */
 const isResourceRefusal = (cause: unknown): boolean =>
   isAppError(cause) && cause.code === AppErrorCode.ResourceLimitExceeded;
@@ -217,7 +228,7 @@ const isResourceRefusal = (cause: unknown): boolean =>
 export function connectorRequest(
   settings: ConnectorSettings,
   unit: LengthUnit | undefined,
-): SplitConnector | PhysicalPinRequest {
+): ProductConnectorRequest {
   switch (settings.kind) {
     case 'none':
       return { kind: 'none' };
@@ -306,6 +317,8 @@ export function useSplitWorkflow(): SplitControls {
         readonly message: string;
         readonly resource: boolean;
         readonly failure?: boolean;
+        /** Set when the worker refused what the connector was asked to be (its unit, its placement or its size). */
+        readonly connectorInput?: boolean;
         /** Set when the worker refused because the part is not a closed solid: the reasons it gave. */
         readonly notClosed?: readonly string[];
       }
@@ -408,6 +421,13 @@ export function useSplitWorkflow(): SplitControls {
   const setNotClosedError = useCallback(
     (message: string, reasons: readonly string[]): void => {
       setErrorState({ key: session, message, resource: false, notClosed: reasons });
+    },
+    [session],
+  );
+  /** A refusal about what the connector was asked to be: the same slot, marked so the page does not blame the cut. */
+  const setConnectorInputError = useCallback(
+    (message: string): void => {
+      setErrorState({ key: session, message, resource: false, connectorInput: true });
     },
     [session],
   );
@@ -758,6 +778,13 @@ export function useSplitWorkflow(): SplitControls {
             store.pushStatus(StatusSeverity.Info, "This cut can't be made safely.");
             return;
           }
+          if (isConnectorInputRefusal(cause)) {
+            // A decision about what was asked for, with the worker's own sentence for it; the cut was never examined.
+            const refused = messageOf(cause, 'This connector could not be sized.');
+            setConnectorInputError(refused);
+            store.pushStatus(StatusSeverity.Info, refused);
+            return;
+          }
           if (isResourceRefusal(cause)) {
             // A decision, not a defect: neutral words that name no limit's internals and no other way.
             setResourceError(RESOURCE_REFUSAL_COPY.body);
@@ -789,6 +816,7 @@ export function useSplitWorkflow(): SplitControls {
       setPhase,
       setPlane,
       setProgress,
+      setConnectorInputError,
       setNotClosedError,
       setResourceError,
       sizeNotice,
@@ -1231,6 +1259,7 @@ export function useSplitWorkflow(): SplitControls {
     error,
     errorIsResourceLimit,
     errorIsOperationFailure: errorState?.key === session && errorState.failure === true,
+    errorIsConnectorInput: errorState?.key === session && errorState.connectorInput === true,
     sourceNotClosed,
     sizeNotice,
     preview,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { roundSocketRadius } from '@cadfixer/geometry-runtime';
 import { deriveSplitPartExportName } from '../runtime/download';
 import {
+  CONNECTOR_INPUT_REFUSAL_CODES,
   CONNECTOR_OPTIONS,
   MAX_SPLIT_TILT_DEGREES,
   SPLIT_COPY,
@@ -343,5 +344,31 @@ describe('connector sizes are physical, whatever the model’s unit', () => {
     expect(connectorProblemOf({ ...pin, depth: 1001 })).toMatch(/between 0.01 and 1000 mm/);
     // the function has no unit to read: a physical hint cannot depend on one
     expect(connectorProblemOf.length).toBe(1);
+  });
+});
+
+describe('the refusals about what a connector was asked to be (Stage C03-C2)', () => {
+  it('are named by the legacy codes the engine throws, and a cut refusal is not among them', () => {
+    expect([...CONNECTOR_INPUT_REFUSAL_CODES].sort()).toEqual(
+      [
+        'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+        'CONNECTOR_REQUEST_NOT_PHYSICAL',
+        'CONNECTOR_UNSUPPORTED_TRANSFORM',
+        'UNKNOWN_UNITS',
+      ].sort(),
+    );
+    for (const cutCode of [
+      'CUT_NOT_SAFE',
+      'CONNECTOR_TOO_CLOSE_TO_EDGE',
+      'CONNECTOR_DOES_NOT_FIT',
+      'CONNECTOR_SOCKET_BREAKTHROUGH',
+      'CONNECTOR_SOCKET_SUPPORT_INSUFFICIENT',
+      'OPEN_SPLIT_CONNECTOR_UNSUPPORTED',
+    ])
+      expect(CONNECTOR_INPUT_REFUSAL_CODES).not.toContain(cutCode);
+  });
+  it('are followed by what is still true and nothing about the cut', () => {
+    expect(SPLIT_COPY.connectorInputUnchanged).toBe('Your model is unchanged.');
+    expect(SPLIT_COPY.connectorInputUnchanged).not.toMatch(/cut|move|plane|safely/i);
   });
 });

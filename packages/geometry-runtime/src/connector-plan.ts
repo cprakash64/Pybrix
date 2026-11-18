@@ -18,6 +18,7 @@ import { isLengthUnit } from '@cadfixer/shared';
 import type { GeneratedSeparationInterface } from './closed-plane-kernel';
 import type { EngineSplitRequest, SplitConnector, SplitVector } from './split-connectors';
 import { splitBufferSHA } from './split-source-identity';
+import { describeUnknownUnitRefusal } from './connector-unit-refusal';
 
 /** The policy the legacy behaviour corresponds to. Versioned so a later physical policy is distinguishable from it. */
 export const LEGACY_CONNECTOR_POLICY = 'legacy-v0' as const;
@@ -109,6 +110,12 @@ export const ConnectorRefusal = {
    */
   UNSUPPORTED_TRANSFORM: 'UNSUPPORTED_TRANSFORM',
   /**
+   * A connector request that is not stated physically (a pin in raw coordinates) reached the worker boundary (Stage C03-C2). The
+   * page cannot send one; this refuses any other sender before anything is touched. Legacy details code:
+   * `CONNECTOR_REQUEST_NOT_PHYSICAL`.
+   */
+  REQUEST_NOT_PHYSICAL: 'REQUEST_NOT_PHYSICAL',
+  /**
    * A requested connector dimension is outside the PHYSICAL range (millimetres) the product places, or cannot be represented in the
    * part's coordinates (Stage C03-C1). It is about a number that was asked for, not about the model. Legacy details code:
    * `CONNECTOR_DIMENSION_OUT_OF_POLICY`.
@@ -147,6 +154,11 @@ export type SupportRefusal =
 /** Codes Stage C03-C1 adds. A test keeps this honest, and keeps it disjoint from the earlier slices'. */
 export const PRODUCED_IN_C03C1: readonly ConnectorRefusal[] = Object.freeze([
   ConnectorRefusal.DIMENSION_OUT_OF_POLICY,
+]);
+
+/** Codes Stage C03-C2 adds, disjoint from every earlier stage. */
+export const PRODUCED_IN_C03C2: readonly ConnectorRefusal[] = Object.freeze([
+  ConnectorRefusal.REQUEST_NOT_PHYSICAL,
 ]);
 
 /** Codes Slice 2D adds. A test keeps this honest, and keeps it disjoint from the earlier slices'. */
@@ -201,6 +213,7 @@ export const LEGACY_DETAILS_CODE_TO_REFUSAL: Readonly<Record<string, ConnectorRe
     CONNECTOR_SUPPORT_VALIDATION_UNAVAILABLE: ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE,
     CONNECTOR_UNSUPPORTED_TRANSFORM: ConnectorRefusal.UNSUPPORTED_TRANSFORM,
     CONNECTOR_DIMENSION_OUT_OF_POLICY: ConnectorRefusal.DIMENSION_OUT_OF_POLICY,
+    CONNECTOR_REQUEST_NOT_PHYSICAL: ConnectorRefusal.REQUEST_NOT_PHYSICAL,
   });
 
 /** The legacy `details.code` for a refusal this module can produce, so a plan failure keeps the code the page knows. */
@@ -220,6 +233,7 @@ export const REFUSAL_TO_LEGACY_DETAILS_CODE: Readonly<Partial<Record<ConnectorRe
     [ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE]: 'CONNECTOR_SUPPORT_VALIDATION_UNAVAILABLE',
     [ConnectorRefusal.UNSUPPORTED_TRANSFORM]: 'CONNECTOR_UNSUPPORTED_TRANSFORM',
     [ConnectorRefusal.DIMENSION_OUT_OF_POLICY]: 'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+    [ConnectorRefusal.REQUEST_NOT_PHYSICAL]: 'CONNECTOR_REQUEST_NOT_PHYSICAL',
   });
 
 /** The typed refusal for a legacy `details.code`, or `undefined` for a code this vocabulary does not name. */
@@ -698,10 +712,7 @@ export function validateConnectorPlan(
       'The connector plan was made for a different cut.',
     );
   if (plan.draft.kind === 'automatic-pin' && !isLengthUnit(plan.draft.unit))
-    return refuse(
-      ConnectorRefusal.UNIT_UNKNOWN,
-      'A known unit is required for automatic connectors.',
-    );
+    return refuse(ConnectorRefusal.UNIT_UNKNOWN, describeUnknownUnitRefusal());
   const { connector } = plan.legacy;
   if (connector.kind === 'pin') {
     const ids = new Set(plan.pairs.map((pair) => pair.pairId));

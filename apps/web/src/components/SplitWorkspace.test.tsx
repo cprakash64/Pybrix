@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { invalidState } from '@cadfixer/shared';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
 import type {
   DocumentHandle,
@@ -26,7 +27,10 @@ import type { LoadedModel } from '../state/model';
  * precisely, and nothing carried to a part it was not set for.
  */
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 function part(partId: string, zMax = 104): PartDescriptor {
   return {
@@ -350,5 +354,62 @@ describe('the footer', () => {
     });
     expect(screen.getByTestId('split-connector-none')).toBeChecked();
     expect(store.getSnapshot().splitPlane?.origin[2]).toBe(52);
+  });
+});
+
+describe('a refusal about what the connector was asked to BE is said as that, not as an unsafe cut (Stage C03-C2)', () => {
+  /** A worker that answers the preview with the refusal the real engine gives, so the page's own wording is what is observed. */
+  function workerRefuses(code: string, message: string): void {
+    vi.spyOn(GeometryClient.prototype, 'createSplit').mockImplementation(
+      () =>
+        ({
+          promise: Promise.reject(invalidState(message, { code })),
+          cancel: (): void => undefined,
+        }) as unknown as ReturnType<GeometryClient['createSplit']>,
+    );
+  }
+  async function previewWithPin(unit: 'millimeter'): Promise<void> {
+    mount((store) => {
+      load(store, unit);
+    });
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    fireEvent.click(screen.getByTestId('split-preview'));
+    await screen.findByTestId('split-connector-input');
+  }
+  it.each([
+    [
+      'UNKNOWN_UNITS',
+      'This model has no physical units. Set the model units before adding a physical connector.',
+    ],
+    ['CONNECTOR_UNSUPPORTED_TRANSFORM', 'Connectors require uniform model scale.'],
+    [
+      'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+      'Pin diameter of 0.001 mm is outside the range Pybrix can place (0.01–1000 mm).',
+    ],
+  ])(
+    "%s: the worker's sentence is shown, with what is still true, and no advice about the cut",
+    async (code, message) => {
+      workerRefuses(code, message);
+      await previewWithPin('millimeter');
+      const shown = screen.getByTestId('split-connector-input');
+      expect(shown).toHaveTextContent(message);
+      expect(shown).toHaveTextContent('Your model is unchanged.');
+      expect(shown).not.toHaveTextContent(/cut|safely|move/i);
+      expect(shown).toHaveAttribute('role', 'status');
+      // and not the generic cut refusal beside it
+      expect(screen.queryByText(/can't be made safely/)).toBeNull();
+      expect(screen.queryByTestId('split-error')).toBeNull();
+    },
+  );
+  it('any other refusal keeps the cut wording it always had', async () => {
+    workerRefuses('CUT_NOT_SAFE', 'This cut cannot be made safely. Try a different plane.');
+    mount((store) => {
+      load(store, 'millimeter');
+    });
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    fireEvent.click(screen.getByTestId('split-preview'));
+    await screen.findByTestId('split-error');
+    expect(screen.queryByTestId('split-connector-input')).toBeNull();
+    expect(screen.getByTestId('split-error')).toHaveTextContent("This cut can't be made safely.");
   });
 });

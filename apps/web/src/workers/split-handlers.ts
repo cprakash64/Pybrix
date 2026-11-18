@@ -21,9 +21,11 @@ import {
   partId,
 } from '@cadfixer/mesh-core';
 import {
+  assertProductConnectorRequest,
   documentByteLength,
   splitWithConnectors,
   SplitStage,
+  withStatedUnit,
   type OperationHandler,
 } from '@cadfixer/geometry-runtime';
 import {
@@ -70,8 +72,16 @@ const STAGE_PROGRESS: Readonly<Record<SplitStage, readonly [number, string]>> = 
 
 const createSingleSplit: OperationHandler<'split/create'> = async (payload, context) => {
   context.throwIfCancelled();
+  // A connector the page names is stated PHYSICALLY. A message is untrusted, so the kind is checked here too, before anything is
+  // touched: a pin in raw coordinates would route around the unit policy.
+  assertProductConnectorRequest(payload.request.connector);
   const sourcePart = residentDocuments.resolvePart(payload.source, partId(payload.partId));
   if (!isPart(sourcePart)) throw sourcePart;
+  // The unit a physical connector is sized in is the FILE's when the file states one: a page holding a stale mirror of the document
+  // cannot size a connector in the wrong unit. A document that states none takes the unit the user assigned, which the request carries.
+  const document = residentDocuments.resolve(payload.source);
+  if (isAppError(document)) throw document;
+  const connector = withStatedUnit(payload.request.connector, document.unit);
   releaseScopeReceipt(payload.source.documentId);
   const ticket = splitCandidates.begin(payload.source, sourcePart.id);
   let booleanIndex = 0;
@@ -107,7 +117,7 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
         },
       },
       sourcePart.mesh,
-      payload.request,
+      { plane: payload.request.plane, connector },
       context.cancellation,
       (stage) => {
         context.reportProgress(STAGE_PROGRESS[stage][0], STAGE_PROGRESS[stage][1]);

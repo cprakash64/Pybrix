@@ -248,3 +248,65 @@ describe('the validators stay physically blind', () => {
     }
   });
 });
+
+describe('an unknown unit has one sentence, one typed refusal, and one way in (Stage C03-C2)', () => {
+  const mapper = 'packages/geometry-runtime/src/connector-unit-refusal.ts';
+  it('the sentence exists in exactly one production file, and the old ones are gone', () => {
+    const sentence =
+      'This model has no physical units. Set the model units before adding a physical connector.';
+    expect(rel(everything.filter((file) => read(file).includes(sentence)))).toEqual([mapper]);
+    for (const file of everything)
+      expect(read(file), relative(ROOT, file)).not.toMatch(/A known unit is required/);
+  });
+  it('every unknown-unit refusal of the engine is the one helper, and nothing else files the code', () => {
+    const engine = read(join(ROOT, 'packages/geometry-runtime/src/split-connectors.ts'));
+    expect(engine.match(/'UNKNOWN_UNITS'/g)?.length ?? 0).toBeLessThanOrEqual(2); // the helper's fallback and the resolver's case label
+    expect(engine.match(/throw unknownUnitError\(\)/g)).toHaveLength(4);
+    expect(engine.match(/describeUnknownUnitRefusal\(/g)).toHaveLength(1);
+    const plan = read(join(ROOT, 'packages/geometry-runtime/src/connector-plan.ts'));
+    expect(plan).toContain('describeUnknownUnitRefusal()');
+  });
+  it('the worker boundary names a physical request only, and the worker refuses anything else before it touches the document', () => {
+    const engine = read(join(ROOT, 'packages/geometry-runtime/src/split-connectors.ts'));
+    const product = engine.slice(
+      engine.indexOf('export type ProductConnectorRequest'),
+      engine.indexOf('export interface ProductSplitRequest'),
+    );
+    expect(product).toContain("kind: 'none'");
+    expect(product).toContain("kind: 'automatic'");
+    expect(product).toContain('PhysicalPinRequest');
+    expect(product).not.toMatch(/'pin'|'dovetail'|SplitConnector/);
+    expect(read(join(ROOT, 'packages/geometry-runtime/src/protocol.ts'))).toContain(
+      'readonly request: ProductSplitRequest;',
+    );
+    expect(read(join(ROOT, 'apps/web/src/runtime/geometry-client.ts'))).toContain(
+      'request: ProductSplitRequest,',
+    );
+    const handler = read(join(ROOT, 'apps/web/src/workers/split-handlers.ts'));
+    expect(handler.match(/assertProductConnectorRequest\(/g)).toHaveLength(1);
+    expect(handler.match(/withStatedUnit\(/g)).toHaveLength(1);
+    expect(handler.indexOf('assertProductConnectorRequest(')).toBeLessThan(
+      handler.indexOf('residentDocuments.resolvePart('),
+    );
+    expect(handler.indexOf('withStatedUnit(')).toBeLessThan(
+      handler.indexOf('splitWithConnectors('),
+    );
+  });
+  it("the page lists the refusals about what a connector was asked to be by the engine's own legacy codes", () => {
+    const plan = read(join(ROOT, 'packages/geometry-runtime/src/connector-plan.ts'));
+    const codes = [
+      'UNIT_UNKNOWN',
+      'UNSUPPORTED_TRANSFORM',
+      'DIMENSION_OUT_OF_POLICY',
+      'REQUEST_NOT_PHYSICAL',
+    ].map((refusal) => {
+      const match = new RegExp(`\\[ConnectorRefusal\\.${refusal}\\]: '([A-Z_]+)'`).exec(plan);
+      return match?.[1] ?? '';
+    });
+    const page = read(join(ROOT, 'apps/web/src/state/split-presentation.ts'));
+    for (const code of codes) {
+      expect(code).not.toBe('');
+      expect(page, code).toContain(`'${code}'`);
+    }
+  });
+});

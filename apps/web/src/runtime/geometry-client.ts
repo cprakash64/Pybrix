@@ -36,7 +36,7 @@ import {
   type SendForExportResult,
   type StlExportResult,
   type SplitCandidateHandle,
-  type SplitRequest,
+  type ProductSplitRequest,
   type AutoSplitRenderResult,
   type AutoSplitSuggestResult,
   type AutoSplitComponentFacesResult,
@@ -618,7 +618,7 @@ export class GeometryClient {
   public createSplit(
     source: DocumentHandle,
     partId: string,
-    request: SplitRequest,
+    request: ProductSplitRequest,
     onProgress?: (update: ProgressUpdate) => void,
     semanticQualification?: SplitCreatePayload['semanticQualification'],
   ): OperationHandle<SplitCreateResult> {

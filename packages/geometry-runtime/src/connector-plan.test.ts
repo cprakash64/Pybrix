@@ -5,6 +5,7 @@ import {
   LEGACY_CONNECTOR_POLICY,
   LEGACY_DETAILS_CODE_TO_REFUSAL,
   PRODUCED_IN_C03C1,
+  PRODUCED_IN_C03C2,
   PRODUCED_IN_SLICE_1,
   PRODUCED_IN_SLICE_2B,
   PRODUCED_IN_SLICE_2C,
@@ -446,6 +447,23 @@ describe('typed refusal vocabulary', () => {
     );
     expect(REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.DIMENSION_OUT_OF_POLICY]).toBe(
       'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+    );
+  });
+  it('Stage C03-C2 produces exactly the not-physical-request code, disjoint from every earlier stage, with a legacy code both ways', () => {
+    expect([...PRODUCED_IN_C03C2]).toEqual(['REQUEST_NOT_PHYSICAL']);
+    for (const earlier of [
+      PRODUCED_IN_SLICE_1,
+      PRODUCED_IN_SLICE_2B,
+      PRODUCED_IN_SLICE_2C,
+      PRODUCED_IN_SLICE_2D,
+      PRODUCED_IN_C03C1,
+    ])
+      expect(earlier).not.toContain('REQUEST_NOT_PHYSICAL');
+    expect(refusalForLegacyCode('CONNECTOR_REQUEST_NOT_PHYSICAL')).toBe(
+      ConnectorRefusal.REQUEST_NOT_PHYSICAL,
+    );
+    expect(REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.REQUEST_NOT_PHYSICAL]).toBe(
+      'CONNECTOR_REQUEST_NOT_PHYSICAL',
     );
   });
   it('maps every legacy details.code the product throws to its typed refusal, and back', () => {
