@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   OperationHandle,
   PartDescriptor,
+  PhysicalPinRequest,
   SplitConnector,
   SplitCreatePayload,
   SplitCreateResult,
@@ -209,36 +210,26 @@ const isResourceRefusal = (cause: unknown): boolean =>
   isAppError(cause) && cause.code === AppErrorCode.ResourceLimitExceeded;
 
 /**
- * The connector request in the MODEL'S coordinate units. The panel's sizes are
- * physical (millimetres); a model read as inches has 25.4 mm to a coordinate
- * unit. Without a known unit nothing is converted, because connectors are not
- * offered then.
+ * The connector request, stated PHYSICALLY. The panel's sizes are millimetres and they are sent as millimetres, with the unit the
+ * model's coordinates are read in; the engine turns them into the part's own lengths in one place (`resolveConnectorDimensions`),
+ * so this function converts nothing. Without a known unit the request carries none, which the engine refuses rather than defaults —
+ * connectors are not offered then, so the refusal is a guard, not a flow.
  */
 export function connectorRequest(
-  rawSettings: ConnectorSettings,
+  settings: ConnectorSettings,
   unit: LengthUnit | undefined,
-): SplitConnector {
-  const toCoordinates = (millimetres: number): number =>
-    unit === undefined ? millimetres : millimetresToCoordinates(millimetres, unit);
-  const settings: ConnectorSettings =
-    rawSettings.kind === 'none'
-      ? rawSettings
-      : {
-          ...rawSettings,
-          diameter: toCoordinates(rawSettings.diameter),
-          depth: toCoordinates(rawSettings.depth),
-          clearance: toCoordinates(rawSettings.clearance),
-        };
+): SplitConnector | PhysicalPinRequest {
   switch (settings.kind) {
     case 'none':
       return { kind: 'none' };
     case 'pin':
       return {
-        kind: 'pin',
+        kind: 'physical-pin',
+        unit,
         count: settings.count,
-        diameter: settings.diameter,
-        depth: settings.depth,
-        clearance: settings.clearance,
+        diameterMm: settings.diameter,
+        depthMm: settings.depth,
+        clearanceMm: settings.clearance,
         maleSide: settings.maleSide,
       };
   }

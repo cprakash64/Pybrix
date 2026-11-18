@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  classifyPlacement,
   createIndexArray,
   createPositionArray,
   singlePartDocument,
@@ -21,7 +22,12 @@ import {
 import { connectorSupportMargin } from '../../../../../packages/geometry-runtime/src/connector-policy';
 import { validateSocketDepth } from '../../../../../packages/geometry-runtime/src/connector-axial';
 import { createManifoldBooleanBackend } from '../manifold-boolean-backend';
-import { uniformPhysicalScale } from '../placement-scale';
+
+/** The scale the worker hands the engine: a similarity's, or NaN for a placement that has none. */
+const physicalScaleOf = (transform: readonly number[]): number => {
+  const placement = classifyPlacement(transform);
+  return placement.kind === 'SIMILARITY' ? placement.scale : Number.NaN;
+};
 
 /*
  * Release 2, Slice 2D — `support-v1` on the REAL kernel and the REAL Manifold backend.
@@ -629,7 +635,7 @@ describe('UNSUPPORTED_TRANSFORM: a placement that is not a similarity is refused
     it(`${name}: ${allowed ? 'a connector is added' : 'refused, nothing built, input untouched'}`, async () => {
       const mesh = slab(-30, 30),
         before = copy(mesh),
-        observed = await observe(mesh, pin(1, 4, 6), Z, uniformPhysicalScale(transform));
+        observed = await observe(mesh, pin(1, 4, 6), Z, physicalScaleOf(transform));
       if (allowed) {
         expect(observed.result?.connector.kind).toBe('pin');
         expect(observed.booleans).toHaveLength(2);
@@ -648,7 +654,7 @@ describe('UNSUPPORTED_TRANSFORM: a placement that is not a similarity is refused
       boxAt(30, 30, 30),
       { kind: 'automatic', unit: 'millimeter' },
       Z,
-      uniformPhysicalScale([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+      physicalScaleOf([2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
     );
     expect(observed.result?.automaticConnector).toBe('unavailable');
     expect(observed.result?.automaticConnectorDiagnostics?.reason).toBe('UNSUPPORTED_TRANSFORM');

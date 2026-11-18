@@ -34,6 +34,7 @@ import {
 import { describeSupportFailure, validateConnectorSupport } from './connector-support';
 import { containFootprints, describeFootprintFailure } from './connector-footprint';
 import { connectorSupportMargin } from './connector-policy';
+import { resolveConnectorDimensions } from './connector-dimensions';
 import {
   ConnectorRefusal,
   REFUSAL_TO_LEGACY_DETAILS_CODE,
@@ -73,9 +74,60 @@ export type SplitConnector =
       readonly maleSide: 'A' | 'B';
       readonly orientationDegrees: 0 | 90;
     };
-export interface SplitRequest {
+/**
+ * A round-pin request stated PHYSICALLY: every size is millimetres, and `unit` is how the part's coordinates are read.
+ * The engine turns it into a coordinate pin once, at its entry, through `resolveConnectorDimensions`; nothing downstream of that
+ * sees millimetres, and nothing upstream converts them.
+ */
+export interface PhysicalPinRequest {
+  readonly kind: 'physical-pin';
+  /** How the part's coordinates are read. `undefined` is "not known", which the engine refuses; it is never defaulted. */
+  readonly unit: string | undefined;
+  readonly count: 1 | 2 | 3 | 4;
+  readonly diameterMm: number;
+  readonly depthMm: number;
+  readonly clearanceMm: number;
+  readonly maleSide: 'A' | 'B';
+}
+/** What the engine works from once a physical request has been resolved: sizes in the part's own coordinates. */
+export interface EngineSplitRequest {
   readonly plane: SplitPlane;
   readonly connector: SplitConnector | { readonly kind: 'automatic'; readonly unit: string };
+}
+export interface SplitRequest {
+  readonly plane: SplitPlane;
+  readonly connector:
+    SplitConnector | { readonly kind: 'automatic'; readonly unit: string } | PhysicalPinRequest;
+}
+/**
+ * Resolves a physical pin into a coordinate pin and leaves every other request exactly as it is.
+ * A unit that is not a known one is refused with the same typed code the automatic path uses for it. The placement scale is not
+ * applied to a manual pin yet (see `connector-dimensions.ts`).
+ */
+function resolvePhysicalRequest(request: SplitRequest): EngineSplitRequest {
+  const { connector } = request;
+  if (connector.kind !== 'physical-pin') return { plane: request.plane, connector };
+  const resolved = resolveConnectorDimensions(
+    {
+      diameterMm: connector.diameterMm,
+      depthMm: connector.depthMm,
+      clearanceMm: connector.clearanceMm,
+    },
+    { unit: connector.unit, placementScale: Number.NaN, placementScaleApplied: false },
+  );
+  if (!resolved.ok)
+    throw invalidState('A known unit is required to size a connector.', { code: 'UNKNOWN_UNITS' });
+  return {
+    plane: request.plane,
+    connector: {
+      kind: 'pin',
+      count: connector.count,
+      diameter: resolved.diameter,
+      depth: resolved.depth,
+      clearance: resolved.clearance,
+      maleSide: connector.maleSide,
+    },
+  };
 }
 export interface CutSurfaceSummary {
   readonly triangleIds: readonly number[];
@@ -814,13 +866,14 @@ export type SplitStage = (typeof SplitStage)[keyof typeof SplitStage];
 export async function splitWithConnectors(
   backend: BooleanBackend,
   source: CanonicalMesh,
-  request: SplitRequest,
+  requested: SplitRequest,
   cancellation: CancellationToken,
   onStage?: (stage: SplitStage) => void,
   physicalScale = 1,
   prepared?: PreparedPlaneSplitSource,
 ): Promise<SplitResult> {
   throwIfCancelled(cancellation);
+  const request = resolvePhysicalRequest(requested);
   onStage?.(SplitStage.PreparingCut);
   const preparation =
     prepared ??

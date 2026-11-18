@@ -250,6 +250,7 @@ export type {
 export type { ConnectorManifest } from './connector-plan';
 export type {
   CutSurfaceSummary,
+  PhysicalPinRequest,
   SplitConnector,
   SplitMetrics,
   SplitPlane,

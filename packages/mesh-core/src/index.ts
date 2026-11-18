@@ -72,6 +72,12 @@ export {
 } from './import-cost';
 export type { ImportGeometryCost } from './import-cost';
 export { isWithinSplitTriangleCeiling, MAX_SUPPORTED_SPLIT_TRIANGLES } from './split-limits';
+export {
+  classifyPlacement,
+  PLACEMENT_CLASSIFICATION_TOLERANCE,
+  PlacementRefusal,
+} from './placement';
+export type { PlacementClass } from './placement';
 export type { DrawableTriangles } from './analysis';
 export type { MeshBounds, Vector3Tuple } from './analysis';
 

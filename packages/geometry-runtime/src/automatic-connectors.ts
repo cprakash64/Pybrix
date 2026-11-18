@@ -1,10 +1,6 @@
-import {
-  isLengthUnit,
-  millimetresPerUnit,
-  throwIfCancelled,
-  type CancellationToken,
-} from '@cadfixer/shared';
+import { throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
 import type { CanonicalMesh } from '@cadfixer/mesh-core';
+import { millimetresToLocal, resolveMillimetresPerCoordinate } from './connector-dimensions';
 import {
   connectorCenters,
   type ConnectorCompatibilitySurface,
@@ -129,22 +125,27 @@ export function automaticPinPlan(
     return undefined;
   };
   throwIfCancelled(cancellation);
-  if (!isLengthUnit(unit)) {
-    refuse('UNKNOWN_UNITS');
-    return;
-  }
-  if (!Number.isFinite(scale) || scale <= 0) {
-    // Slice 2D: a placement that is not a similarity (the worker reports NaN) has no single physical scale.
-    refuse('UNSUPPORTED_TRANSFORM');
+  /*
+   * The unit and the part's placement scale arrive as two facts; the one factor that joins them is formed in `connector-dimensions`
+   * (millimetres per coordinate unit, the placement scale applied) and nowhere in this file. A unit that is not a known one and a
+   * placement with no uniform scale (the worker reports NaN) each refuse BEFORE anything is proposed.
+   */
+  const physical = resolveMillimetresPerCoordinate({
+    unit,
+    placementScale: scale,
+    placementScaleApplied: true,
+  });
+  if (!physical.ok) {
+    refuse(physical.refusal);
     return;
   }
   if (cut.outlineTruncated) {
     refuse('UNSUPPORTED_INTERFACE');
     return;
   }
-  const mm = millimetresPerUnit(unit) * scale,
+  const mm = physical.mmPerCoordinate,
     span = Math.min(cut.spanU, cut.spanV) * mm;
-  const clearance = AUTOMATIC_CONNECTOR_LIMITS.clearanceMm / mm,
+  const clearance = millimetresToLocal(AUTOMATIC_CONNECTOR_LIMITS.clearanceMm, mm),
     diameterMm = Math.min(
       AUTOMATIC_CONNECTOR_LIMITS.maximumDiameterMm,
       span * 0.12,
@@ -154,8 +155,8 @@ export function automaticPinPlan(
     refuse('INSUFFICIENT_CLEARANCE');
     return;
   }
-  const diameter = diameterMm / mm,
-    wall = Math.max(0.6 / mm, diameter * 0.3),
+  const diameter = millimetresToLocal(diameterMm, mm),
+    wall = Math.max(millimetresToLocal(0.6, mm), diameter * 0.3),
     count: 1 | 2 | 3 = span >= 45 ? 3 : span >= 20 ? 2 : 1;
   let points: SplitVector[];
   try {
@@ -185,7 +186,7 @@ export function automaticPinPlan(
       n[2] * u[0] - n[0] * u[2],
       n[0] * u[1] - n[1] * u[0],
     ];
-  let depth = Math.min(6 / mm, diameter * 1.5);
+  let depth = Math.min(millimetresToLocal(6, mm), diameter * 1.5);
   for (const center of points)
     for (let sample = 0; sample < 9; sample++) {
       throwIfCancelled(cancellation);

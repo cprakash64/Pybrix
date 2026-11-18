@@ -5,7 +5,6 @@ import {
   releaseScopeReceipt,
 } from './semantic-scope-authority';
 import { semanticScopeBinding } from './semantic-native-finalists';
-import { uniformPhysicalScale } from './placement-scale';
 import { qualifySemanticFinalists } from '@cadfixer/auto-split';
 import {
   recordSemanticNativeRefusal,
@@ -15,7 +14,12 @@ import {
   requireConfirmedBoundary,
 } from './semantic-native-finalists';
 import { isAppError, AppErrorCode, invalidState } from '@cadfixer/shared';
-import { documentTriangleCount, documentVertexCount, partId } from '@cadfixer/mesh-core';
+import {
+  classifyPlacement,
+  documentTriangleCount,
+  documentVertexCount,
+  partId,
+} from '@cadfixer/mesh-core';
 import {
   documentByteLength,
   splitWithConnectors,
@@ -73,6 +77,12 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
   let booleanIndex = 0;
   try {
     context.reportProgress(0.02, 'Preparing cut…');
+    /*
+     * The part's placement, classified once by the one classifier. The engine takes a number: a similarity's scale, or NaN for a
+     * placement that has none (non-uniform scale, shear, degenerate, non-finite), which it refuses as `UNSUPPORTED_TRANSFORM`.
+     */
+    const placement = classifyPlacement(sourcePart.transform);
+    const physicalScale = placement.kind === 'SIMILARITY' ? placement.scale : Number.NaN;
     const prepared = splitCandidates.preparePlaneSource(
       ticket,
       payload.request.plane,
@@ -112,7 +122,7 @@ const createSingleSplit: OperationHandler<'split/create'> = async (payload, cont
             stats: booleanOperations.stats,
           });
       },
-      uniformPhysicalScale(sourcePart.transform),
+      physicalScale,
       prepared,
     );
     context.reportProgress(0.85, 'Checking parts…');

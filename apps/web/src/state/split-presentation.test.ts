@@ -304,20 +304,35 @@ describe('connector sizes are physical, whatever the model’s unit', () => {
     maleSide: 'A',
   };
 
-  it('leaves millimetre sizes unchanged for a millimetre model', () => {
-    expect(connectorRequest(pin, LengthUnit.Millimeter)).toMatchObject({
-      diameter: 5.08,
-      depth: 10.16,
-      clearance: 0.254,
+  it('sends the sizes as millimetres, with the unit the coordinates are read in, for a millimetre model', () => {
+    expect(connectorRequest(pin, LengthUnit.Millimeter)).toEqual({
+      kind: 'physical-pin',
+      unit: LengthUnit.Millimeter,
+      count: 1,
+      diameterMm: 5.08,
+      depthMm: 10.16,
+      clearanceMm: 0.254,
+      maleSide: 'A',
     });
   });
 
-  it('converts them into inches for a model read as inches', () => {
+  it('sends the SAME millimetres for a model read as inches: the page converts nothing, the engine does', () => {
     const request = connectorRequest(pin, LengthUnit.Inch);
-    if (request.kind !== 'pin') throw new Error('expected a pin');
-    expect(request.diameter).toBeCloseTo(0.2, 12);
-    expect(request.depth).toBeCloseTo(0.4, 12);
-    expect(request.clearance).toBeCloseTo(0.01, 12);
+    if (request.kind !== 'physical-pin') throw new Error('expected a physical pin');
+    expect(request.unit).toBe(LengthUnit.Inch);
+    expect(request.diameterMm).toBe(5.08);
+    expect(request.depthMm).toBe(10.16);
+    expect(request.clearanceMm).toBe(0.254);
+  });
+
+  it('carries no unit when none is known, so the engine refuses rather than the page guessing', () => {
+    const request = connectorRequest(pin, undefined);
+    if (request.kind !== 'physical-pin') throw new Error('expected a physical pin');
+    expect(request.unit).toBeUndefined();
+  });
+
+  it('passes None through untouched', () => {
+    expect(connectorRequest({ ...pin, kind: 'none' }, LengthUnit.Inch)).toEqual({ kind: 'none' });
   });
 
   it('refuses a size the engine could not build in the model’s units', () => {

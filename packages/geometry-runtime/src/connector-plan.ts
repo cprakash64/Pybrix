@@ -16,7 +16,7 @@
  */
 import { isLengthUnit } from '@cadfixer/shared';
 import type { GeneratedSeparationInterface } from './closed-plane-kernel';
-import type { SplitConnector, SplitRequest, SplitVector } from './split-connectors';
+import type { EngineSplitRequest, SplitConnector, SplitVector } from './split-connectors';
 import { splitBufferSHA } from './split-source-identity';
 
 /** The policy the legacy behaviour corresponds to. Versioned so a later physical policy is distinguishable from it. */
@@ -438,7 +438,7 @@ export type ConnectorDraft =
   | (DraftBase & { readonly kind: 'legacy-dovetail' });
 
 export function draftFromRequest(
-  connector: SplitRequest['connector'],
+  connector: EngineSplitRequest['connector'],
   face: GeneratedSeparationInterface,
   physicalScale: number,
 ): ConnectorDraft {

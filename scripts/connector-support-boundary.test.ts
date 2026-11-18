@@ -149,8 +149,8 @@ describe('it stays in the geometry worker', () => {
       join(ROOT, 'apps', 'web', 'src', 'workers', 'split-handlers.ts'),
       'utf8',
     );
-    expect(handler.match(/uniformPhysicalScale\(sourcePart\.transform\)/g)).toHaveLength(1);
-    expect(handler).toContain("from './placement-scale'");
-    expect(handler).not.toMatch(/function uniformPhysicalScale/);
+    expect(handler.match(/classifyPlacement\(sourcePart\.transform\)/g)).toHaveLength(1);
+    expect(handler).toContain('classifyPlacement');
+    expect(handler).not.toMatch(/uniformPhysicalScale|placement-scale/);
   });
 });
