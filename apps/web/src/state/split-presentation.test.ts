@@ -335,10 +335,13 @@ describe('connector sizes are physical, whatever the model’s unit', () => {
     expect(connectorRequest({ ...pin, kind: 'none' }, LengthUnit.Inch)).toEqual({ kind: 'none' });
   });
 
-  it('refuses a size the engine could not build in the model’s units', () => {
-    // 0.1 mm is 0.0039 in: below the engine's 0.01 coordinate-unit floor.
-    const tiny: ConnectorSettings = { ...pin, diameter: 0.1 };
-    expect(connectorProblemOf(tiny, LengthUnit.Millimeter)).toBeUndefined();
-    expect(connectorProblemOf(tiny, LengthUnit.Inch)).toMatch(/outside the range/);
+  it('judges a size in millimetres only: the same physical size is in range in every unit the model may be read in', () => {
+    // 0.1 mm is 0.0039 in and 1e-4 m: the engine used to refuse it in the model's coordinates; it is a physical 0.1 mm either way
+    const small: ConnectorSettings = { ...pin, diameter: 0.1 };
+    expect(connectorProblemOf(small)).toBeUndefined();
+    expect(connectorProblemOf({ ...pin, diameter: 0.005 })).toMatch(/between 0.01 and 1000 mm/);
+    expect(connectorProblemOf({ ...pin, depth: 1001 })).toMatch(/between 0.01 and 1000 mm/);
+    // the function has no unit to read: a physical hint cannot depend on one
+    expect(connectorProblemOf.length).toBe(1);
   });
 });

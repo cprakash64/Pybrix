@@ -194,13 +194,17 @@ describe('Slice 1 planner on the real kernel', () => {
       unit: 'millimeter',
       partScale: 1,
       partScaleApplied: true,
+      mmPerUnit: 1,
+      mmPerCoordinate: 1,
     });
+    // the sizes were resolved physically (Stage C03-C1), so the plan carries the physical policy label
+    expect(plan.policy).toBe('units-v1');
     expect(plan.pairs).toHaveLength(result.placements.length);
     // oracle S10: two automatic pairs, two Booleans each (the union and the difference). Slice 2D retired the two guard
     // intersections each pair used to run first: material support is judged by `support-v1` before any Boolean, not by a Boolean.
     expect(booleans).toHaveLength(4);
   });
-  it('states, instead of hiding, that a manual size ignores the part scale (audit C03 stays open)', async () => {
+  it("states, instead of hiding, that a COORDINATE size ignores the part scale (the engine's legacy request; no product flow sends it)", async () => {
     const { result } = await observe(
       cube(40),
       pin(1, 4, 6, 'A'),
@@ -212,6 +216,34 @@ describe('Slice 1 planner on the real kernel', () => {
       partScale: 1,
       partScaleApplied: false,
     });
+    expect(result?.connectorPlan?.policy).toBe('legacy-v0');
+  });
+  it('a PHYSICAL manual pin states the unit, the placement scale, the factor and the millimetres it was asked for', async () => {
+    const { result } = await observe(
+      cube(40),
+      {
+        kind: 'physical-pin',
+        unit: 'millimeter',
+        count: 1,
+        diameterMm: 4,
+        depthMm: 6,
+        clearanceMm: 0.2,
+        maleSide: 'A',
+      },
+      Z,
+      classifyPlacement([2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0]),
+    );
+    expect(result?.connectorPlan?.policy).toBe('units-v1');
+    expect(result?.connectorPlan?.unitContext).toEqual({
+      basis: 'PHYSICAL_MM',
+      unit: 'millimeter',
+      partScale: 2.5,
+      partScaleApplied: true,
+      mmPerUnit: 1,
+      mmPerCoordinate: 2.5,
+      intentMm: { diameter: 4, depth: 6, clearance: 0.2 },
+    });
+    expect(result?.connector).toMatchObject({ diameter: 4 / 2.5, depth: 6 / 2.5 });
   });
   it('adds no plan, and no Boolean, when no connector was applied', async () => {
     for (const [mesh, connector, expectedKeys] of [

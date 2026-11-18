@@ -61,7 +61,40 @@ describe('there is ONE connector dimension resolver', () => {
     );
     const engine = read(join(ROOT, 'packages/geometry-runtime/src/split-connectors.ts'));
     expect(engine.match(/resolveConnectorDimensions\(/g)).toHaveLength(1);
-    expect(engine.match(/resolvePhysicalRequest\(/g)).toHaveLength(2); // the definition and its one call
+    expect(engine.match(/resolvePhysicalPin\(/g)).toHaveLength(2); // the definition and its one call
+    expect(engine).not.toMatch(/resolvePhysicalRequest/);
+  });
+  it('is the ONLY definition of the conversion, in both directions, and nothing carries the retired flag', () => {
+    const defining = everything.filter((file) =>
+      /export function (millimetresToLocal|localToMillimetres|resolveConnectorDimensions)\(/.test(
+        read(file),
+      ),
+    );
+    expect(rel(defining)).toEqual(['packages/geometry-runtime/src/connector-dimensions.ts']);
+    // the unscaled context is gone: nothing can ask the resolver to skip the placement
+    for (const file of everything)
+      expect(read(file), relative(ROOT, file)).not.toMatch(/placementScaleApplied/);
+  });
+  it('the automatic planner converts in neither direction by hand: every length crosses through the resolver module', () => {
+    const planner = read(join(ROOT, 'packages/geometry-runtime/src/automatic-connectors.ts'));
+    const code = planner
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    // no multiplication or division by the factor, and no millimetre literal handed to the conversion
+    expect(code).not.toMatch(/[*/]\s*mm\b|\bmm\s*[*/]/);
+    expect(code).not.toMatch(/millimetresToLocal\(\s*[0-9]/);
+    expect(code).not.toMatch(/span\s*>=\s*[0-9]/);
+    // the physical policy is named, in millimetres, in one place
+    for (const name of ['wallMinimumMm', 'depthMaximumMm', 'twoPinSpanMm', 'threePinSpanMm'])
+      expect(code, name).toContain(`AUTOMATIC_CONNECTOR_LIMITS.${name}`);
+  });
+  it('the supported units are the six the importer reads, and the resolver takes them from the shared table alone', () => {
+    const threeMf = read(join(ROOT, 'packages/file-formats/src/threemf/units.ts'));
+    const tokens = [...threeMf.matchAll(/^\s+'([a-z]+)',$/gm)].map((match) => match[1] ?? '');
+    const shared = read(join(ROOT, 'packages/shared/src/units.ts'));
+    for (const token of tokens) expect(shared, token).toContain(`'${token}'`);
+    expect(tokens.sort()).toEqual(['centimeter', 'foot', 'inch', 'meter', 'micron', 'millimeter']);
   });
   it('the page converts no connector size: the request carries millimetres', () => {
     const hook = read(join(ROOT, 'apps/web/src/state/use-split-workflow.ts'));
@@ -74,6 +107,29 @@ describe('there is ONE connector dimension resolver', () => {
       /millimetresToCoordinates|millimetresPerUnit|coordinatesToMillimetres/,
     );
     expect(body).toContain("kind: 'physical-pin'");
+    // Stage C03-C1: the page's validity hint no longer converts a size into the model's units either
+    const workflow = read(join(ROOT, 'apps/web/src/state/use-split-workflow.ts'));
+    expect(workflow).not.toMatch(/millimetresToCoordinates|coordinatesToMillimetres|unitWord/);
+    const hint = workflow.slice(
+      workflow.indexOf('export function connectorProblemOf('),
+      workflow.indexOf('export function useSplitWorkflow('),
+    );
+    expect(hint).not.toMatch(/unit/i);
+  });
+  it("the page restates the engine's physical range as the SAME numbers, held to the resolver's constant", () => {
+    const resolver = read(join(ROOT, 'packages/geometry-runtime/src/connector-dimensions.ts'));
+    const page = read(join(ROOT, 'apps/web/src/state/split-presentation.ts'));
+    expect(resolver).toMatch(/minimum: 0\.01,/);
+    expect(resolver).toMatch(/maximum: 1000,/);
+    expect(page).toMatch(/value >= \(allowZero \? 0 : 0\.01\) && value <= 1000/);
+  });
+  it('no production flow sends a coordinate-basis pin: the page builds physical-pin and automatic requests only', () => {
+    const callers = everything.filter(
+      (file) =>
+        file.includes(`${sep}apps${sep}web${sep}src${sep}`) &&
+        /connector:\s*\{\s*kind:\s*'pin'/.test(read(file)),
+    );
+    expect(rel(callers)).toEqual([]);
   });
 });
 

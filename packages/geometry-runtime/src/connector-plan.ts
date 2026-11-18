@@ -22,6 +22,15 @@ import { splitBufferSHA } from './split-source-identity';
 /** The policy the legacy behaviour corresponds to. Versioned so a later physical policy is distinguishable from it. */
 export const LEGACY_CONNECTOR_POLICY = 'legacy-v0' as const;
 
+/**
+ * The policy of a plan whose sizes are PHYSICAL (Stage C03-C1): millimetre intent resolved through the one resolver with the
+ * model's unit and the placement scale, and recorded in the manifest as such. A plan built from raw COORDINATE sizes — the engine's
+ * pinned legacy request, which no product flow sends — stays `legacy-v0`, because its meaning has not changed.
+ */
+export const PHYSICAL_CONNECTOR_POLICY = 'units-v1' as const;
+export type ConnectorPolicyVersion =
+  typeof LEGACY_CONNECTOR_POLICY | typeof PHYSICAL_CONNECTOR_POLICY;
+
 type PinConnector = Extract<SplitConnector, { readonly kind: 'pin' }>;
 
 // ---------------------------------------------------------------- refusal vocabulary
@@ -99,9 +108,14 @@ export const ConnectorRefusal = {
    * Legacy details code: `CONNECTOR_UNSUPPORTED_TRANSFORM`.
    */
   UNSUPPORTED_TRANSFORM: 'UNSUPPORTED_TRANSFORM',
+  /**
+   * A requested connector dimension is outside the PHYSICAL range (millimetres) the product places, or cannot be represented in the
+   * part's coordinates (Stage C03-C1). It is about a number that was asked for, not about the model. Legacy details code:
+   * `CONNECTOR_DIMENSION_OUT_OF_POLICY`.
+   */
+  DIMENSION_OUT_OF_POLICY: 'DIMENSION_OUT_OF_POLICY',
   // ---- declared for later slices; NOT produced yet ----
   RESOURCE_LIMIT: 'RESOURCE_LIMIT',
-  DIMENSION_OUT_OF_POLICY: 'DIMENSION_OUT_OF_POLICY',
   /** Reserved. Slice 2B reports the whole FOOTPRINT (the stronger statement) rather than the site alone. */
   SITE_OUTSIDE_INTERFACE: 'SITE_OUTSIDE_INTERFACE',
   /** Reserved. Slice 2C reports SOCKET_BREAKTHROUGH, which also covers cavities and other shells. */
@@ -129,6 +143,11 @@ export type SupportRefusal =
   | typeof ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT
   | typeof ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT
   | typeof ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE;
+
+/** Codes Stage C03-C1 adds. A test keeps this honest, and keeps it disjoint from the earlier slices'. */
+export const PRODUCED_IN_C03C1: readonly ConnectorRefusal[] = Object.freeze([
+  ConnectorRefusal.DIMENSION_OUT_OF_POLICY,
+]);
 
 /** Codes Slice 2D adds. A test keeps this honest, and keeps it disjoint from the earlier slices'. */
 export const PRODUCED_IN_SLICE_2D: readonly ConnectorRefusal[] = Object.freeze([
@@ -181,6 +200,7 @@ export const LEGACY_DETAILS_CODE_TO_REFUSAL: Readonly<Record<string, ConnectorRe
     CONNECTOR_PIN_ROOT_SUPPORT_INSUFFICIENT: ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT,
     CONNECTOR_SUPPORT_VALIDATION_UNAVAILABLE: ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE,
     CONNECTOR_UNSUPPORTED_TRANSFORM: ConnectorRefusal.UNSUPPORTED_TRANSFORM,
+    CONNECTOR_DIMENSION_OUT_OF_POLICY: ConnectorRefusal.DIMENSION_OUT_OF_POLICY,
   });
 
 /** The legacy `details.code` for a refusal this module can produce, so a plan failure keeps the code the page knows. */
@@ -199,6 +219,7 @@ export const REFUSAL_TO_LEGACY_DETAILS_CODE: Readonly<Partial<Record<ConnectorRe
     [ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT]: 'CONNECTOR_PIN_ROOT_SUPPORT_INSUFFICIENT',
     [ConnectorRefusal.SUPPORT_VALIDATION_UNAVAILABLE]: 'CONNECTOR_SUPPORT_VALIDATION_UNAVAILABLE',
     [ConnectorRefusal.UNSUPPORTED_TRANSFORM]: 'CONNECTOR_UNSUPPORTED_TRANSFORM',
+    [ConnectorRefusal.DIMENSION_OUT_OF_POLICY]: 'CONNECTOR_DIMENSION_OUT_OF_POLICY',
   });
 
 /** The typed refusal for a legacy `details.code`, or `undefined` for a code this vocabulary does not name. */
@@ -402,17 +423,39 @@ export function interfaceCoordinates(
 // ---------------------------------------------------------------- unit context
 
 /**
- * What the sizes in a draft are measured in. Slice 1 RECORDS this and changes no conversion.
+ * What the sizes in a draft are measured in, and how they were converted.
  *
- *  - `REQUEST_UNIT`: an automatic request names a unit, and the automatic planner applies it with the part scale.
- *  - `COORDINATES`: a manual request is already in model coordinates (the page converted millimetres by the document
- *    unit). The part scale is NOT applied to it — audit C03 — which `partScaleApplied: false` states instead of hiding.
+ *  - `PHYSICAL_MM`: a manual request stated in millimetres. The sizes below were resolved through the one resolver with the model's
+ *    unit and the placement scale (Stage C03-C1). `intentMm` is what was asked for; `mmPerUnit × partScale = mmPerCoordinate` is how
+ *    it became a local length.
+ *  - `REQUEST_UNIT`: an automatic request names a unit; the planner proposes millimetres and converts them with the same factor.
+ *  - `COORDINATES`: a request already in model coordinates (the engine's legacy request). Nothing was converted and the part scale
+ *    is NOT applied, which `partScaleApplied: false` states instead of hiding.
  */
 export interface UnitContext {
-  readonly basis: 'REQUEST_UNIT' | 'COORDINATES';
+  readonly basis: 'REQUEST_UNIT' | 'COORDINATES' | 'PHYSICAL_MM';
   readonly unit?: string;
   readonly partScale: number;
   readonly partScaleApplied: boolean;
+  /** Millimetres per coordinate unit of the model's unit. Present when the sizes were converted (not for `COORDINATES`). */
+  readonly mmPerUnit?: number;
+  /** Millimetres per coordinate of the placed part: `mmPerUnit × partScale`. */
+  readonly mmPerCoordinate?: number;
+  /** The physical sizes a manual request asked for, in millimetres. */
+  readonly intentMm?: {
+    readonly diameter: number;
+    readonly depth: number;
+    readonly clearance: number;
+  };
+}
+
+/** The frame a connector's sizes were resolved in: everything a manifest needs to state how a millimetre became a local length. */
+export interface PhysicalFrame {
+  readonly unit: string;
+  readonly mmPerUnit: number;
+  readonly placementScale: number;
+  readonly mmPerCoordinate: number;
+  readonly intentMm?: UnitContext['intentMm'];
 }
 
 // ---------------------------------------------------------------- draft
@@ -420,7 +463,7 @@ export interface UnitContext {
 interface DraftBase {
   readonly interfaceRef: SeparationInterfaceRef;
   readonly unitContext: UnitContext;
-  readonly policy: typeof LEGACY_CONNECTOR_POLICY;
+  readonly policy: ConnectorPolicyVersion;
 }
 export type ConnectorDraft =
   | (DraftBase & { readonly kind: 'none' })
@@ -440,20 +483,25 @@ export type ConnectorDraft =
 export function draftFromRequest(
   connector: EngineSplitRequest['connector'],
   face: GeneratedSeparationInterface,
-  physicalScale: number,
+  /**
+   * The frame the sizes were resolved in, when they were resolved: a physical manual pin's frame, or an automatic request's (absent
+   * when its unit or placement was refused, in which case the part scale is recorded as NaN, as it always was).
+   */
+  frame?: PhysicalFrame,
 ): ConnectorDraft {
   const interfaceRef = separationInterfaceRefOf(face);
-  const base = { interfaceRef, policy: LEGACY_CONNECTOR_POLICY } as const;
+  const legacy = { interfaceRef, policy: LEGACY_CONNECTOR_POLICY } as const;
+  const physical = { interfaceRef, policy: PHYSICAL_CONNECTOR_POLICY } as const;
+  const coordinates: UnitContext = Object.freeze({
+    basis: 'COORDINATES',
+    partScale: 1,
+    partScaleApplied: false,
+  });
   switch (connector.kind) {
     case 'none':
-      return Object.freeze({
-        ...base,
-        kind: 'none',
-        unitContext: Object.freeze({ basis: 'COORDINATES', partScale: 1, partScaleApplied: false }),
-      });
-    case 'pin':
-      return Object.freeze({
-        ...base,
+      return Object.freeze({ ...legacy, kind: 'none', unitContext: coordinates });
+    case 'pin': {
+      const pin = {
         kind: 'pin',
         origin: 'MANUAL',
         count: connector.count,
@@ -461,26 +509,40 @@ export function draftFromRequest(
         depth: connector.depth,
         clearance: connector.clearance,
         maleSide: connector.maleSide,
-        unitContext: Object.freeze({ basis: 'COORDINATES', partScale: 1, partScaleApplied: false }),
+      } as const;
+      if (frame === undefined)
+        return Object.freeze({ ...legacy, ...pin, unitContext: coordinates });
+      return Object.freeze({
+        ...physical,
+        ...pin,
+        unitContext: Object.freeze({
+          basis: 'PHYSICAL_MM',
+          unit: frame.unit,
+          partScale: frame.placementScale,
+          partScaleApplied: true,
+          mmPerUnit: frame.mmPerUnit,
+          mmPerCoordinate: frame.mmPerCoordinate,
+          ...(frame.intentMm === undefined ? {} : { intentMm: frame.intentMm }),
+        }),
       });
+    }
     case 'automatic':
       return Object.freeze({
-        ...base,
+        ...physical,
         kind: 'automatic-pin',
         unit: connector.unit,
         unitContext: Object.freeze({
           basis: 'REQUEST_UNIT',
           unit: connector.unit,
-          partScale: physicalScale,
+          partScale: frame === undefined ? Number.NaN : frame.placementScale,
           partScaleApplied: true,
+          ...(frame === undefined
+            ? {}
+            : { mmPerUnit: frame.mmPerUnit, mmPerCoordinate: frame.mmPerCoordinate }),
         }),
       });
     case 'dovetail':
-      return Object.freeze({
-        ...base,
-        kind: 'legacy-dovetail',
-        unitContext: Object.freeze({ basis: 'COORDINATES', partScale: 1, partScaleApplied: false }),
-      });
+      return Object.freeze({ ...legacy, kind: 'legacy-dovetail', unitContext: coordinates });
   }
 }
 
@@ -593,7 +655,7 @@ const ISSUE: unique symbol = Symbol('ValidatedConnectorPlan.issue');
 export class ValidatedConnectorPlan {
   readonly plan: ConnectorPlan;
   readonly interfaceRef: SeparationInterfaceRef;
-  readonly policy: typeof LEGACY_CONNECTOR_POLICY;
+  readonly policy: ConnectorPolicyVersion;
   readonly draftDigest: string;
 
   /** Not for callers: it refuses everything but `validateConnectorPlan`'s token. Use that function. */
@@ -679,7 +741,7 @@ export function toLegacyAutomaticPlan(validated: ValidatedConnectorPlan): {
 /** Bounded, JSON-safe description of a validated plan. Carries no geometry and is never read back to build any. */
 export interface ConnectorManifest {
   readonly version: 1;
-  readonly policy: typeof LEGACY_CONNECTOR_POLICY;
+  readonly policy: ConnectorPolicyVersion;
   readonly draftDigest: string;
   readonly interfaceRef: SeparationInterfaceRef;
   readonly unitContext: UnitContext;

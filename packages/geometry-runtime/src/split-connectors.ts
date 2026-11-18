@@ -12,6 +12,7 @@ import {
   type CanonicalMesh,
   IDENTITY_PLACEMENT,
   type PlacementClass,
+  type PlacementRefusal,
 } from '@cadfixer/mesh-core';
 import { invalidState, throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
 import { analyseTopology } from '@cadfixer/mesh-topology';
@@ -37,7 +38,16 @@ import {
 import { describeSupportFailure, validateConnectorSupport } from './connector-support';
 import { containFootprints, describeFootprintFailure } from './connector-footprint';
 import { connectorSupportMargin } from './connector-policy';
-import { resolveConnectorDimensions } from './connector-dimensions';
+import {
+  localToMillimetres,
+  resolveConnectorDimensions,
+  resolveMillimetresPerCoordinate,
+  resolveModelUnit,
+  type ConnectorDimensionName,
+  CONNECTOR_DIMENSION_POLICY_MM,
+  type ResolvedConnectorDimensions,
+} from './connector-dimensions';
+import { describeDimensionRefusal } from './connector-dimension-refusal';
 import {
   ConnectorRefusal,
   REFUSAL_TO_LEGACY_DETAILS_CODE,
@@ -50,6 +60,7 @@ import {
   validateConnectorPlan,
   type ConnectorManifest,
   type ConnectorPlan,
+  type PhysicalFrame,
   type ValidatedConnectorPlan,
 } from './connector-plan';
 
@@ -102,35 +113,112 @@ export interface SplitRequest {
   readonly connector:
     SplitConnector | { readonly kind: 'automatic'; readonly unit: string } | PhysicalPinRequest;
 }
+type PinConnector = Extract<SplitConnector, { readonly kind: 'pin' }>;
+
+/** The refusal for a placement that is not a similarity: one code, the classifier's reason beside it, one sentence. */
+function unsupportedTransformError(reason: PlacementRefusal): ReturnType<typeof invalidState> {
+  return invalidState(describeTransformRefusal(reason), {
+    code:
+      REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.UNSUPPORTED_TRANSFORM] ??
+      'UNSUPPORTED_TRANSFORM',
+    refusal: ConnectorRefusal.UNSUPPORTED_TRANSFORM,
+    transformReason: reason,
+  });
+}
+
+/** The refusal for a connector dimension outside the physical range: the metric, the value and the limit, in millimetres. */
+function dimensionPolicyError(
+  refusal: Extract<ResolvedConnectorDimensions, { readonly refusal: 'DIMENSION_OUT_OF_POLICY' }>,
+): ReturnType<typeof invalidState> {
+  return invalidState(describeDimensionRefusal(refusal), {
+    code:
+      REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.DIMENSION_OUT_OF_POLICY] ??
+      'DIMENSION_OUT_OF_POLICY',
+    refusal: ConnectorRefusal.DIMENSION_OUT_OF_POLICY,
+    dimension: refusal.dimension,
+    reason: refusal.reason,
+    valueMm: refusal.valueMm,
+    minMm: refusal.minMm,
+    maxMm: refusal.maxMm,
+  });
+}
+
 /**
- * Resolves a physical pin into a coordinate pin and leaves every other request exactly as it is.
- * A unit that is not a known one is refused with the same typed code the automatic path uses for it. The placement scale is not
- * applied to a manual pin yet (see `connector-dimensions.ts`).
+ * Resolves a physical pin into the coordinate pin the construction code builds, through the one resolver, with the model's unit
+ * AND the placement's scale; and the frame it was resolved in, which the plan records. Nothing downstream of this sees
+ * millimetres. The unit and the placement were refused before this is reached, so only the physical range can fail here.
  */
-function resolvePhysicalRequest(request: SplitRequest): EngineSplitRequest {
-  const { connector } = request;
-  if (connector.kind !== 'physical-pin') return { plane: request.plane, connector };
+function resolvePhysicalPin(
+  request: PhysicalPinRequest,
+  placement: PlacementClass,
+): { readonly connector: PinConnector; readonly frame: PhysicalFrame } {
   const resolved = resolveConnectorDimensions(
     {
-      diameterMm: connector.diameterMm,
-      depthMm: connector.depthMm,
-      clearanceMm: connector.clearanceMm,
+      diameterMm: request.diameterMm,
+      depthMm: request.depthMm,
+      clearanceMm: request.clearanceMm,
     },
-    { unit: connector.unit, placementScaleApplied: false },
+    { unit: request.unit, placement },
   );
-  if (!resolved.ok)
-    throw invalidState('A known unit is required to size a connector.', { code: 'UNKNOWN_UNITS' });
+  if (!resolved.ok) {
+    switch (resolved.refusal) {
+      case 'DIMENSION_OUT_OF_POLICY':
+        throw dimensionPolicyError(resolved);
+      case 'UNSUPPORTED_TRANSFORM':
+        throw unsupportedTransformError(resolved.transformReason);
+      case 'UNKNOWN_UNITS':
+        throw invalidState('A known unit is required to size a connector.', {
+          code: 'UNKNOWN_UNITS',
+        });
+    }
+  }
   return {
-    plane: request.plane,
     connector: {
       kind: 'pin',
-      count: connector.count,
+      count: request.count,
       diameter: resolved.diameter,
       depth: resolved.depth,
       clearance: resolved.clearance,
-      maleSide: connector.maleSide,
+      maleSide: request.maleSide,
+    },
+    frame: {
+      unit: defined(request.unit),
+      mmPerUnit: resolved.mmPerUnit,
+      placementScale: resolved.placementScale,
+      mmPerCoordinate: resolved.mmPerCoordinate,
+      intentMm: {
+        diameter: request.diameterMm,
+        depth: request.depthMm,
+        clearance: request.clearanceMm,
+      },
     },
   };
+}
+
+/**
+ * A pin whose sizes came from the physical path (a physical request, or the automatic planner's millimetre policy) was judged
+ * against the PHYSICAL range already. What is left to hold in local coordinates is only that the numbers are usable.
+ */
+function assertRepresentablePin(pin: PinConnector, frame: PhysicalFrame | undefined): void {
+  const checks: readonly [ConnectorDimensionName, number, boolean][] = [
+    ['PIN_DIAMETER', pin.diameter, true],
+    ['PIN_DEPTH', pin.depth, true],
+    ['PIN_CLEARANCE', pin.clearance, false],
+  ];
+  for (const [dimension, length, positive] of checks)
+    if (!Number.isFinite(length) || (positive ? !(length > 0) : !(length >= 0)))
+      throw dimensionPolicyError({
+        ok: false,
+        refusal: 'DIMENSION_OUT_OF_POLICY',
+        dimension,
+        reason: 'NOT_REPRESENTABLE',
+        valueMm: frame === undefined ? length : localToMillimetres(length, frame.mmPerCoordinate),
+        minMm:
+          dimension === 'PIN_CLEARANCE'
+            ? CONNECTOR_DIMENSION_POLICY_MM.clearanceMinimum
+            : CONNECTOR_DIMENSION_POLICY_MM.minimum,
+        maxMm: CONNECTOR_DIMENSION_POLICY_MM.maximum,
+      });
 }
 export interface CutSurfaceSummary {
   readonly triangleIds: readonly number[];
@@ -872,7 +960,11 @@ export async function splitWithConnectors(
   prepared?: PreparedPlaneSplitSource,
 ): Promise<SplitResult> {
   throwIfCancelled(cancellation);
-  const request = resolvePhysicalRequest(requested);
+  // A physical pin on a model with no known unit is refused FIRST, as it always was: with no unit there is no physical length, and the
+  // refusal must not depend on anything else about the request. The sizes themselves are resolved later, once the placement is known.
+  if (requested.connector.kind === 'physical-pin' && !resolveModelUnit(requested.connector.unit).ok)
+    throw invalidState('A known unit is required to size a connector.', { code: 'UNKNOWN_UNITS' });
+  const request = requested;
   onStage?.(SplitStage.PreparingCut);
   const preparation =
     prepared ??
@@ -926,14 +1018,11 @@ export async function splitWithConnectors(
   // classifies the placement once and hands it here. A pin on a part whose placement is not one is refused before any work is done,
   // and (Stage C03-B) the refusal carries WHY: one code, `CONNECTOR_UNSUPPORTED_TRANSFORM`, with the classifier's reason beside it.
   // This is a refusal, not an interpretation.
-  if (request.connector.kind === 'pin' && placement.kind === 'UNSUPPORTED')
-    throw invalidState(describeTransformRefusal(placement.reason), {
-      code:
-        REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.UNSUPPORTED_TRANSFORM] ??
-        'UNSUPPORTED_TRANSFORM',
-      refusal: ConnectorRefusal.UNSUPPORTED_TRANSFORM,
-      transformReason: placement.reason,
-    });
+  if (
+    (request.connector.kind === 'pin' || request.connector.kind === 'physical-pin') &&
+    placement.kind === 'UNSUPPORTED'
+  )
+    throw unsupportedTransformError(placement.reason);
   onStage?.(SplitStage.Intersecting);
   const clip = clipPlane(source, preparation.plane, {
     binding: preparation.binding,
@@ -980,12 +1069,25 @@ export async function splitWithConnectors(
   // PLANNING FOUNDATION (Release 2, Slice 1). The draft states what was asked for against the generated interface it
   // is being cut from. The resolvers below are the existing ones, called with the same arguments in the same order;
   // the plan re-expresses their answer and `toLegacy…` hands the construction code exactly what it used before.
-  // The draft RECORDS the part scale; a placement with none records NaN, as it always has (the plan digest is unchanged).
-  const draft = draftFromRequest(
-    request.connector,
-    clip.interface,
-    placement.kind === 'SIMILARITY' ? placement.scale : Number.NaN,
-  );
+  // An automatic request's frame: the same factor the planner will ask for, recorded in the plan. A refused unit or placement has none
+  // (the plan then records the part scale as NaN, as it always has). A MANUAL draft is built where the pin's sizes are known.
+  const physicalFactor =
+    request.connector.kind === 'automatic'
+      ? resolveMillimetresPerCoordinate({ unit: request.connector.unit, placement })
+      : undefined;
+  const automaticFrame: PhysicalFrame | undefined =
+    request.connector.kind === 'automatic' && physicalFactor?.ok
+      ? {
+          unit: request.connector.unit,
+          mmPerUnit: physicalFactor.mmPerUnit,
+          placementScale: physicalFactor.placementScale,
+          mmPerCoordinate: physicalFactor.mmPerCoordinate,
+        }
+      : undefined;
+  const draft =
+    request.connector.kind === 'automatic'
+      ? draftFromRequest(request.connector, clip.interface, automaticFrame)
+      : undefined;
   let validatedPlan: ValidatedConnectorPlan | undefined;
   const proposal =
     request.connector.kind === 'automatic'
@@ -1002,9 +1104,12 @@ export async function splitWithConnectors(
         )
       : undefined;
   if (proposal)
-    validatedPlan = issuePlan(planAutomaticPins(draft, clip.interface, proposal), clip.interface);
+    validatedPlan = issuePlan(
+      planAutomaticPins(defined(draft), clip.interface, proposal),
+      clip.interface,
+    );
   const plan = validatedPlan ? toLegacyAutomaticPlan(validatedPlan) : undefined;
-  let c: SplitConnector =
+  let c: SplitConnector | PhysicalPinRequest =
     request.connector.kind === 'automatic'
       ? (plan?.connector ?? { kind: 'none' })
       : request.connector;
@@ -1013,10 +1118,22 @@ export async function splitWithConnectors(
     plainB = pieceB;
   try {
     if (c.kind !== 'none') onStage?.(SplitStage.AddingConnectors);
+    // A PHYSICAL pin is resolved here, where the first size check always happened, so a refusal keeps its place in the order: after the
+    // cut, before any centre is chosen. The frame is what the plan records about how a millimetre became a local length.
+    let frame: PhysicalFrame | undefined = automaticFrame;
+    if (c.kind === 'physical-pin') {
+      const resolved = resolvePhysicalPin(c, placement);
+      c = resolved.connector;
+      frame = resolved.frame;
+    }
     if (c.kind === 'pin') {
-      dimension(c.diameter, 'Pin diameter');
-      dimension(c.depth, 'Pin depth');
-      dimension(c.clearance, 'Pin clearance', true);
+      // Only the engine's pinned COORDINATE request (which no product flow sends) is bounded in coordinates; every connector whose
+      // sizes are physical was judged against the physical range, so what is left is that its numbers are usable.
+      if (request.connector.kind === 'pin') {
+        dimension(c.diameter, 'Pin diameter');
+        dimension(c.depth, 'Pin depth');
+        dimension(c.clearance, 'Pin clearance', true);
+      } else assertRepresentablePin(c, frame);
       const r = c.diameter / 2;
       let sites = plan?.centers;
       if (!sites) {
@@ -1027,7 +1144,7 @@ export async function splitWithConnectors(
           connectorSupportMargin(r, tolerance),
         );
         validatedPlan = issuePlan(
-          planManualPins(draft, clip.interface, c, centers),
+          planManualPins(draftFromRequest(c, clip.interface, frame), clip.interface, c, centers),
           clip.interface,
         );
         sites = toLegacyConnectorPlan(validatedPlan).centers;

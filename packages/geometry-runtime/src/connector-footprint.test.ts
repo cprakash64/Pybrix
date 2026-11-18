@@ -89,7 +89,7 @@ function planFor(
   };
   const centers: SplitVector[] = sites.map(([u, v]) => [u, v, 0]);
   const checked = validateConnectorPlan(
-    planManualPins(draftFromRequest(connector, face, 1), face, connector, centers),
+    planManualPins(draftFromRequest(connector, face), face, connector, centers),
     face,
   );
   if (!checked.ok) throw new Error(`the fixture plan was refused: ${checked.refusal}`);
@@ -128,7 +128,7 @@ describe('A. a footprint inside the material is contained', () => {
     const face = SQUARE_40,
       empty = validateConnectorPlan(
         {
-          draft: draftFromRequest({ kind: 'none' }, face, 1),
+          draft: draftFromRequest({ kind: 'none' }, face),
           pairs: [],
           legacy: { connector: { kind: 'none' }, centers: [] },
         },

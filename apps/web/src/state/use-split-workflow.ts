@@ -42,7 +42,6 @@ import { AppErrorCode, isAppError, type LengthUnit } from '@cadfixer/shared';
 import { notClosedReasonsOf } from './split-readiness-presentation';
 import { RESOURCE_REFUSAL_COPY, splitSizeNoticeFor } from './split-size-presentation';
 import type { SplitSizeNotice } from './split-size-presentation';
-import { millimetresToCoordinates, unitWord } from './unit-interpretation';
 import { useUnitInterpretation } from './use-unit-interpretation';
 import { StatusSeverity } from './workspace-store';
 import { WorkflowId } from './workflows';
@@ -235,25 +234,23 @@ export function connectorRequest(
   }
 }
 
-/** The first dimension the engine would refuse, named, or undefined. */
-export function connectorProblemOf(
-  settings: ConnectorSettings,
-  unit?: LengthUnit,
-): string | undefined {
+/**
+ * The first dimension the engine would refuse, named, or undefined.
+ *
+ * The range is PHYSICAL — millimetres, the same for every model — and nothing here converts a size into the model's units: the
+ * engine's one resolver judges the millimetre intent before it converts it (Stage C03-C1), so a size that is in range is in range
+ * whether the model is read as millimetres, inches or metres, and this hint says exactly that and no more.
+ */
+export function connectorProblemOf(settings: ConnectorSettings): string | undefined {
   if (settings.kind === 'none') return undefined;
   const checks: [number, string, boolean][] = [
     [settings.diameter, 'Pin diameter', false],
     [settings.depth, 'Depth', false],
     [settings.clearance, 'Clearance', true],
   ];
-  for (const [value, label, zero] of checks) {
+  for (const [value, label, zero] of checks)
     if (!isValidDimension(value, zero))
       return `${label} must be between ${zero ? '0' : '0.01'} and 1000 mm.`;
-    // The engine bounds the dimension in the MODEL'S units, which differ from
-    // millimetres for a model read as inches, metres and so on.
-    if (unit !== undefined && !isValidDimension(millimetresToCoordinates(value, unit), zero))
-      return `${label} is outside the range Pybrix can build in a model read as ${unitWord(unit).toLowerCase()}.`;
-  }
   return undefined;
 }
 
@@ -397,7 +394,7 @@ export function useSplitWorkflow(): SplitControls {
     () => (available ? connectorState : { ...connectorState, kind: 'none' }),
     [available, connectorState],
   );
-  const connectorProblem = available ? connectorProblemOf(connector, unitValue) : undefined;
+  const connectorProblem = available ? connectorProblemOf(connector) : undefined;
 
   const setError = useCallback(
     (message: string | undefined, failure = false): void => {

@@ -1,18 +1,35 @@
 import { throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
 import type { CanonicalMesh, PlacementClass, PlacementRefusal } from '@cadfixer/mesh-core';
-import { millimetresToLocal, resolveMillimetresPerCoordinate } from './connector-dimensions';
+import {
+  localToMillimetres,
+  millimetresToLocal,
+  resolveMillimetresPerCoordinate,
+} from './connector-dimensions';
 import {
   connectorCenters,
   type ConnectorCompatibilitySurface,
   type SplitConnector,
   type SplitVector,
 } from './split-connectors';
+/**
+ * The automatic planner's PHYSICAL policy. Every `…Mm` value is millimetres of the printed part, never a coordinate: it is converted
+ * to the part's own coordinates by `millimetresToLocal` with the factor the one resolver forms, and a part's coordinates are
+ * converted back by `localToMillimetres`. No literal length stands in the planner's arithmetic; the fractions and ratios (a share of
+ * the cut's span, a share of the pin diameter) are dimensionless and are the same in every unit.
+ */
 export const AUTOMATIC_CONNECTOR_LIMITS = Object.freeze({
   rayTriangleVisits: 8000000,
   maximumPairs: 3,
   minimumDiameterMm: 1,
   maximumDiameterMm: 6,
   clearanceMm: 0.2,
+  /** The least wall left around a socket, before the dimensionless share of the diameter takes over. */
+  wallMinimumMm: 0.6,
+  /** The deepest pin proposed. */
+  depthMaximumMm: 6,
+  /** A cut at least this wide (its shorter span) takes two pins, and at least `threePinSpanMm` takes three. */
+  twoPinSpanMm: 20,
+  threePinSpanMm: 45,
 });
 export type AutomaticConnectorReason =
   | 'AVAILABLE'
@@ -139,11 +156,7 @@ export function automaticPinPlan(
    * (millimetres per coordinate unit, the placement scale applied) and nowhere in this file. A unit that is not a known one and a
    * placement that is not a similarity each refuse BEFORE anything is proposed, the latter with the classifier's own reason.
    */
-  const physical = resolveMillimetresPerCoordinate({
-    unit,
-    placement,
-    placementScaleApplied: true,
-  });
+  const physical = resolveMillimetresPerCoordinate({ unit, placement });
   if (!physical.ok) {
     if (physical.refusal === 'UNSUPPORTED_TRANSFORM')
       refuse(physical.refusal, physical.transformReason);
@@ -155,20 +168,29 @@ export function automaticPinPlan(
     return;
   }
   const mm = physical.mmPerCoordinate,
-    span = Math.min(cut.spanU, cut.spanV) * mm;
+    span = localToMillimetres(Math.min(cut.spanU, cut.spanV), mm);
   const clearance = millimetresToLocal(AUTOMATIC_CONNECTOR_LIMITS.clearanceMm, mm),
     diameterMm = Math.min(
       AUTOMATIC_CONNECTOR_LIMITS.maximumDiameterMm,
       span * 0.12,
-      (cut.interiorCandidates[0]?.edgeDistance ?? cut.centerEdgeDistance) * mm * 0.8,
+      localToMillimetres(cut.interiorCandidates[0]?.edgeDistance ?? cut.centerEdgeDistance, mm) *
+        0.8,
     );
   if (diameterMm < AUTOMATIC_CONNECTOR_LIMITS.minimumDiameterMm) {
     refuse('INSUFFICIENT_CLEARANCE');
     return;
   }
   const diameter = millimetresToLocal(diameterMm, mm),
-    wall = Math.max(millimetresToLocal(0.6, mm), diameter * 0.3),
-    count: 1 | 2 | 3 = span >= 45 ? 3 : span >= 20 ? 2 : 1;
+    wall = Math.max(
+      millimetresToLocal(AUTOMATIC_CONNECTOR_LIMITS.wallMinimumMm, mm),
+      diameter * 0.3,
+    ),
+    count: 1 | 2 | 3 =
+      span >= AUTOMATIC_CONNECTOR_LIMITS.threePinSpanMm
+        ? 3
+        : span >= AUTOMATIC_CONNECTOR_LIMITS.twoPinSpanMm
+          ? 2
+          : 1;
   let points: SplitVector[];
   try {
     points = connectorCenters(
@@ -197,7 +219,10 @@ export function automaticPinPlan(
       n[2] * u[0] - n[0] * u[2],
       n[0] * u[1] - n[1] * u[0],
     ];
-  let depth = Math.min(millimetresToLocal(6, mm), diameter * 1.5);
+  let depth = Math.min(
+    millimetresToLocal(AUTOMATIC_CONNECTOR_LIMITS.depthMaximumMm, mm),
+    diameter * 1.5,
+  );
   for (const center of points)
     for (let sample = 0; sample < 9; sample++) {
       throwIfCancelled(cancellation);

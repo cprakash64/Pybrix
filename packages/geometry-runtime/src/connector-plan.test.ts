@@ -4,6 +4,7 @@ import {
   ConnectorRefusal,
   LEGACY_CONNECTOR_POLICY,
   LEGACY_DETAILS_CODE_TO_REFUSAL,
+  PRODUCED_IN_C03C1,
   PRODUCED_IN_SLICE_1,
   PRODUCED_IN_SLICE_2B,
   PRODUCED_IN_SLICE_2C,
@@ -24,6 +25,7 @@ import {
   toLegacyConnectorPlan,
   validateConnectorPlan,
   type ConnectorPlan,
+  type PhysicalFrame,
 } from './connector-plan';
 import type { SplitConnector, SplitVector } from './split-connectors';
 
@@ -79,7 +81,7 @@ function manualPlan(
   pin: Pin = PIN,
   centers: readonly SplitVector[] = SITES,
 ): ConnectorPlan {
-  return planManualPins(draftFromRequest(pin, face, 1), face, pin, centers);
+  return planManualPins(draftFromRequest(pin, face), face, pin, centers);
 }
 
 describe('SeparationInterfaceRef', () => {
@@ -113,11 +115,22 @@ describe('SeparationInterfaceRef', () => {
   });
 });
 
+/** A resolved frame, from a millimetres-per-unit table written out here (not read from the product). */
+const MM_PER_UNIT: Record<string, number> = { millimeter: 1, inch: 25.4, meter: 1000 };
+const INTENT = { diameter: 4, depth: 6, clearance: 0.2 };
+const frameOf = (unit: string, scale: number, intentMm?: typeof INTENT): PhysicalFrame => ({
+  unit,
+  mmPerUnit: MM_PER_UNIT[unit] ?? Number.NaN,
+  placementScale: scale,
+  mmPerCoordinate: (MM_PER_UNIT[unit] ?? Number.NaN) * scale,
+  ...(intentMm === undefined ? {} : { intentMm }),
+});
+
 describe('ConnectorDraft', () => {
   it('states what was asked for, per kind, with an honest unit context', () => {
     const face = fakeInterface();
-    expect(draftFromRequest({ kind: 'none' }, face, 1).kind).toBe('none');
-    const manual = draftFromRequest(PIN, face, 3);
+    expect(draftFromRequest({ kind: 'none' }, face).kind).toBe('none');
+    const manual = draftFromRequest(PIN, face);
     expect(manual).toMatchObject({
       kind: 'pin',
       origin: 'MANUAL',
@@ -125,18 +138,48 @@ describe('ConnectorDraft', () => {
       maleSide: 'A',
       policy: LEGACY_CONNECTOR_POLICY,
     });
-    // Audit C03, stated and not hidden: a manual size is in coordinates and the part scale is NOT applied to it.
+    // A COORDINATE request (the engine's pinned legacy form, which no product flow sends) is stated and not hidden: its size is in
+    // coordinates and the part scale is NOT applied to it. Its policy label stays `legacy-v0`: its meaning has not changed.
     expect(manual.unitContext).toEqual({
       basis: 'COORDINATES',
       partScale: 1,
       partScaleApplied: false,
     });
-    const automatic = draftFromRequest({ kind: 'automatic', unit: 'millimeter' }, face, 2.5);
-    expect(automatic).toMatchObject({ kind: 'automatic-pin', unit: 'millimeter' });
+    // A PHYSICAL manual pin (Stage C03-C1): millimetre intent resolved with the unit and the placement scale, and the manifest says so.
+    const physicalManual = draftFromRequest(PIN, face, frameOf('inch', 2, INTENT));
+    expect(physicalManual).toMatchObject({ kind: 'pin', origin: 'MANUAL', policy: 'units-v1' });
+    expect(physicalManual.unitContext).toEqual({
+      basis: 'PHYSICAL_MM',
+      unit: 'inch',
+      partScale: 2,
+      partScaleApplied: true,
+      mmPerUnit: 25.4,
+      mmPerCoordinate: 50.8,
+      intentMm: INTENT,
+    });
+    const automatic = draftFromRequest(
+      { kind: 'automatic', unit: 'millimeter' },
+      face,
+      frameOf('millimeter', 2.5),
+    );
+    expect(automatic).toMatchObject({
+      kind: 'automatic-pin',
+      unit: 'millimeter',
+      policy: 'units-v1',
+    });
     expect(automatic.unitContext).toEqual({
       basis: 'REQUEST_UNIT',
       unit: 'millimeter',
       partScale: 2.5,
+      partScaleApplied: true,
+      mmPerUnit: 1,
+      mmPerCoordinate: 2.5,
+    });
+    // an automatic request whose unit or placement was refused has no frame: the part scale is recorded as NaN, as it always was
+    expect(draftFromRequest({ kind: 'automatic', unit: 'millimeter' }, face).unitContext).toEqual({
+      basis: 'REQUEST_UNIT',
+      unit: 'millimeter',
+      partScale: Number.NaN,
       partScaleApplied: true,
     });
     expect(
@@ -151,19 +194,17 @@ describe('ConnectorDraft', () => {
           orientationDegrees: 0,
         },
         face,
-        1,
       ).kind,
     ).toBe('legacy-dovetail');
   });
   it('is immutable', () => {
-    expect(Object.isFrozen(draftFromRequest(PIN, fakeInterface(), 1))).toBe(true);
+    expect(Object.isFrozen(draftFromRequest(PIN, fakeInterface()))).toBe(true);
   });
 });
 
 describe('draft digest', () => {
   const face = fakeInterface();
-  const digestOf = (pin: Pin, f = face, scale = 1): string =>
-    draftDigest(draftFromRequest(pin, f, scale));
+  const digestOf = (pin: Pin, f = face): string => draftDigest(draftFromRequest(pin, f));
   it('is stable for equal drafts', () => {
     expect(digestOf(PIN)).toBe(digestOf({ ...PIN }));
     expect(digestOf(PIN)).toMatch(/^[0-9a-f]{64}$/);
@@ -180,12 +221,14 @@ describe('draft digest', () => {
     for (const variant of variants) expect(digestOf(variant)).not.toBe(base);
     expect(digestOf(PIN, fakeInterface({ revision: 9 }))).not.toBe(base);
     expect(digestOf(PIN, fakeInterface({ sourceSHA: 'cc'.repeat(32) }))).not.toBe(base);
-    expect(
-      draftDigest(draftFromRequest({ kind: 'automatic', unit: 'millimeter' }, face, 1)),
-    ).not.toBe(draftDigest(draftFromRequest({ kind: 'automatic', unit: 'inch' }, face, 1)));
-    expect(
-      draftDigest(draftFromRequest({ kind: 'automatic', unit: 'millimeter' }, face, 1)),
-    ).not.toBe(draftDigest(draftFromRequest({ kind: 'automatic', unit: 'millimeter' }, face, 2)));
+    const auto = (unit: string, scale: number): string =>
+      draftDigest(draftFromRequest({ kind: 'automatic', unit }, face, frameOf(unit, scale)));
+    expect(auto('millimeter', 1)).not.toBe(auto('inch', 1));
+    expect(auto('millimeter', 1)).not.toBe(auto('millimeter', 2));
+    // a physical manual pin and the same sizes as raw coordinates are different drafts
+    expect(draftDigest(draftFromRequest(PIN, face, frameOf('millimeter', 1, INTENT)))).not.toBe(
+      draftDigest(draftFromRequest(PIN, face)),
+    );
   });
   it('tells -0 and NaN apart from 0 so a non-finite draft cannot collide with a finite one', () => {
     expect(digestOf({ ...PIN, clearance: -0 })).not.toBe(digestOf({ ...PIN, clearance: 0 }));
@@ -224,7 +267,7 @@ describe('plan and validation (identity only)', () => {
     }
   });
   it('refuses an automatic draft whose unit is not a length unit, by code', () => {
-    const draft = draftFromRequest({ kind: 'automatic', unit: 'furlong' }, face, 1);
+    const draft = draftFromRequest({ kind: 'automatic', unit: 'furlong' }, face);
     const plan = planAutomaticPins(draft, face, {
       connector: { ...PIN, count: 2 },
       centers: SITES,
@@ -249,14 +292,18 @@ describe('plan and validation (identity only)', () => {
   });
   it('accepts a plan with no connector and no pairs', () => {
     const none: ConnectorPlan = {
-      draft: draftFromRequest({ kind: 'none' }, face, 1),
+      draft: draftFromRequest({ kind: 'none' }, face),
       pairs: [],
       legacy: { connector: { kind: 'none' }, centers: [] },
     };
     expect(validateConnectorPlan(none, face).ok).toBe(true);
   });
   it('recovers the automatic path shape only for an automatic plan', () => {
-    const draft = draftFromRequest({ kind: 'automatic', unit: 'millimeter' }, face, 1);
+    const draft = draftFromRequest(
+      { kind: 'automatic', unit: 'millimeter' },
+      face,
+      frameOf('millimeter', 1),
+    );
     const checked = validateConnectorPlan(
       planAutomaticPins(draft, face, { connector: PIN, centers: SITES }),
       face,
@@ -356,7 +403,7 @@ describe('typed refusal vocabulary', () => {
     );
     const declared = Object.values(ConnectorRefusal);
     for (const code of PRODUCED_IN_SLICE_1) expect(declared).toContain(code);
-    // the physical codes later slices need exist, and are NOT produced yet
+    // the codes later slices need exist, and are NOT produced yet
     for (const later of ['EXTERIOR_BREAKTHROUGH', 'RESOURCE_LIMIT'] as const) {
       expect(declared).toContain(later);
       expect(PRODUCED_IN_SLICE_1).not.toContain(later);
@@ -384,6 +431,22 @@ describe('typed refusal vocabulary', () => {
       'INSUFFICIENT_ROOT_MATERIAL',
     ])
       expect(declared).not.toContain(retired);
+  });
+  it('Stage C03-C1 produces exactly the dimension-policy code, disjoint from every earlier slice, and it has a legacy code both ways', () => {
+    expect([...PRODUCED_IN_C03C1]).toEqual(['DIMENSION_OUT_OF_POLICY']);
+    for (const earlier of [
+      PRODUCED_IN_SLICE_1,
+      PRODUCED_IN_SLICE_2B,
+      PRODUCED_IN_SLICE_2C,
+      PRODUCED_IN_SLICE_2D,
+    ])
+      expect(earlier).not.toContain('DIMENSION_OUT_OF_POLICY');
+    expect(refusalForLegacyCode('CONNECTOR_DIMENSION_OUT_OF_POLICY')).toBe(
+      ConnectorRefusal.DIMENSION_OUT_OF_POLICY,
+    );
+    expect(REFUSAL_TO_LEGACY_DETAILS_CODE[ConnectorRefusal.DIMENSION_OUT_OF_POLICY]).toBe(
+      'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+    );
   });
   it('maps every legacy details.code the product throws to its typed refusal, and back', () => {
     expect(refusalForLegacyCode('UNKNOWN_UNITS')).toBe(ConnectorRefusal.UNIT_UNKNOWN);
