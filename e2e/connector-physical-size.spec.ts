@@ -9,8 +9,13 @@ import { readStlArtifact } from './artifact-oracles';
  *
  * Real files through the real file picker, the real worker, the real Manifold kernel, and the real exported pieces read back here.
  * The check does not depend on any number the product computes about its own pins. It reads the two exported pieces, adds up their
- * volumes with the divergence theorem (written out here), subtracts the volume of the cube they were cut from, and turns the local
- * difference into cubic millimetres with the unit and placement scale the TEST chose for the file.
+ * volumes with the divergence theorem (written out here), subtracts the volume of the cube they were cut from, and turns the
+ * difference into cubic millimetres with the unit the TEST chose for the file.
+ *
+ * AN EXPORTED STL HOLDS THE PART WHERE THE DOCUMENT PLACES IT (Stage C03-D1): the placement scale is already in the coordinates,
+ * so the cube they are compared with is the PLACED cube, `local × scale` on a side, and the only factor left is the unit. Before
+ * C03-D1 the pieces were written in the part's own coordinates and this check multiplied the placement scale in itself — which
+ * was the active-part export dropping the placement, relied on by the test that was meant to catch the product's mistakes.
  *
  *   volume(A) + volume(B) − volume(cube)  =  pin volume − socket volume
  *
@@ -137,10 +142,12 @@ async function cutAndExport(page: Page, unit: string | undefined): Promise<numbe
 function expectNetPinVolume(
   pieces: number[],
   localCube: number,
-  millimetresPerCoordinate: number,
+  placementScale: number,
+  millimetresPerUnit: number,
 ): void {
   const [a = 0, b = 0] = pieces;
-  const netMm3 = (a + b - localCube ** 3) * millimetresPerCoordinate ** 3;
+  // the pieces are written as placed: the cube they were cut from is `localCube × placementScale` on a side, in the document's unit
+  const netMm3 = (a + b - (localCube * placementScale) ** 3) * millimetresPerUnit ** 3;
   // 0.4 mm³ is 2.5 % of the pin's net volume and ten thousand times the float32 rounding of the cube; a pin that was twice as wide
   // (or half as deep, or in the wrong unit) is out by more than the whole value.
   expect(netMm3).toBeGreaterThan(NET_MM3 - 0.4);
@@ -154,7 +161,7 @@ test.describe('a STL that states no unit, read by the user as...', () => {
       const local = CUBE_MM / (MM_PER_UNIT[unit] ?? Number.NaN);
       await open(page, `cube-${unit}.stl`, 'model/stl', stlOf(local));
       const pieces = await cutAndExport(page, unit);
-      expectNetPinVolume(pieces, local, MM_PER_UNIT[unit] ?? Number.NaN);
+      expectNetPinVolume(pieces, local, 1, MM_PER_UNIT[unit] ?? Number.NaN);
     });
 });
 
@@ -185,6 +192,6 @@ test.describe('a 3MF placed at a uniform scale', () => {
       await page.getByTestId('workflow-split').click();
       await expect(page.getByTestId('split-unit-interpretation')).toHaveCount(0);
       const pieces = await cutAndExport(page, undefined);
-      expectNetPinVolume(pieces, local, factor);
+      expectNetPinVolume(pieces, local, scale, MM_PER_UNIT[unit] ?? Number.NaN);
     });
 });

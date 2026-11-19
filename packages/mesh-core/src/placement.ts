@@ -106,13 +106,33 @@ export function classifyPlacement(transform: readonly number[]): PlacementClass 
       )
         return UNSUPPORTED(PlacementRefusal.Shear);
     }
-  const [a, b, c] = axes;
-  if (a === undefined || b === undefined || c === undefined)
-    return UNSUPPORTED(PlacementRefusal.Malformed);
-  // The triple product a · (b × c). For a similarity its magnitude is scale³, so only its sign is read.
-  const determinant =
-    a[0] * (b[1] * c[2] - b[2] * c[1]) -
-    a[1] * (b[0] * c[2] - b[2] * c[0]) +
-    a[2] * (b[0] * c[1] - b[1] * c[0]);
-  return Object.freeze({ kind: 'SIMILARITY', scale, mirrored: determinant < 0 });
+  // For a similarity the determinant's magnitude is scale³, so only its sign is read.
+  return Object.freeze({
+    kind: 'SIMILARITY',
+    scale,
+    mirrored: placementReversesOrientation(transform),
+  });
+}
+
+/**
+ * The determinant of the placement's 3×3 linear part: the triple product a · (b × c) of its three basis vectors. The one place the
+ * number is formed, so that "does this placement mirror?" has one answer for the classifier AND for every writer that has to keep a
+ * solid facing outward after it applies a placement (Stage C03-D).
+ */
+export function placementLinearDeterminant(transform: readonly number[]): number {
+  const [a0 = 0, a1 = 0, a2 = 0, b0 = 0, b1 = 0, b2 = 0, c0 = 0, c1 = 0, c2 = 0] = transform;
+  return a0 * (b1 * c2 - b2 * c1) - a1 * (b0 * c2 - b2 * c0) + a2 * (b0 * c1 - b1 * c0);
+}
+
+/**
+ * Whether applying this placement to a mesh turns it inside out unless the winding is also reversed: the determinant is negative.
+ *
+ * A mirror keeps every vertex where the placement puts it and reverses the handedness of every triangle, so a closed solid written
+ * with its original corner order has its normals pointing into the material and a negative volume. This is independent of
+ * `classifyPlacement`'s support policy: a non-uniform or sheared placement that also mirrors reverses orientation too, and an
+ * exporter that bakes one must reverse the corners whether or not a connector could have been cut into that part. A non-finite or
+ * zero determinant (a collapsed placement) reverses nothing: there is no orientation left to keep.
+ */
+export function placementReversesOrientation(transform: readonly number[]): boolean {
+  return placementLinearDeterminant(transform) < 0;
 }

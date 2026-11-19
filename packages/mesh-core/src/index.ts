@@ -19,6 +19,7 @@ export type {
 
 export {
   applyPartTransform,
+  placeMesh,
   composePartTransforms,
   DEFAULT_DOCUMENT_LIMITS,
   distinctMeshes,
@@ -76,7 +77,9 @@ export {
   classifyPlacement,
   IDENTITY_PLACEMENT,
   PLACEMENT_CLASSIFICATION_TOLERANCE,
+  placementLinearDeterminant,
   PlacementRefusal,
+  placementReversesOrientation,
 } from './placement';
 export type { PlacementClass } from './placement';
 export type { DrawableTriangles } from './analysis';
