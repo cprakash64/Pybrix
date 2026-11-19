@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
 import { openInspector } from './inspector';
+import { waitUntilListening } from './wait-until-listening';
 
 /**
  * BQ25, BQ57 — WHAT HAPPENS WHEN A HOST FORGETS THE ISOLATION HEADERS.
@@ -25,8 +26,14 @@ import { openInspector } from './inspector';
  * than tidiness. `beforeAll` runs once per worker process, so a single fixed port
  * meant four workers racing to bind it: one won and the other three tested
  * against a server that had failed to start. Deriving the port from the worker
- * index gives each its own, so the file is safe under the suite's default
- * parallelism.
+ * gives each its own, so the file is safe under the suite's default parallelism.
+ *
+ * `parallelIndex`, NOT `workerIndex`. `workerIndex` is unique per worker PROCESS
+ * and keeps growing every time Playwright replaces a worker, so after a restart
+ * the port walked off the end of the range this suite owns and onto 4190 and
+ * 4191 — the packaged suite's own header-ful server, which then answered a test
+ * that expected no isolation headers. `parallelIndex` is 0 to workers − 1 for
+ * the whole run, so the ports stay 4186 to 4189.
  */
 const BASE_PORT = 4186;
 let server: ChildProcess | undefined;
@@ -35,13 +42,12 @@ let port = BASE_PORT;
 test.beforeAll(async () => {
   // `test.info()` rather than a destructured hook argument: the fixtures object
   // is not needed here, and an empty destructuring pattern is a lint error.
-  port = BASE_PORT + test.info().workerIndex;
+  port = BASE_PORT + test.info().parallelIndex;
   server = spawn('node', ['scripts/release-server.mjs', '--port', String(port), '--no-isolation'], {
     stdio: 'ignore',
   });
-  // The server binds immediately; give it a moment rather than racing the first
-  // navigation, which would report a connection error instead of a header result.
-  await new Promise((resolve) => setTimeout(resolve, 1200));
+  // Readiness, not a guess: see `wait-until-listening.ts`. A fixed 1.2 s sleep here once let the first navigation be refused.
+  await waitUntilListening(server, port);
 });
 
 test.afterAll(() => {
