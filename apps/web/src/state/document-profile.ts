@@ -1,4 +1,4 @@
-import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
+import { IDENTITY_PART_TRANSFORM, placementReversesOrientation } from '@cadfixer/mesh-core';
 import type { PartDescriptor } from '@cadfixer/geometry-runtime';
 import { objNameChangesOnWrite, xmlTextChangesOnWrite } from '@cadfixer/file-formats';
 import type { DocumentFeatureProfile } from '@cadfixer/file-formats';
@@ -73,7 +73,11 @@ function isIdentityTransform(transform: PartDescriptor['transform']): boolean {
 function threeMfObjectCount(parts: readonly PartDescriptor[]): number {
   const keys = new Set<string>();
   for (const part of parts) {
-    keys.add(`${String(part.meshResourceIndex)}\u0000${part.name ?? ''}`);
+    // A part whose placement mirrors it is written as its own (mirrored) object, exactly as `planThreeMfObjects` plans it.
+    const mirrored = placementReversesOrientation(part.transform);
+    keys.add(
+      `${String(part.meshResourceIndex)}\u0000${part.name ?? ''}\u0000${mirrored ? 'mirrored' : 'plain'}`,
+    );
   }
   return keys.size;
 }

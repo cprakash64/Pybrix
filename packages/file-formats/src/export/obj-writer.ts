@@ -1,6 +1,7 @@
 import {
   applyPartTransform,
   IDENTITY_PART_TRANSFORM,
+  placementReversesOrientation,
   type PartTransform,
 } from '@cadfixer/mesh-core';
 import { throwIfCancelled } from '@cadfixer/shared';
@@ -160,6 +161,7 @@ export async function serializeObjDocument(
   }
 
   let anyBaked = false;
+  let anyReoriented = false;
   let anyGroups = false;
   let anyMaterial = false;
   let anyName = false;
@@ -228,6 +230,9 @@ export async function serializeObjDocument(
 
     const identity = isIdentity(part.transform);
     if (!identity) anyBaked = true;
+    // A mirroring placement turns every triangle (Stage C03-D2): see `stl-document-writer.ts`. The vertex pool is untouched.
+    const reversed = placementReversesOrientation(part.transform);
+    if (reversed) anyReoriented = true;
 
     const { positions, indices } = mesh;
     for (let at = 0; at < positions.length; at += 3) {
@@ -321,8 +326,8 @@ export async function serializeObjDocument(
       }
 
       const a = vertexBase + (indices[at] ?? 0);
-      const b = vertexBase + (indices[at + 1] ?? 0);
-      const c = vertexBase + (indices[at + 2] ?? 0);
+      const b = vertexBase + (indices[at + (reversed ? 2 : 1)] ?? 0);
+      const c = vertexBase + (indices[at + (reversed ? 1 : 2)] ?? 0);
       {
         const pendingWrite = sink.write(`f ${String(a)} ${String(b)} ${String(c)}\n`);
         if (pendingWrite !== undefined) await pendingWrite;
@@ -341,6 +346,7 @@ export async function serializeObjDocument(
     ExportObservation.TextureCoordinatesOmitted,
   ];
   if (anyBaked) observations.push(ExportObservation.TransformsBaked);
+  if (anyReoriented) observations.push(ExportObservation.MirroredPlacementReoriented);
   if (snapshot.unit !== undefined) observations.push(ExportObservation.UnitOmitted);
   if (sharedFlattened) observations.push(ExportObservation.SharingFlattened);
   if (anyName) observations.push(ExportObservation.NamesPreserved);

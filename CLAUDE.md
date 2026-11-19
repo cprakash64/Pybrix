@@ -342,7 +342,8 @@ believing it.
   in world space are not self-intersecting, and nothing checks whether they do.
   Never flatten a document for the diagnostic.
 - **STL export writes ONE part and says what it left out.** STL holds one
-  object. The panel states this before the click. Never flatten silently.
+  object. The panel states this before the click. Never flatten silently. It
+  writes that part AS PLACED — see the export placement invariants (Stage C03-D).
 - **`assertGeometryDocument` is the second gate**, mirroring
   `assertMeshStructure`. Structural validity is NOT mesh health: a part with
   degenerate triangles is a valid document describing a defective model.
@@ -1030,6 +1031,52 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   writer proves only that they agree. `obj-oracle.ts` and `threemf-oracle.ts` are
   test-only structural checkers that share no code with production, and a
   boundary test keeps them out of it.
+
+## Export placement invariants (Stage C03-D)
+
+- **A FILE HOLDS THE PART WHERE THE DOCUMENT PUTS IT, in every format.** The
+  active-part STL export (`model/export`) used to write `part.mesh` and ignore
+  `part.transform`: a part that was translated, rotated, scaled or mirrored came
+  out somewhere other than where the document has it, and a connector-bearing
+  split piece at ×2 came out half its physical size. It now writes
+  `placeMesh(part.mesh, part.transform)`, with no copy at all for an identity
+  placement. Whole-document STL and OBJ bake while streaming; 3MF writes
+  placements as build-item transforms. Never write local coordinates for a
+  placed part and say nothing.
+- **ONE PLACEMENT ARITHMETIC AND ONE ORIENTATION QUESTION.** `applyPartTransform`
+  applies a placement (Float64, narrowed once to Float32). `placementReversesOrientation`
+  (the sign of `placementLinearDeterminant`, the same triple product
+  `classifyPlacement` reads for `mirrored`) answers whether a placement turns a
+  mesh inside out. No exporter re-derives either. It is independent of
+  `classifyPlacement`'s support policy: a non-uniform placement that also
+  mirrors reverses orientation too, and an exporter that bakes it must turn the
+  triangles whether or not a connector could have been cut into that part.
+- **A MIRROR REVERSES THE WINDING, EVERYWHERE IT IS BAKED.** Positions go where
+  the placement puts them; keeping the stored corner order writes a closed solid
+  inside out (negative volume, normals into the material). `placeMesh`, the
+  whole-document STL writer, the OBJ writer, its stream validator and the two
+  expected round-trips all exchange the second and third corner of every triangle
+  of a part whose placement mirrors. Before C03-D2 the whole-document STL and OBJ
+  exports of a mirrored part were inside out.
+- **A 3MF BUILD ITEM NEVER REFLECTS.** A negative-determinant item transform is
+  one of the defects the 3MF Consortium's conformance suite files as a negative
+  case, so a mirrored part is written as its mesh mirrored in x (corners turned)
+  and the placement composed with that mirror (`mirroredObjectPlacement`: the
+  first basis row negated, zeros kept +0). World positions are exactly what they
+  were: both steps are negations. `planThreeMfObjects` keys on (mesh, name,
+  mirrored): mirrored placements of one mesh share ONE mirrored object, plain
+  ones keep the plain object, and the page's `threeMfObjectCount` mirrors that
+  rule. A part whose placement mirrors does not come back as the same
+  (mesh, transform) pair on re-import; it comes back as the same PHYSICAL object.
+- **BAKING NEVER RESCALES AND NEVER LABELS.** STL and OBJ state no unit: the
+  coordinates written are the document's, placement applied, with no unit
+  invented and none lost to a different number. A known unit survives only where
+  the format can state it (3MF). The active-part STL says "placement was applied"
+  (`STL_EXPORT_PLACEMENT_APPLIED`, with `mirrored`) only when there is one.
+- **THE ORACLE THAT MATTERS IS BYTES MEASURED BY CODE THAT SHARES NOTHING.**
+  The C03-D export oracle parses the written STL, OBJ and 3MF with its own
+  parsers and applies placements with its own arithmetic. A test that exports
+  through our writer and reads back with our reader proves only that they agree.
 
 ## 3MF property-reference invariants (Stage 4A-2B3-R1)
 
