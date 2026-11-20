@@ -1202,7 +1202,9 @@ two numbers to type, and add and remove for one connector.
   ring and a socket ring for every connector of the DRAFT (a drag in the picture moves one on the model as it is dragged) and an arrow
   along each direction named by the model axis. It is requested by the editor through `store.setCutMarkShown` while its section is open on
   a cut that can be placed, and withdrawn when it closes or goes; faces are drawn once when the pieces sit together and once each when exploded.
-  Display only: nothing is picked, exported or decided from it, and the camera never moves. The e2e compares the drawn ring's movement with
+  Display only: nothing is picked, exported or decided from it, and the camera never moves. The page asks on every render of the viewport
+  panel, so `setMark` returns whether anything could have changed and a frame is scheduled only then: the first version drew a frame for
+  every ask, even to clear a mark that was not drawn, and a heavy sphere's Apply in the harness (7B-X02, `7B browser flow 1`) missed its five-second wait three times in three. The e2e compares the drawn ring's movement with
   where the EXPORTED FILES put the pin (the same vector), reading the ring from the canvas's record of what it drew; swapping the axes in
   the mapping fails it.
 - **THE EDITOR IS ONE CONTROLLER DRAWN IN ONE WORKSPACE AT A TIME (EC-7).** `useConnectorEdit` runs once, in `ConnectorEditControlsProvider`

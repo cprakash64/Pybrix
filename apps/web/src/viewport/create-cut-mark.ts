@@ -34,8 +34,12 @@ export interface CutMarkData {
 
 export interface CutMarkHandle {
   readonly group: Group;
-  /** Draws `data`, replacing what was drawn; `undefined` clears it. `radius` is the model's, to size the labels. */
-  setMark(data: CutMarkData | undefined, radius: number): void;
+  /**
+   * Draws `data`, replacing what was drawn; `undefined` clears it. `radius` is the model's, to size the labels. Returns whether anything
+   * on screen could have changed: clearing a mark that is not drawn changes nothing, and the page asks on every render of its panel, so
+   * a caller draws a frame only when this is true. (Drawing one for each ask made a heavy split's Apply miss its five-second wait.)
+   */
+  setMark(data: CutMarkData | undefined, radius: number): boolean;
   /** GPU-backed objects currently held. For leak tests. */
   readonly objectCount: number;
   /** The middle of the first ring drawn (the box of its points), in the scene, or `undefined` with none. Read from what is drawn. */
@@ -119,9 +123,10 @@ export function createCutMark(makeLabel: LabelTexture = canvasLabelTexture): Cut
 
   return {
     group,
-    setMark(data, radius): void {
+    setMark(data, radius): boolean {
+      if (data === undefined && lines.length === 0 && sprites.length === 0) return false;
       clear();
-      if (data === undefined) return;
+      if (data === undefined) return true;
       counts = {
         outline: addLines(data.outline, OUTLINE_COLOR, 0.95),
         pins: addLines(data.pins, PIN_COLOR, 1),
@@ -164,6 +169,7 @@ export function createCutMark(makeLabel: LabelTexture = canvasLabelTexture): Cut
         labels += 1;
       }
       counts = { ...counts, labels };
+      return true;
     },
     get objectCount(): number {
       return lines.length + sprites.length;

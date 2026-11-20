@@ -509,7 +509,8 @@ export function createViewport(
   const cutMark: CutMarkHandle = createCutMark();
   modelGroup.add(cutMark.group);
   const setCutMark = (data: CutMarkData | undefined): void => {
-    cutMark.setMark(data, currentModel?.radius ?? 1);
+    // The page asks on every render of the panel, so clearing nothing must cost nothing: a frame is drawn only when what is shown changes.
+    if (!cutMark.setMark(data, currentModel?.radius ?? 1)) return;
     canvas.dataset.cutMark = data === undefined ? 'none' : 'shown';
     canvas.dataset.cutMarkOutlineSegments = String(cutMark.counts.outline);
     canvas.dataset.cutMarkPinSegments = String(cutMark.counts.pins);
@@ -517,7 +518,7 @@ export function createViewport(
     canvas.dataset.cutMarkLabels = String(cutMark.counts.labels);
     canvas.dataset.cutMarkFirstPin =
       cutMark.firstRingCentre?.map((value) => value.toFixed(3)).join(',') ?? '';
-    render();
+    scheduleRender();
   };
   scene.add(modelGroup);
 

@@ -92,6 +92,7 @@ A committed split is two plain parts. Pins and sockets are Boolean results baked
 - **A drag in the picture is visible on the model.** The rings follow the draft, not the applied connectors, so the model shows where a connector would go before it is checked. The check is still the worker's.
 - **When it is shown.** While the editor's section is open on a cut that can be placed, in any workspace; it is requested through the store by the editor alone and withdrawn when the editor closes or goes. Exploded pieces each get the outline and rings on their own face.
 - **Judged by the files.** The browser spec reads the drawn ring from the canvas's own record of what it drew and compares its movement with the exported pin's: the same vector. Swapping the axes in the mapping fails it.
+- **A defect the harness found.** The first version redrew synchronously on every ask the page made (it asks on every render of the viewport panel), including to clear a mark that was not drawn. A heavy split's Apply then missed its five-second wait, three times in three, and the whole harness showed it as one failure. `setMark` now says whether anything changed and a frame is scheduled only then.
 - **Not done.** One-pixel lines (no line width in WebGL), so the mark is fine at small sizes; labels are small sprites; no highlight of the selected connector on the model; no picking a connector or the cut on the model; footprint at the retention ceiling is still unmeasured.
 
 ## Not decided here

@@ -46,6 +46,16 @@ describe('the mark of a cut', () => {
     expect(mark.firstRingCentre).toBeUndefined();
   });
 
+  it('says whether anything changed: clearing a mark that is not drawn does not, so no frame is drawn for it', () => {
+    const mark = createCutMark(label);
+    expect(mark.setMark(undefined, 10)).toBe(false);
+    expect(mark.setMark(undefined, 10)).toBe(false);
+    expect(mark.setMark(data(), 10)).toBe(true);
+    expect(mark.setMark(data(), 10)).toBe(true);
+    expect(mark.setMark(undefined, 10)).toBe(true);
+    expect(mark.setMark(undefined, 10)).toBe(false);
+  });
+
   it('draws nothing for an empty kind, and clears everything for undefined', () => {
     const mark = createCutMark(label);
     mark.setMark(data({ pins: new Float32Array(0) }), 10);
