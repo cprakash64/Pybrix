@@ -45,6 +45,34 @@ export type {
 } from './document';
 
 export {
+  attachedJoints,
+  jointAttachment,
+  jointId,
+  JOINT_RETAINED_BYTES_PER_TRIANGLE,
+  jointRetainedBytes,
+  JointRetirement,
+  liveJoints,
+  MAX_JOINT_RETAINED_BYTES,
+  MAX_PINS_PER_JOINT,
+  MAX_RETIRED_JOINT_DESCRIPTORS,
+  retireDetachedJoints,
+  retiredJoints,
+} from './joint';
+export type {
+  ConnectorJoint,
+  JointAttachment,
+  JointConnectorSpec,
+  JointFrame,
+  JointId,
+  JointInterfaceAuthority,
+  JointPin,
+  JointRecord,
+  JointSide,
+  JointSite,
+  RetiredJoint,
+} from './joint';
+
+export {
   assertGeometryDocument,
   DocumentValidationCode,
   isValidPartTransform,

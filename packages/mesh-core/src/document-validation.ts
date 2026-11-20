@@ -15,6 +15,19 @@ import {
   type GeometryDocument,
 } from './document';
 import { MeshValidationSeverity, validateMeshStructure } from './validation';
+import {
+  attachedJoints,
+  jointRetainedBytes,
+  liveJoints,
+  MAX_JOINT_RETAINED_BYTES,
+  MAX_PINS_PER_JOINT,
+  MAX_RETIRED_JOINT_DESCRIPTORS,
+  retiredJoints,
+  type ConnectorJoint,
+  type JointSide,
+  JointRetirement,
+} from './joint';
+import type { CanonicalMesh } from './mesh';
 
 /**
  * STRUCTURAL validation of a geometry document, run before it becomes
@@ -46,6 +59,18 @@ export const DocumentValidationCode = {
   TooManyTriangles: 'DOCUMENT_TOO_MANY_TRIANGLES',
   TooManyVertices: 'DOCUMENT_TOO_MANY_VERTICES',
   TooManyBytes: 'DOCUMENT_TOO_MANY_BYTES',
+  // ---- the editable connector model (Stage EC-1) ----
+  JointDuplicateId: 'DOCUMENT_JOINT_DUPLICATE_ID',
+  /** A joint that contradicts itself: an empty id, one part on both sides, an unusable frame, side or authority. */
+  JointMalformed: 'DOCUMENT_JOINT_MALFORMED',
+  /** A connector spec outside the model: no pins, too many, a repeated pin id, a size that is not positive and finite. */
+  JointConnectorMalformed: 'DOCUMENT_JOINT_CONNECTOR_MALFORMED',
+  /** One part inside two ATTACHED joints, so an edit of one would rebuild geometry the other still describes. */
+  JointPartShared: 'DOCUMENT_JOINT_PART_SHARED',
+  JointRetentionTooLarge: 'DOCUMENT_JOINT_RETENTION_TOO_LARGE',
+  TooManyJoints: 'DOCUMENT_TOO_MANY_JOINTS',
+  /** A retired descriptor that names no reason this model has, or carries an impossible revision or count. */
+  RetiredJointMalformed: 'DOCUMENT_RETIRED_JOINT_MALFORMED',
 } as const;
 
 export type DocumentValidationCode =
@@ -211,6 +236,8 @@ export function validateGeometryDocument(
     }
   }
 
+  validateDocumentJoints(document, limits, validateMeshes, issues);
+
   const triangles = documentTriangleCount(document);
   const vertices = documentVertexCount(document);
   let geometryBytes = 0;
@@ -270,4 +297,170 @@ export function assertGeometryDocument(
     issueCount: report.issues.length,
     codes: codes.join(','),
   });
+}
+
+/* ------------------------------------------------------------------- joints -- */
+
+const RETIREMENT_REASONS: ReadonlySet<string> = new Set(Object.values(JointRetirement));
+
+function positiveFinite(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function sideProblem(side: JointSide): string | undefined {
+  if (side.partId.length === 0) return 'a side names no part';
+  if (!isValidPartTransform(side.builtTransform)) return 'a side has an unusable placement';
+  return undefined;
+}
+
+function jointProblem(joint: ConnectorJoint): string | undefined {
+  if (joint.jointId.length === 0) return 'a joint has no identifier';
+  if (joint.a.partId === joint.b.partId) return 'a joint names one part on both sides';
+  const side = sideProblem(joint.a) ?? sideProblem(joint.b);
+  if (side !== undefined) return side;
+  const { frame } = joint;
+  if (!isLengthUnit(frame.unit)) return 'a joint states a unit Pybrix does not recognise';
+  if (
+    !positiveFinite(frame.mmPerUnit) ||
+    !positiveFinite(frame.placementScale) ||
+    !positiveFinite(frame.mmPerCoordinate)
+  )
+    return 'a joint has an unusable physical frame';
+  const { authority } = joint;
+  if (authority.provenanceSHA.length === 0) return 'a joint has no interface identity';
+  if (!Number.isSafeInteger(authority.retainedBytes) || authority.retainedBytes < 0)
+    return 'a joint states an impossible retained size';
+  return undefined;
+}
+
+function connectorProblem(joint: ConnectorJoint): string | undefined {
+  const spec = joint.connector;
+  if (spec === undefined) return undefined;
+  // Read as a string: the type says `A | B`, but a document can be built from a wire payload whose shape was asserted, not proved.
+  const maleSide: string = spec.maleSide;
+  if (maleSide !== 'A' && maleSide !== 'B') return 'a connector names no male side';
+  const count = spec.elements.length;
+  if (count < 1 || count > MAX_PINS_PER_JOINT)
+    return 'a connector has a number of pins outside the model';
+  const ids = new Set<string>();
+  for (const pin of spec.elements) {
+    if (pin.pinId.length === 0 || ids.has(pin.pinId))
+      return 'a connector repeats or omits a pin identifier';
+    ids.add(pin.pinId);
+    if (!positiveFinite(pin.diameterMm) || !positiveFinite(pin.depthMm))
+      return 'a pin size is not positive and finite';
+    if (!Number.isFinite(pin.clearanceMm) || pin.clearanceMm < 0)
+      return 'a pin clearance is not finite and non-negative';
+    if (pin.site !== 'RESOLVED' && (!Number.isFinite(pin.site.u) || !Number.isFinite(pin.site.v)))
+      return 'a pin site is not finite';
+  }
+  return undefined;
+}
+
+function validateDocumentJoints(
+  document: GeometryDocument,
+  limits: DocumentLimits,
+  validateMeshes: boolean,
+  issues: DocumentValidationIssue[],
+): void {
+  const records = document.joints;
+  if (records === undefined || records.length === 0) return;
+  const live = liveJoints(document);
+  const retired = retiredJoints(document);
+
+  if (
+    live.length > Math.floor(limits.maxParts / 2) ||
+    retired.length > MAX_RETIRED_JOINT_DESCRIPTORS
+  )
+    issues.push({
+      code: DocumentValidationCode.TooManyJoints,
+      message: 'This document records more connector joints than Pybrix will keep.',
+      details: { liveJoints: live.length, retiredJoints: retired.length },
+    });
+
+  const ids = new Set<string>();
+  for (const record of records) {
+    if (record.jointId.length > 0 && ids.has(record.jointId))
+      issues.push({
+        code: DocumentValidationCode.JointDuplicateId,
+        message: 'Two connector joints in this document claim the same identifier.',
+        details: { jointId: record.jointId },
+      });
+    ids.add(record.jointId);
+  }
+
+  for (const joint of live) {
+    const problem = jointProblem(joint);
+    if (problem !== undefined)
+      issues.push({
+        code: DocumentValidationCode.JointMalformed,
+        message: 'A connector joint in this document contradicts itself.',
+        details: { jointId: joint.jointId, problem },
+      });
+    const connector = connectorProblem(joint);
+    if (connector !== undefined)
+      issues.push({
+        code: DocumentValidationCode.JointConnectorMalformed,
+        message: 'A connector in this document is outside what Pybrix can describe.',
+        details: { jointId: joint.jointId, problem: connector },
+      });
+  }
+
+  for (const record of retired) {
+    if (
+      record.jointId.length === 0 ||
+      !RETIREMENT_REASONS.has(record.reason) ||
+      !Number.isSafeInteger(record.retiredAtRevision) ||
+      record.retiredAtRevision < 1 ||
+      !Number.isSafeInteger(record.pinCount) ||
+      record.pinCount < 0 ||
+      record.pinCount > MAX_PINS_PER_JOINT
+    )
+      issues.push({
+        code: DocumentValidationCode.RetiredJointMalformed,
+        message: 'A retired connector record in this document is not one Pybrix can describe.',
+        details: { jointId: record.jointId },
+      });
+  }
+
+  // One part, one attached joint: an edit rebuilds BOTH of a joint's pieces, so a second joint over either would describe geometry
+  // the first has just replaced. Retired and detached records do not count: they can no longer be edited.
+  const owner = new Map<string, string>();
+  for (const joint of attachedJoints(document))
+    for (const id of [joint.a.partId, joint.b.partId]) {
+      const other = owner.get(id);
+      if (other !== undefined && other !== joint.jointId)
+        issues.push({
+          code: DocumentValidationCode.JointPartShared,
+          message: 'Two connector joints in this document claim the same part.',
+          details: { partId: id, jointId: joint.jointId },
+        });
+      owner.set(id, joint.jointId);
+    }
+
+  const retained = jointRetainedBytes(document);
+  if (retained > MAX_JOINT_RETAINED_BYTES)
+    issues.push({
+      code: DocumentValidationCode.JointRetentionTooLarge,
+      message: `This document retains ${formatBytes(retained)} for editable connectors; Pybrix's limit is ${formatBytes(MAX_JOINT_RETAINED_BYTES)}.`,
+      details: { retainedBytes: retained, limit: MAX_JOINT_RETAINED_BYTES },
+    });
+
+  if (validateMeshes) {
+    // The retained bases are geometry too, and they are checked the way a part's is: per DISTINCT mesh, and never one a part holds.
+    const checked = new Set<CanonicalMesh>(distinctMeshes(document));
+    for (const joint of live)
+      for (const side of [joint.a, joint.b])
+        for (const mesh of [side.baseMesh, side.builtMesh]) {
+          if (checked.has(mesh)) continue;
+          checked.add(mesh);
+          if (!validateMeshStructure(mesh).valid)
+            issues.push({
+              code: DocumentValidationCode.InvalidPartMesh,
+              message:
+                'A retained connector piece in this document does not contain a well-formed mesh.',
+              details: { jointId: joint.jointId, partId: side.partId },
+            });
+        }
+  }
 }

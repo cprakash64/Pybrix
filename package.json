@@ -67,7 +67,8 @@
     "bench:auto-split": "vitest run --config vitest.bench.config.ts scripts/auto-split-performance.bench-suite.ts",
     "bench:auto-split-large": "vitest run --config vitest.bench.config.ts scripts/auto-split-large.bench-suite.ts",
     "bench:auto-split-large-split": "vitest run --config vitest.bench.config.ts scripts/auto-split-large-split.bench-suite.ts",
-    "test:e2e:auto-split-large": "AUTO_SPLIT_LARGE=1 playwright test --config playwright.auto-split.config.ts e2e-auto-split/large-mesh.spec.ts"
+    "test:e2e:auto-split-large": "AUTO_SPLIT_LARGE=1 playwright test --config playwright.auto-split.config.ts e2e-auto-split/large-mesh.spec.ts",
+    "bench:joint-retention": "vitest run --config vitest.bench.config.ts scripts/joint-retention.bench-suite.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

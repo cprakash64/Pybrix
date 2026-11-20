@@ -1,5 +1,12 @@
 import { createIndexArray, createPositionArray, type CanonicalMesh } from './mesh';
 import {
+  jointId,
+  type ConnectorJoint,
+  type JointConnectorSpec,
+  type JointFrame,
+  type JointId,
+} from './joint';
+import {
   IDENTITY_PART_TRANSFORM,
   partId,
   type GeometryDocument,
@@ -244,4 +251,83 @@ export function mp08SharedPlacements(count = 1000): GeometryDocument {
     parts.push(makePart(`p${String(index)}`, shared, { transform: translation(index * 2, 0, 0) }));
   }
   return { parts };
+}
+
+/* ------------------------------------------------------- editable joints -- */
+
+export interface JointFixtureOptions {
+  readonly id?: string;
+  /** `undefined` is a plain joint. Defaults to one resolver-sited pin. */
+  readonly connector?: JointConnectorSpec | undefined;
+  /** Bytes the interface authority claims to hold. */
+  readonly authorityBytes?: number;
+  readonly frame?: JointFrame;
+}
+
+export const FIXTURE_JOINT_FRAME: JointFrame = Object.freeze({
+  unit: 'millimeter',
+  mmPerUnit: 1,
+  placementScale: 1,
+  mmPerCoordinate: 1,
+});
+
+export const FIXTURE_PIN_SPEC: JointConnectorSpec = Object.freeze({
+  policy: 'units-v2',
+  kind: 'pin',
+  maleSide: 'A',
+  elements: Object.freeze([
+    Object.freeze({
+      pinId: 'pin-1',
+      site: 'RESOLVED' as const,
+      diameterMm: 4,
+      depthMm: 6,
+      clearanceMm: 0.2,
+    }),
+  ]),
+});
+
+/**
+ * A document of two parts, A and B, joined by one ATTACHED joint: each part holds the mesh the joint built, the base is a
+ * DIFFERENT mesh (the piece before its connector), and the document's unit is the frame's. Returns the document and the joint so a
+ * test can break exactly one of the four things attachment depends on.
+ */
+export function jointedDocument(options: JointFixtureOptions = {}): {
+  readonly document: GeometryDocument;
+  readonly joint: ConnectorJoint;
+  readonly id: JointId;
+} {
+  const frame = options.frame ?? FIXTURE_JOINT_FRAME;
+  const builtA = tetrahedronMesh(2);
+  const builtB = tetrahedronMesh(3);
+  const a = makePart('part-a', builtA);
+  const b = makePart('part-b', builtB);
+  const id = jointId(options.id ?? 'document-1/joint/1');
+  const joint: ConnectorJoint = Object.freeze({
+    kind: 'joint',
+    jointId: id,
+    a: Object.freeze({
+      partId: a.id,
+      baseMesh: tetrahedronMesh(1.5),
+      builtMesh: builtA,
+      builtTransform: a.transform,
+    }),
+    b: Object.freeze({
+      partId: b.id,
+      baseMesh: tetrahedronMesh(2.5),
+      builtMesh: builtB,
+      builtTransform: b.transform,
+    }),
+    frame,
+    authority: Object.freeze({
+      provenanceSHA: 'sha-fixture',
+      retainedBytes: options.authorityBytes ?? 0,
+      detail: Object.freeze({}),
+    }),
+    connector: 'connector' in options ? options.connector : FIXTURE_PIN_SPEC,
+  });
+  return {
+    document: { unit: frame.unit, parts: [a, b], joints: [joint] },
+    joint,
+    id,
+  };
 }

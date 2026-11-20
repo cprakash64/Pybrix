@@ -26,6 +26,7 @@ export type {
   ModelReleasePayload,
   ModelReleaseResult,
   PartDescriptor,
+  JointDescriptor,
   PartRenderSnapshot,
   RenderSnapshot,
   RepairCandidatePayload,
@@ -129,6 +130,7 @@ export type { MeshBounds } from '@cadfixer/mesh-core';
  */
 export type { GeometryDocument, GeometryPart, PartId, PartTransform } from '@cadfixer/mesh-core';
 
+export { describeJoints } from './joint-descriptors';
 export {
   documentByteLength,
   isDocument,

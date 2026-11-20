@@ -1078,6 +1078,42 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
+## Editable connector model invariants (Stage EC-1, ADR 0033)
+
+EC-1 is the MODEL, its lifecycle and its accounting. It builds no joint, edits no connector and adds no operation, control or copy:
+a committed split is still two plain parts, and nothing yet puts a joint into a document. The engine that rebuilds from one and the
+transaction that applies the result are later stages.
+
+- **A JOINT IS SESSION STATE IN THE WORKER'S DOCUMENT.** `GeometryDocument.joints` holds records for the two parts of one cut, the
+  pre-connector pieces they were built from, the physical frame they were sized in and the engine's interface authority. No reader
+  produces it and no writer reads it; `exportSnapshotOf` builds a fresh part list and cannot carry one. The page holds
+  `JointDescriptor`s — ids, a status, a reason and counts — and never a mesh. A boundary test names every module allowed to build
+  a joint list and every one that may never mention one.
+- **VALIDITY IS DERIVED FROM THE PARTS, NEVER STORED.** `jointAttachment` is the one function that says whether a joint is usable:
+  both parts present, the unit the frame names, both placements element-wise equal to the ones it was built under, and both meshes
+  the exact OBJECTS it built. Identity, not content: a byte-equal copy is a change. The reasons come in a fixed order (part removed,
+  unit, placement, geometry) so one document has one answer. A stored flag would be carried onto a changed part, because
+  `withPartMesh`, `withPartTransform` and the split candidate all spread the previous document.
+- **RETIREMENT IS AT THE ONE INSTALL PATH.** `ResidentDocumentStore.replace` (and `commit`) retire every joint that is no longer
+  attached, replacing the record with a bounded descriptor and releasing the meshes it held. The same document object is installed
+  when nothing retires, and the part array is shared in every case. A retired joint is never edited, rebuilt, re-attached or
+  guessed. A boundary test asserts the two writes to the resident map and the single call site.
+- **UNDO NEEDS NO RULE OF ITS OWN.** `repair/undo` installs the previous document OBJECT, so a joint attached before a change is
+  attached again after undoing it.
+- **A PART IS IN AT MOST ONE ATTACHED JOINT**, because an edit rebuilds both of a joint's pieces. The document gate refuses two.
+- **INTENT IS STORED IN MILLIMETRES WITH ITS FRAME.** A pin carries `diameterMm`, `depthMm`, `clearanceMm`; a local length is
+  derived through the frame and never stored as intent. A site is `RESOLVED` or an explicit `(u, v)` in the interface frame, and an
+  explicit site is validated, never trusted. `mmPerCoordinate` is stored as built and not re-derived by the model.
+- **RETAINED BYTES ARE COUNTED ONCE PER DISTINCT MESH AND NEVER WITH A PART.** `jointRetainedBytes` charges bases, stale built
+  meshes and the authority's own bytes; `documentByteLength` includes it, so every resident total sees it. The ceiling
+  `MAX_JOINT_RETAINED_BYTES` is `MAX_SUPPORTED_SPLIT_TRIANGLES × 52` — derived, not a number of its own — and is a POLICY bound:
+  above it a producer keeps the connectors as plain geometry and says so, and never refuses a split on account of editability.
+  `npm run bench:joint-retention` measured accounting equal to the Node typed-array bytes and release on retirement to the byte;
+  it is NOT a browser footprint, and the first stage that actually retains bases must measure that.
+- **A RESIDENT TOTAL TAKEN BEFORE INSTALL OVER-COUNTS A JOINT ABOUT TO RETIRE.** The repair, fill and split handlers compute
+  `documentByteLength(successor)` before `replace`. That is exact today because no joint exists; the stage that creates one must
+  retire before reporting.
+
 ## 3MF property-reference invariants (Stage 4A-2B3-R1)
 
 - **NO `pid` IS EVER EMITTED, FOR ANY TARGET, FROM ANY DOCUMENT.** 3MF core

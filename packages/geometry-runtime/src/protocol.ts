@@ -1,7 +1,7 @@
 import type { SplitTransactionStatus } from './split-candidates';
 import type { SemanticRequestMetadata } from '@cadfixer/auto-split-contract';
 import type { Diagnostic, OperationId, SerializedAppError } from '@cadfixer/shared';
-import type { MeshBounds, PartTransform } from '@cadfixer/mesh-core';
+import type { JointRetirement, MeshBounds, PartTransform } from '@cadfixer/mesh-core';
 // Type-only, so no topology code is pulled into the main-thread bundle. The
 // analysis contract is described here rather than left as `unknown`: this is a
 // module boundary, and an unchecked one would let the worker and its consumer
@@ -1050,6 +1050,28 @@ export interface PartDescriptor {
   readonly hasNormals: boolean;
   /** True when this part's mesh stores per-vertex texture coordinates. */
   readonly hasUvs: boolean;
+}
+
+/**
+ * WHAT THE MAIN THREAD IS ALLOWED TO KNOW ABOUT AN EDITABLE CONNECTOR JOINT (Stage EC-1).
+ *
+ * Identifiers, a status, a reason and counts. NEVER a mesh, a base piece, a site or the interface authority: the page gets a
+ * description to show and an id to name in a later request, and the geometry the joint rebuilds from stays in the worker.
+ * Not carried by any operation yet; the first operation that returns it is the listing in the transaction stage.
+ */
+export interface JointDescriptor {
+  readonly jointId: string;
+  /** The joint's two parts, in the order the joint states them (A, then B). */
+  readonly aPartId: string;
+  readonly bPartId: string;
+  /** `ATTACHED` joints can be edited. `RETIRED` ones cannot, and say why. */
+  readonly status: 'ATTACHED' | 'RETIRED';
+  readonly reason?: JointRetirement;
+  /** Revision a retired joint stopped being usable at. Absent for a record not yet installed. */
+  readonly retiredAtRevision?: number;
+  readonly pinCount: number;
+  /** Bytes retained for this joint beyond its parts' own geometry. Zero once retired. */
+  readonly retainedBytes: number;
 }
 
 /**

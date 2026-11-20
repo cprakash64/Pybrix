@@ -1,5 +1,11 @@
 import { invalidState, modelUnavailable, type AppError } from '@cadfixer/shared';
-import { distinctMeshes, findPart, meshByteLength } from '@cadfixer/mesh-core';
+import {
+  distinctMeshes,
+  findPart,
+  jointRetainedBytes,
+  meshByteLength,
+  retireDetachedJoints,
+} from '@cadfixer/mesh-core';
 import type { GeometryDocument, GeometryPart, PartId } from '@cadfixer/mesh-core';
 
 /**
@@ -78,7 +84,9 @@ export interface ResidentDocumentStats {
 export function documentByteLength(document: GeometryDocument): number {
   let bytes = 0;
   for (const mesh of distinctMeshes(document)) bytes += meshByteLength(mesh);
-  return bytes;
+  // Geometry retained so a connector can be edited (Stage EC-1) is held as surely as a part's, so it is charged here, once per
+  // distinct mesh and never a mesh a part already holds. Every resident total therefore sees it without a second sum to drift.
+  return bytes + jointRetainedBytes(document);
 }
 
 /** Narrows the store's union return without an assertion. */
@@ -121,10 +129,11 @@ export class ResidentDocumentStore {
       throw invalidState('Resolve the pending split before importing another document.');
     const documentId = `document-${String(this.nextId)}` as DocumentId;
     this.nextId += 1;
+    const installed = retireDetachedJoints(document, 1);
     this.documents.set(documentId, {
-      document,
+      document: installed,
       revision: 1,
-      byteLength: documentByteLength(document),
+      byteLength: documentByteLength(installed),
     });
     return { documentId, revision: 1 };
   }
@@ -212,10 +221,17 @@ export class ResidentDocumentStore {
       });
     }
     const revision = entry.revision + 1;
+    /*
+     * THE ONE PLACE A JOINT STOPS BEING USABLE, AND THE ONE PLACE ITS GEOMETRY IS RELEASED. Every mesh replacement spreads the
+     * previous document, so a joint arrives here still describing a part that may just have changed; attachment is derived from
+     * the parts (`jointAttachment`), and a joint that no longer holds is replaced by its descriptor in the document that is
+     * installed. Parts are shared by reference and the same object comes back when nothing retires.
+     */
+    const installed = retireDetachedJoints(document, revision);
     this.documents.set(expected.documentId, {
-      document,
+      document: installed,
       revision,
-      byteLength: documentByteLength(document),
+      byteLength: documentByteLength(installed),
     });
     return { documentId: expected.documentId, revision };
   }

@@ -8,6 +8,7 @@ import {
 } from './mesh';
 import { placementReversesOrientation } from './placement';
 import type { MeshBounds, Vector3Tuple } from './analysis';
+import type { JointRecord } from './joint';
 
 /**
  * The canonical multi-part geometry document.
@@ -169,6 +170,14 @@ export interface GeometryDocument {
   readonly unit?: LengthUnit;
   /** Ordered. Order is the source's order and is preserved on export. */
   readonly parts: readonly GeometryPart[];
+  /**
+   * The editable connectors this session made (Stage EC-1), or a bounded trail of the ones that stopped being usable.
+   *
+   * SESSION STATE, NOT FILE CONTENT. No reader produces it and no writer reads it: an export carries the pieces as plain
+   * geometry, exactly as before. Whether a record is still usable is DERIVED from the parts (`jointAttachment`), never read
+   * from a flag, because every operation that replaces a part spreads the previous document and would carry a flag along.
+   */
+  readonly joints?: readonly JointRecord[];
 }
 
 /**
