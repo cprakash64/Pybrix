@@ -50,6 +50,8 @@ const AXES = {
   u: [0, 1, 0] as [number, number, number],
   v: [0, 0, 1] as [number, number, number],
   normal: [1, 0, 0] as [number, number, number],
+  origin: [0, 0, 0] as [number, number, number],
+  scenePerCoordinate: 1,
 };
 const CUT_FACE = { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE, axes: AXES };
 const joint = (diameterMm = 4, maleSide: 'A' | 'B' = 'A'): JointDescriptor => ({
@@ -351,6 +353,8 @@ describe('the axes of the cut, named against the model', () => {
               u: [Math.sin(t), Math.cos(t), 0],
               v: [0, 0, 1],
               normal: [Math.cos(t), -Math.sin(t), 0],
+              origin: [0, 0, 0],
+              scenePerCoordinate: 1,
             },
           },
         },

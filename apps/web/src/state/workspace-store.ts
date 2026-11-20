@@ -1029,6 +1029,11 @@ export interface WorkspaceState {
    * preview changes, and a toggle must not cause one. It touches no document, revision, history or worker.
    */
   readonly previewExploded: boolean;
+  /**
+   * Whether the connector editor is open on a cut, which is when that cut is marked on the model. A purely visual request kept apart from
+   * the joints: it touches no document, revision, history or worker, and the editor, which sets it, clears it when it goes.
+   */
+  readonly cutMarkShown: boolean;
   readonly splitPlane:
     | {
         readonly origin: readonly [number, number, number];
@@ -1170,6 +1175,7 @@ const INITIAL_STATE: WorkspaceState = {
   activePartId: undefined,
   splitPreview: undefined,
   previewExploded: false,
+  cutMarkShown: false,
   splitPlane: undefined,
   texturePreview: undefined,
   textureSelection: undefined,
@@ -1391,6 +1397,11 @@ export class WorkspaceStore {
       splitPreview: { source, render, parts, ...(assembly ? { assembly } : {}) },
     });
     return true;
+  }
+
+  /** Asks for the cut of the connector editor to be marked on the model, or not. Presentation only. */
+  public setCutMarkShown(shown: boolean): void {
+    if (this.state.cutMarkShown !== shown) this.update({ cutMarkShown: shown });
   }
 
   /** Shows the split preview exploded or assembled. Presentation only: nothing but this flag changes. */

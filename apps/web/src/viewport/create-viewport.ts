@@ -34,6 +34,7 @@ import {
   type OverlaySamples,
   type OverlayVisibility,
 } from './create-overlays';
+import { createCutMark, type CutMarkData, type CutMarkHandle } from './create-cut-mark';
 import {
   createChangeOverlays,
   type ChangeOverlayHandle,
@@ -238,6 +239,11 @@ export interface ViewportHandle {
   ): void;
   /** Colours the pieces of a split as Piece A and Piece B. `undefined` restores one colour. */
   setConnectorGuide(points: readonly (readonly [number, number, number])[] | undefined): void;
+  /**
+   * Marks a cut where it is: its outline on each face, a ring for each connector being placed and an arrow along each of its two
+   * directions, all in SCENE coordinates. Display only; `undefined` clears it. It never moves the camera.
+   */
+  setCutMark(data: CutMarkData | undefined): void;
   setPartTints(tints: ReadonlyMap<string, ViewportPartTint> | undefined): void;
   /**
    * Hides the named parts (the other piece of a split preview). Presentation
@@ -498,6 +504,19 @@ export function createViewport(
       marker.scale.setScalar((currentModel?.radius ?? 1) * 0.035);
     }
     canvas.dataset.connectorGuide = points?.length === 2 ? 'paired' : 'none';
+    render();
+  };
+  const cutMark: CutMarkHandle = createCutMark();
+  modelGroup.add(cutMark.group);
+  const setCutMark = (data: CutMarkData | undefined): void => {
+    cutMark.setMark(data, currentModel?.radius ?? 1);
+    canvas.dataset.cutMark = data === undefined ? 'none' : 'shown';
+    canvas.dataset.cutMarkOutlineSegments = String(cutMark.counts.outline);
+    canvas.dataset.cutMarkPinSegments = String(cutMark.counts.pins);
+    canvas.dataset.cutMarkArrowSegments = String(cutMark.counts.arrows);
+    canvas.dataset.cutMarkLabels = String(cutMark.counts.labels);
+    canvas.dataset.cutMarkFirstPin =
+      cutMark.firstRingCentre?.map((value) => value.toFixed(3)).join(',') ?? '';
     render();
   };
   scene.add(modelGroup);
@@ -1510,6 +1529,7 @@ export function createViewport(
     setSectionOutline,
     setPartTints,
     setConnectorGuide,
+    setCutMark,
     setHiddenParts,
     setTextureFootprint,
     setOverlays,
@@ -1564,6 +1584,7 @@ export function createViewport(
       // Shared by every part and every model that was ever loaded, so it is
       // released with the viewport rather than with any one mesh.
       surfaceMaterial.dispose();
+      cutMark.dispose();
       overlays.dispose();
       changeOverlays.dispose();
       holeFillOverlays.dispose();

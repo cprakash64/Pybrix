@@ -155,18 +155,28 @@ export function describeCutAxes(joint: ConnectorJoint): JointCutAxes | undefined
   const linear: PartTransform = [t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], 0, 0, 0];
   const inScene = (
     local: readonly [number, number, number],
-  ): readonly [number, number, number] | undefined => {
+  ):
+    | { readonly direction: readonly [number, number, number]; readonly length: number }
+    | undefined => {
     const [x, y, z] = applyPartTransform(linear, local[0], local[1], local[2]);
     const length = Math.hypot(x, y, z);
     return length === 0 || !Number.isFinite(length)
       ? undefined
-      : [x / length, y / length, z / length];
+      : { direction: [x / length, y / length, z / length], length };
   };
   const u = inScene(cut.interface.frame.U);
   const v = inScene(cut.interface.frame.V);
   const normal = inScene(cut.interface.frame.N);
   if (u === undefined || v === undefined || normal === undefined) return undefined;
-  return Object.freeze({ u, v, normal });
+  const [ox, oy, oz] = cut.interface.outputPlaneOrigin;
+  return Object.freeze({
+    u: u.direction,
+    v: v.direction,
+    normal: normal.direction,
+    origin: applyPartTransform(t, ox, oy, oz),
+    // a similarity scales every direction alike: one scene length per unit of the cut's own axes
+    scenePerCoordinate: u.length,
+  });
 }
 
 /**

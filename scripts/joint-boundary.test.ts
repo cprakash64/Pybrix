@@ -293,6 +293,7 @@ describe('a connector is placed by looking at the cut, and the picture judges no
     expect(rel(reading)).toEqual(
       [
         'apps/web/src/components/ConnectorEditor.tsx',
+        'apps/web/src/state/cut-mark-presentation.ts',
         'apps/web/src/state/use-connector-edit.ts',
       ].sort(),
     );
@@ -368,5 +369,42 @@ describe('the axes of a cut are named in one place and only read by the editor (
     expect(read(join(ROOT, 'apps/web/src/components/CutFace.tsx'))).not.toMatch(
       /cut-axes-presentation/,
     );
+  });
+});
+
+describe("a cut is marked on the model from the worker's statement of where it is, and the mark decides nothing (Stage EC-9)", () => {
+  const page = under('apps/web/src/').filter(
+    (file) => !relative(ROOT, file).startsWith(`apps${sep}web${sep}src${sep}workers${sep}`),
+  );
+  it('builds the mark in the viewport panel alone and hands it to the viewport in one place', () => {
+    const building = page.filter((file) => /\bbuildCutMark\(/.test(read(file)));
+    expect(rel(building)).toEqual(
+      [
+        'apps/web/src/components/ViewportPanel.tsx',
+        'apps/web/src/state/cut-mark-presentation.ts',
+      ].sort(),
+    );
+    const drawing = page.filter((file) => read(file).includes('.setCutMark('));
+    expect(rel(drawing)).toEqual(['apps/web/src/components/ViewportPanel.tsx']);
+  });
+  it('asks for the mark from the editor alone, through the store, and clears the request when the editor goes', () => {
+    const asking = page.filter((file) => read(file).includes('.setCutMarkShown('));
+    expect(rel(asking)).toEqual(['apps/web/src/components/ConnectorEditor.tsx']);
+    const editor = read(join(ROOT, 'apps/web/src/components/ConnectorEditor.tsx'));
+    expect(editor).toMatch(/store\.setCutMarkShown\(false\)/);
+  });
+  it('holds no mesh, placement or interface: the viewport helper imports three alone and the presentation only types and the labels', () => {
+    const helper = read(join(ROOT, 'apps/web/src/viewport/create-cut-mark.ts'));
+    expect([...helper.matchAll(/from '([^']+)'/g)].map((m) => m[1])).toEqual(['three']);
+    const presentation = read(join(ROOT, 'apps/web/src/state/cut-mark-presentation.ts'));
+    const imports = presentation.split('\n').filter((l) => l.startsWith('import '));
+    expect(imports).toEqual([
+      "import type { JointCutAxes, JointDescriptor } from '@cadfixer/geometry-runtime';",
+      "import { labelCutAxes } from './cut-axes-presentation';",
+    ]);
+  });
+  it("places a point of the cut by the worker's origin, axes and scale, and never by a transform of its own", () => {
+    const presentation = read(join(ROOT, 'apps/web/src/state/cut-mark-presentation.ts'));
+    expect(presentation).not.toMatch(/PartTransform|applyPartTransform|transform\b/);
   });
 });

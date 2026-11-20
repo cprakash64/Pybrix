@@ -1118,6 +1118,35 @@ describe('the face of a cut is described to the page, for a view it draws', () =
     }
   });
 
+  it("puts a point of the cut in the scene: a pin's centre is the origin plus the scale times its own (u, v) along the axes", async () => {
+    for (const transform of [
+      IDENTITY_PART_TRANSFORM,
+      // quarter turn about z, scaled by two (row-vector convention), and moved
+      [0, -2, 0, 2, 0, 0, 0, 0, 2, 5, -3, 7] as PartTransform,
+    ]) {
+      residentDocuments.releaseAll();
+      const split = await splitCube({ connector: PIN, unit: 'millimeter', transform });
+      const joint = onlyJoint(split.handle);
+      const axes = joint.cutFace?.axes;
+      const [pin] = joint.connector?.pins ?? [];
+      if (axes === undefined || pin === undefined) throw new Error('expected axes and a pin');
+      const at = (u: number, v: number): number[] =>
+        [0, 1, 2].map(
+          (k) =>
+            (axes.origin[k] ?? 0) +
+            axes.scenePerCoordinate * (u * (axes.u[k] ?? 0) + v * (axes.v[k] ?? 0)),
+        );
+      at(pin.u, pin.v).forEach((value, k) => {
+        expect(pin.center[k]).toBeCloseTo(value, 4);
+      });
+      // the scale is the placement's: 1 for the identity, 2 for the scaled one
+      expect(axes.scenePerCoordinate).toBeCloseTo(
+        transform === IDENTITY_PART_TRANSFORM ? 1 : 2,
+        12,
+      );
+    }
+  });
+
   it("describes a plain cut's face too, since connectors can be added to it", async () => {
     const split = await splitCube({ connector: { kind: 'none' }, unit: 'millimeter' });
     const joint = onlyJoint(split.handle);

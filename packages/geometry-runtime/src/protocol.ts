@@ -1141,6 +1141,10 @@ export interface JointCutAxes {
   readonly u: readonly [number, number, number];
   readonly v: readonly [number, number, number];
   readonly normal: readonly [number, number, number];
+  /** Where the cut's own origin (`u = v = 0`) is in the scene. */
+  readonly origin: readonly [number, number, number];
+  /** Scene lengths in one unit of the cut's own axes, so a point `(u, v)` of the cut is `origin + scenePerCoordinate × (u·U + v·V)`. */
+  readonly scenePerCoordinate: number;
 }
 
 /** The outline of a cut in its own axes: closed loops, each a flat `[u0, v0, u1, v1, …]`, material inside an OUTER loop and not inside a HOLE. */

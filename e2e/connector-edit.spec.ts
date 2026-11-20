@@ -546,3 +546,107 @@ test('the axis names on the cut are the directions the pieces move a pin in, and
   if (side === null) throw new Error(`no side named in "${sentence}"`);
   expect(side[1] === '+' ? 1 : -1).toBe(Math.sign(crossZ));
 });
+
+/*
+ * RELEASE 2, STAGE EC-9 — THE CUT MARKED ON THE MODEL. While the editor is open the viewport draws the cut's outline, a ring for each
+ * connector of the draft and an arrow along each direction. Judged two ways that trust nothing the product says about itself: the drawn
+ * ring is read from the canvas's own record of what it drew, and a move of it is compared with where the EXPORTED FILES put the pin.
+ */
+const marked = (page: Page): ReturnType<Page['locator']> => page.locator('canvas[data-cut-mark]');
+async function firstRing(page: Page): Promise<[number, number, number]> {
+  const text = await marked(page).getAttribute('data-cut-mark-first-pin');
+  const values = (text ?? '').split(',').map(Number);
+  if (values.length !== 3 || values.some((v) => !Number.isFinite(v)))
+    throw new Error(`no ring drawn: "${text ?? ''}"`);
+  return [values[0] ?? 0, values[1] ?? 0, values[2] ?? 0];
+}
+
+test('the cut is drawn on the model while the editor is open, with a ring for each connector of the draft', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await open(page);
+  await splitWithDefaultPin(page);
+  await expect(marked(page)).toHaveAttribute('data-cut-mark', 'shown');
+  // the faces: one when the pieces sit together, two when they are drawn apart. A ring and its socket
+  // are 64 segments a connector a face; each arrow is a shaft and two head strokes
+  const faces = (await marked(page).getAttribute('data-exploded-parts')) === '0' ? 1 : 2;
+  // as many outline edges as the picture's outline has points (it closes each loop), on every face
+  const path = (await page.locator('.cut-face__outline').getAttribute('d')) ?? '';
+  const edges = (path.match(/[ML]/g) ?? []).length;
+  expect(edges).toBeGreaterThanOrEqual(4);
+  await expect(marked(page)).toHaveAttribute(
+    'data-cut-mark-outline-segments',
+    String(edges * faces),
+  );
+  await expect(marked(page)).toHaveAttribute('data-cut-mark-pin-segments', String(64 * faces));
+  await expect(marked(page)).toHaveAttribute('data-cut-mark-arrow-segments', '6');
+  await expect(marked(page)).toHaveAttribute('data-cut-mark-labels', '2');
+
+  // the draft is what is drawn: a second connector, then none
+  await page.getByTestId('connector-edit-add').click();
+  await expect(marked(page)).toHaveAttribute('data-cut-mark-pin-segments', String(128 * faces));
+  await page.getByTestId('connector-position-remove-1').click();
+  await page.getByTestId('connector-position-remove-0').click();
+  await expect(marked(page)).toHaveAttribute('data-cut-mark-pin-segments', '0');
+  await expect(marked(page)).toHaveAttribute('data-cut-mark', 'shown');
+});
+
+test('the mark follows the editor: gone while its section is closed, back when it is opened', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await open(page);
+  await splitWithDefaultPin(page);
+  await expect(marked(page)).toHaveAttribute('data-cut-mark', 'shown');
+  // Convert shows the section collapsed: nothing is marked until it is opened
+  await page.getByTestId('workflow-convert').click();
+  await expect(marked(page)).toHaveAttribute('data-cut-mark', 'none');
+  await page
+    .getByRole('region', { name: 'Change connectors' })
+    .getByRole('button', { name: /Change connectors/ })
+    .click();
+  await expect(marked(page)).toHaveAttribute('data-cut-mark', 'shown');
+  await page.getByTestId('workflow-texture').click();
+  await expect(marked(page)).toHaveAttribute('data-cut-mark', 'none');
+  await page.getByTestId('workflow-split').click();
+  await expect(marked(page)).toHaveAttribute('data-cut-mark', 'shown');
+});
+
+test('a ring moved in the draft moves on the model as the files will: by the same vector', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await open(page);
+  await splitWithDefaultPin(page);
+  const [fileBefore] = await allConnectorCentres(page);
+  if (fileBefore === undefined) throw new Error('the split wrote no connector');
+  const drawnBefore = await firstRing(page);
+
+  const u0 = Number(await page.getByTestId('connector-position-u-0').inputValue());
+  const v0 = Number(await page.getByTestId('connector-position-v-0').inputValue());
+  await page.getByTestId('connector-position-u-0').fill(String(u0 + 3));
+  await page.getByTestId('connector-position-v-0').fill(String(v0 + 4));
+  await expect
+    .poll(async () => {
+      const now = await firstRing(page);
+      return Math.hypot(now[0] - drawnBefore[0], now[1] - drawnBefore[1], now[2] - drawnBefore[2]);
+    })
+    .toBeCloseTo(5, 1);
+  const drawnAfter = await firstRing(page);
+
+  await page.getByTestId('connector-edit-check').click();
+  await expect(page.getByTestId('connector-edit-preview-label')).toHaveText(
+    'Preview — not applied',
+    { timeout: 60_000 },
+  );
+  await page.getByTestId('connector-edit-apply').click();
+  await expect(page.getByTestId('connector-edit-applied')).toBeVisible({ timeout: 60_000 });
+  const [fileAfter] = await allConnectorCentres(page);
+  if (fileAfter === undefined) throw new Error('the edit wrote no connector');
+
+  // the drawn ring moved by the vector the file's pin moved by, in x and y, and not at all along the cut's normal (z)
+  expect(drawnAfter[0] - drawnBefore[0]).toBeCloseTo(fileAfter[0] - fileBefore[0], 1);
+  expect(drawnAfter[1] - drawnBefore[1]).toBeCloseTo(fileAfter[1] - fileBefore[1], 1);
+  expect(drawnAfter[2] - drawnBefore[2]).toBeCloseTo(0, 1);
+});

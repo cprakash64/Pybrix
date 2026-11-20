@@ -1,4 +1,5 @@
 import { type AssemblyPresentation } from '../state/assembly-presentation';
+import { buildCutMark } from '../state/cut-mark-presentation';
 import { connectorAtPoint, connectorPairsOf, currentJoints } from '../state/joint-presentation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -18,6 +19,7 @@ import { overlayForIssue } from '../state/repair-issues';
 import { useIssueNavigation } from '../state/use-issue-navigation';
 import {
   useAutoSplitControls,
+  useConnectorEditControls,
   useSplitControls,
   useTextureControls,
 } from '../state/workflow-controllers';
@@ -81,6 +83,7 @@ export function ViewportPanel(): ReactNode {
     textureSelection,
     selectedWorkflow,
     frameRequest,
+    cutMarkShown,
   } = useWorkspaceState();
   const navigation = useIssueNavigation();
   const split = useSplitControls();
@@ -342,6 +345,38 @@ export function ViewportPanel(): ReactNode {
       : undefined;
     viewportRef.current?.setConnectorGuide(points);
   }, [assembly, assemblyCurrent, joints, model]);
+
+  /*
+   * THE CUT OF THE CONNECTOR EDITOR, MARKED ON THE MODEL (Stage EC-9) while the editor is open: its outline on each face, the connectors
+   * of the draft as rings (so a drag in the picture moves one here as it is dragged) and an arrow along each of its two directions. Built
+   * from what the worker said about where the cut is and nothing else; it decides nothing and never moves the camera.
+   */
+  const connectorEdit = useConnectorEditControls();
+  const { joint: editedJoint, draft: editedDraft } = connectorEdit;
+  useEffect(() => {
+    const offsetOf = (id: string): [number, number, number] => {
+      const offset =
+        assemblyCurrent && assembly?.exploded
+          ? assembly.offsets.find((p) => p.partId === id)?.offset
+          : undefined;
+      return [offset?.[0] ?? 0, offset?.[1] ?? 0, offset?.[2] ?? 0];
+    };
+    const mark =
+      cutMarkShown && editedJoint !== undefined
+        ? buildCutMark(
+            editedJoint,
+            editedDraft === undefined
+              ? undefined
+              : {
+                  pins: editedDraft.pins,
+                  diameterMm: editedDraft.diameterMm,
+                  clearanceMm: editedDraft.clearanceMm,
+                },
+            { a: offsetOf(editedJoint.aPartId), b: offsetOf(editedJoint.bPartId) },
+          )
+        : undefined;
+    viewportRef.current?.setCutMark(mark);
+  }, [assembly, assemblyCurrent, cutMarkShown, editedDraft, editedJoint, model]);
 
   /**
    * Points the overlay, preview and change-overlay frame at the active part.

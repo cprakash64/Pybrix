@@ -1078,7 +1078,7 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, EC-7 every workspace, EC-8 axis labels, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, EC-7 every workspace, EC-8 axis labels, EC-9 cut marked on the model, ADR 0033)
 
 EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
 EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
@@ -1194,6 +1194,17 @@ two numbers to type, and add and remove for one connector.
   nothing is decided by them. The e2e reads each claim against the exported files: a pin moved across by 5 mm and along by 4 mm moves
   that far toward the labelled directions, and the viewer side matches the sign of the two moves' cross product. Reversing the across
   label fails it.
+- **THE CUT IS MARKED ON THE MODEL WHILE THE EDITOR IS OPEN (EC-9), FROM THE WORKER'S STATEMENT OF WHERE IT IS.** `cutFace.axes` also carries the
+  cut's origin in the scene and `scenePerCoordinate`, so a point `(u, v)` of the cut is `origin + scale × (u·U + v·V)` and the outline the
+  picture draws can be laid on each piece's face by arithmetic alone (`cut-mark-presentation.ts`; no mesh, interface or placement on the
+  page). The real kernel holds that mapping to a pin's scene centre under an identity and a turned, scaled, moved placement. The viewport
+  (`create-cut-mark.ts`, three alone, in the model's group so the centring offset applies, drawn over the model) shows the outline, a pin
+  ring and a socket ring for every connector of the DRAFT (a drag in the picture moves one on the model as it is dragged) and an arrow
+  along each direction named by the model axis. It is requested by the editor through `store.setCutMarkShown` while its section is open on
+  a cut that can be placed, and withdrawn when it closes or goes; faces are drawn once when the pieces sit together and once each when exploded.
+  Display only: nothing is picked, exported or decided from it, and the camera never moves. The e2e compares the drawn ring's movement with
+  where the EXPORTED FILES put the pin (the same vector), reading the ring from the canvas's record of what it drew; swapping the axes in
+  the mapping fails it.
 - **THE EDITOR IS ONE CONTROLLER DRAWN IN ONE WORKSPACE AT A TIME (EC-7).** `useConnectorEdit` runs once, in `ConnectorEditControlsProvider`
   (`workflow-controllers.tsx`), so the draft, the candidate and the undo belong to the application. Repair, Convert, Split & Connect
   and Surface Texture each mount `ConnectorEditorSlot`, which draws the editor only while its workspace is the one shown: the workspaces

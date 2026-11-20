@@ -72,7 +72,7 @@ const cross = (
   a[0] * b[1] - a[1] * b[0],
 ];
 
-export function labelCutAxes(axes: JointCutAxes): CutAxisLabels {
+export function labelCutAxes(axes: Pick<JointCutAxes, 'u' | 'v' | 'normal'>): CutAxisLabels {
   const [x, y, z] = cross(axes.u, axes.v);
   const handed = x * axes.normal[0] + y * axes.normal[1] + z * axes.normal[2];
   const normal = nameDirection(axes.normal);

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   CONNECTOR_EDIT_COPY,
   connectorLimitSentence,
@@ -6,7 +6,7 @@ import {
 } from '../state/connector-edit-presentation';
 import { ConnectorEditPhase } from '../state/use-connector-edit';
 import { useConnectorEditControls } from '../state/workflow-controllers';
-import { useWorkspaceState } from '../state/store-context';
+import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
 import { DEFAULT_WORKSPACE } from './shell/workspaces';
 import { WorkflowId } from '../state/workflows';
 import { CutFace } from './CutFace';
@@ -42,6 +42,18 @@ export function ConnectorEditor({
   // a change to undo, so the sentence that says what was done and its Undo are never behind a closed heading. Kept HERE, not in the
   // section, because the section is absent for the moment after an apply while the list of connectors is read again.
   const [chosenOpen, setChosenOpen] = useState<boolean | undefined>(undefined);
+  const store = useWorkspaceStore();
+  const open = chosenOpen ?? (defaultOpen || edit.undoable);
+  // While the editor is open on a cut that can be placed in the scene, that cut is marked on the model (Stage EC-9). The request is the
+  // store's, so the viewport reads it without knowing about the editor, and it is withdrawn when the editor closes or goes.
+  const marking =
+    open && joint !== undefined && draft !== undefined && joint.cutFace?.axes !== undefined;
+  useEffect(() => {
+    store.setCutMarkShown(marking);
+    return (): void => {
+      store.setCutMarkShown(false);
+    };
+  }, [store, marking]);
   const busy =
     edit.phase === ConnectorEditPhase.Checking || edit.phase === ConnectorEditPhase.Applying;
 
@@ -76,11 +88,7 @@ export function ConnectorEditor({
   ];
 
   return (
-    <PanelSection
-      title={CONNECTOR_EDIT_COPY.section}
-      open={chosenOpen ?? (defaultOpen || edit.undoable)}
-      onOpenChange={setChosenOpen}
-    >
+    <PanelSection title={CONNECTOR_EDIT_COPY.section} open={open} onOpenChange={setChosenOpen}>
       <div data-testid="connector-editor">
         <p className="convert-workspace__note">{CONNECTOR_EDIT_COPY.intro}</p>
         {outline === undefined ? (
