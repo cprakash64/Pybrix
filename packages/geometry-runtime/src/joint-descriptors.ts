@@ -5,6 +5,7 @@ import {
   type CanonicalMesh,
   type GeometryDocument,
 } from '@cadfixer/mesh-core';
+import { jointSpecDigest } from './connector-rebuild';
 import type { JointDescriptor } from './protocol';
 
 /**
@@ -42,6 +43,22 @@ export function describeJoints(document: GeometryDocument): readonly JointDescri
         ...(attachment.attached ? {} : { reason: attachment.reason }),
         pinCount: record.connector?.elements.length ?? 0,
         retainedBytes,
+        ...(attachment.attached ? { specDigest: jointSpecDigest(record) } : {}),
+        ...(attachment.attached && record.connector !== undefined
+          ? {
+              connector: {
+                maleSide: record.connector.maleSide,
+                pins: record.connector.elements.map((pin) => ({
+                  pinId: pin.pinId,
+                  u: pin.site.u,
+                  v: pin.site.v,
+                  diameterMm: pin.diameterMm,
+                  depthMm: pin.depthMm,
+                  clearanceMm: pin.clearanceMm,
+                })),
+              },
+            }
+          : {}),
       }),
     );
   }

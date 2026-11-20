@@ -326,6 +326,8 @@ function jointProblem(joint: ConnectorJoint): string | undefined {
     !positiveFinite(frame.mmPerCoordinate)
   )
     return 'a joint has an unusable physical frame';
+  if (!Number.isSafeInteger(joint.nextPinOrdinal) || joint.nextPinOrdinal < 1)
+    return 'a joint has no next pin ordinal';
   const { authority } = joint;
   if (authority.provenanceSHA.length === 0) return 'a joint has no interface identity';
   if (!Number.isSafeInteger(authority.retainedBytes) || authority.retainedBytes < 0)

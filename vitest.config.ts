@@ -54,7 +54,10 @@ export default defineConfig({
           include: ['apps/web/src/**/*.test.{ts,tsx}'],
           // `*.node.test.ts` runs in the project below instead; see there for
           // why the WebAssembly kernel cannot be instantiated under jsdom.
-          exclude: ['apps/web/src/workers/node-tests/**'],
+          exclude: [
+            'apps/web/src/workers/node-tests/**',
+            'apps/web/src/workers/node-integration-tests/**',
+          ],
           setupFiles: ['./apps/web/vitest.setup.ts'],
         },
       },
@@ -80,7 +83,10 @@ export default defineConfig({
           testTimeout: 15000,
           name: 'worker-kernel',
           environment: 'node',
-          include: ['apps/web/src/workers/node-tests/**/*.test.ts'],
+          include: [
+            'apps/web/src/workers/node-tests/**/*.test.ts',
+            'apps/web/src/workers/node-integration-tests/**/*.test.ts',
+          ],
           /*
            * THE EMSCRIPTEN GLUE IS LOADED BY NODE, NOT BY VITEST'S TRANSFORM.
            *

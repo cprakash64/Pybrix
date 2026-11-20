@@ -4,7 +4,10 @@ import {
   computeBounds,
   documentTriangleCount,
   documentVertexCount,
+  jointRetainedBytes,
   meshByteLength,
+  retireDetachedJoints,
+  retiredByInstall,
   triangleCount,
   withPartMesh,
 } from '@cadfixer/mesh-core';
@@ -47,6 +50,7 @@ import {
   describeParts,
   holeFillCandidates,
   geometryEdits,
+  jointEdits,
   splitCandidates,
   repairCandidates,
   repairHistory,
@@ -823,7 +827,14 @@ export function createRepairCommitHandler(
     }
     const previousMesh = currentPart.mesh;
 
-    const successor = successorDocument(source, repairedPart, prepared, 'repair/commit');
+    // RETIRE BEFORE REPORTING (Stage EC-3). A repair replaces a mesh, so a connector joint over this part is no longer attached and
+    // the resident store retires it when it installs the document. Everything reported below is built from the document AS IT WILL
+    // BE INSTALLED, so `residentBytes` does not count geometry about to be released. The store retires again at the same revision
+    // and finds nothing left to do: it installs this very object.
+    const successor = retireDetachedJoints(
+      successorDocument(source, repairedPart, prepared, 'repair/commit'),
+      payload.expectedSource.revision + 1,
+    );
 
     /* ---- EVERYTHING THAT CAN FAIL, BEFORE ANYTHING CHANGES ---- */
     const render = work.buildRenderSnapshot(prepared);
@@ -837,6 +848,14 @@ export function createRepairCommitHandler(
       sourceFaceCount: triangleCount(previousMesh),
       sourceIndexCount: previousMesh.indices.length,
       byteLength: meshByteLength(previousMesh),
+      // A change that retires a joint keeps the document it came from, so Undo can bring the joint back (Stage EC-3). The mesh alone
+      // would restore the part and leave a descriptor where the joint was. What this adds is the joint's retained geometry.
+      ...(retiredByInstall(source, successor) > 0
+        ? {
+            previousDocument: source,
+            byteLength: meshByteLength(previousMesh) + jointRetainedBytes(source),
+          }
+        : {}),
     };
 
     // Reported BEFORE the swap and worded for what is true at this moment.
@@ -1028,8 +1047,12 @@ export function createRepairUndoHandler(work: RepairUndoWork): OperationHandler<
       });
     }
 
-    const successor =
-      inverse.previousDocument ?? successorDocument(current, repairedPart, restored, 'repair/undo');
+    // The document that will be installed, joints retired, so what is reported is what is held (Stage EC-3). A retained previous
+    // document keeps its joints attached to the meshes it was restored with.
+    const successor = retireDetachedJoints(
+      inverse.previousDocument ?? successorDocument(current, repairedPart, restored, 'repair/undo'),
+      payload.handle.revision + 1,
+    );
 
     /*
      * ---- EVERYTHING THAT CAN FAIL, BEFORE ANYTHING CHANGES ---- Stage 4B-1B2-R2.
@@ -1070,6 +1093,7 @@ export function createRepairUndoHandler(work: RepairUndoWork): OperationHandler<
     holeFillCandidates.releaseDocument(next.documentId);
     geometryEdits.releaseDocument(next.documentId);
     splitCandidates.releaseDocument(next.documentId);
+    jointEdits.releaseDocument(next.documentId);
 
     return Promise.resolve({
       value: {

@@ -125,6 +125,7 @@ function jointDocument(
     frame: { unit: 'millimeter', mmPerUnit: 1, placementScale: 1, mmPerCoordinate: 1 },
     authority: { provenanceSHA: 'bench', retainedBytes: authorityBytes, detail: { provenance } },
     connector: undefined,
+    nextPinOrdinal: 1,
   };
   return { document: { unit: 'millimeter', parts: [a, b], joints: [joint] }, authorityBytes };
 }

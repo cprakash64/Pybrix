@@ -27,6 +27,14 @@ export type {
   ModelReleaseResult,
   PartDescriptor,
   JointDescriptor,
+  JointListPayload,
+  JointListResult,
+  JointProposePayload,
+  JointProposeResult,
+  JointCommitPayload,
+  JointCommitResult,
+  JointDiscardPayload,
+  JointDiscardResult,
   PartRenderSnapshot,
   RenderSnapshot,
   RepairCandidatePayload,
@@ -131,6 +139,13 @@ export type { MeshBounds } from '@cadfixer/mesh-core';
 export type { GeometryDocument, GeometryPart, PartId, PartTransform } from '@cadfixer/mesh-core';
 
 export { describeJoints } from './joint-descriptors';
+export { JointEditRefusal, JointEditStore, sameSpec, specFromEdit } from './joint-edits';
+export type {
+  JointEditCandidateHandle,
+  JointEditRequest,
+  JointEditSession,
+  JointEditSummary,
+} from './joint-edits';
 export {
   documentByteLength,
   isDocument,
@@ -254,13 +269,15 @@ export type {
 export type { ConnectorManifest } from './connector-plan';
 export {
   jointAuthorityOf,
+  jointSpecDigest,
   pinCutOf,
+  recordJointFromSplit,
   pinCutOfJoint,
   pinCutRetainedBytes,
   rebuildJointConnectors,
   siteOnInterface,
 } from './connector-rebuild';
-export type { JointRebuild } from './connector-rebuild';
+export type { JointNotRecorded, JointRebuild, JointRecording } from './connector-rebuild';
 export type { PinCut } from './split-connectors';
 export type {
   CutSurfaceSummary,

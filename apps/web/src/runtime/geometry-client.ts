@@ -45,6 +45,12 @@ import {
   type SplitCreateResult,
   type SplitCommitResult,
   type SplitDiscardResult,
+  type JointCommitResult,
+  type JointDiscardResult,
+  type JointEditCandidateHandle,
+  type JointEditRequest,
+  type JointListResult,
+  type JointProposeResult,
   type SurfaceTextureRequest,
   type TextureCreateResult,
   type TextureLayoutResult,
@@ -721,6 +727,49 @@ export class GeometryClient {
     if (this.lost)
       throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
     return this.coordinator.dispatch('split/discard', { candidate }, {});
+  }
+
+  /** The connector joints of a document, as descriptors. A READ; the document does not change. */
+  public listJoints(source: DocumentHandle): OperationHandle<JointListResult> {
+    return this.coordinator.dispatch('joint/list', { source }, {});
+  }
+
+  /**
+   * Builds a CANDIDATE edit of one joint's connectors. Applies nothing: the page receives a disposable preview and a candidate handle,
+   * and the geometry stays in the worker.
+   */
+  public proposeJointEdit(
+    source: DocumentHandle,
+    jointId: string,
+    expectedSpecDigest: string,
+    edit: JointEditRequest,
+    onProgress?: (update: ProgressUpdate) => void,
+  ): OperationHandle<JointProposeResult> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    return this.coordinator.dispatch(
+      'joint/propose',
+      { source, jointId, expectedSpecDigest, edit },
+      { interruptible: true, ...(onProgress === undefined ? {} : { onProgress }) },
+    );
+  }
+
+  /** Applies one stored candidate. THE ONLY JOINT MUTATION: identifiers cross, and no geometry. */
+  public commitJointEdit(request: {
+    readonly candidate: JointEditCandidateHandle;
+    readonly expectedSource: DocumentHandle;
+    readonly expectedJointId: string;
+    readonly expectedSpecDigest: string;
+  }): OperationHandle<JointCommitResult> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    return this.coordinator.dispatch('joint/commit', request, {});
+  }
+
+  public discardJointEdit(
+    candidate: JointEditCandidateHandle,
+  ): OperationHandle<JointDiscardResult> {
+    return this.coordinator.dispatch('joint/discard', { candidate }, {});
   }
 
   /** Auto Split: six clean views and bounded metadata for a part. A READ; the document does not change. */

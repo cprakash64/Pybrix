@@ -1,11 +1,15 @@
 import { splitBufferSHA, splitMeshSHA } from './split-source-identity';
+import { recordJointFromSplit, type JointNotRecorded } from './connector-rebuild';
 import {
   assertGeometryDocument,
   composePartTransforms,
   documentTriangleCount,
   documentVertexCount,
+  jointRetainedBytes,
+  MAX_JOINT_RETAINED_BYTES,
   meshByteLength,
   partId,
+  retireDetachedJoints,
   type GeometryDocument,
   type GeometryPart,
   type PartId,
@@ -42,6 +46,15 @@ import {
 export interface SplitCandidateHandle extends GeometryEditTicket {
   readonly candidateId: string;
 }
+export type EditableConnectorStatus =
+  | { readonly status: 'RECORDED'; readonly jointId: string; readonly pinCount: number }
+  | {
+      readonly status: 'NOT_RECORDED';
+      readonly reason: JointNotRecorded | 'RETENTION_CEILING';
+      /** Present for `RETENTION_CEILING`: what would have been retained, and the limit, so the refusal names both. */
+      readonly retainedBytes?: number;
+      readonly limit?: number;
+    };
 export interface SplitCandidateSummary {
   readonly candidate: SplitCandidateHandle;
   readonly pieceAId: PartId;
@@ -50,6 +63,11 @@ export interface SplitCandidateSummary {
   readonly metrics: SplitResult['metrics'];
   readonly connector: SplitResult['connector'];
   readonly interface?: SplitResult['interface'];
+  /**
+   * Whether this split leaves an EDITABLE connector joint behind, and if not, why. A split is never refused for it: above the retention
+   * ceiling, on a unit-less model or on a placement that is not a similarity the pieces are exactly what they always were.
+   */
+  readonly editableConnector: EditableConnectorStatus;
   readonly automaticConnector?: SplitResult['automaticConnector'];
   /**
    * The cut's cross-section, from Piece A's cap before any connector: area,
@@ -129,15 +147,23 @@ export class SplitCandidateStore {
   private readonly active = new Map<DocumentId, string>();
   private readonly prepared = new WeakMap<GeometryEditTicket, PreparedPlaneSplitSource>();
   private nextId = 1;
+  private nextJoint = 1;
   private readonly transactions = new Map<string, Transaction>();
   private readonly resident: ResidentDocumentStore;
   private readonly history: RepairHistoryStore;
   private readonly lifecycle: GeometryEditStore;
+  /**
+   * The most an editable joint may retain. A CONSTRUCTION SEAM, not a switch: the application builds one store with the default,
+   * which is derived from the split ceiling, and a test builds another with a small one to prove a split is not refused for it.
+   */
+  private readonly maxJointRetainedBytes: number;
   public constructor(
     resident: ResidentDocumentStore,
     history: RepairHistoryStore,
     lifecycle: GeometryEditStore,
+    maxJointRetainedBytes: number = MAX_JOINT_RETAINED_BYTES,
   ) {
+    this.maxJointRetainedBytes = maxJointRetainedBytes;
     this.resident = resident;
     this.history = history;
     this.lifecycle = lifecycle;
@@ -265,7 +291,47 @@ export class SplitCandidateStore {
       };
     const parts = source.parts.slice();
     parts.splice(index, 1, a, b);
-    const document: GeometryDocument = { ...source, parts };
+    let document: GeometryDocument = { ...source, parts };
+    // THE EDITABLE JOINT (Stage EC-3). Recorded from the split's own result; the pieces are not touched and the split is never
+    // refused for it. The retention ceiling is judged on the document AS IT WILL BE INSTALLED, so a joint this very cut is about to
+    // retire (a cut of a piece that already had connectors) is not counted against the new one.
+    const recording = recordJointFromSplit({
+      jointId: `${ticket.documentId}/joint/${String(this.nextJoint++)}`,
+      unit: source.unit,
+      sourceTransform: original.transform,
+      result,
+      a: { partId: aId, transform: a.transform },
+      b: { partId: bId, transform: b.transform },
+    });
+    let editableConnector: EditableConnectorStatus;
+    if (recording.recorded) {
+      const withJoint: GeometryDocument = {
+        ...document,
+        joints: [...(document.joints ?? []), recording.joint],
+      };
+      const retained = jointRetainedBytes(
+        retireDetachedJoints(withJoint, ticket.sourceRevision + 1),
+      );
+      if (retained > this.maxJointRetainedBytes)
+        editableConnector = {
+          status: 'NOT_RECORDED',
+          reason: 'RETENTION_CEILING',
+          retainedBytes: retained,
+          limit: this.maxJointRetainedBytes,
+        };
+      else {
+        document = withJoint;
+        editableConnector = {
+          status: 'RECORDED',
+          jointId: recording.joint.jointId,
+          pinCount: recording.joint.connector?.elements.length ?? 0,
+        };
+      }
+    } else editableConnector = { status: 'NOT_RECORDED', reason: recording.reason };
+    // The candidate is stored AS IT WILL BE INSTALLED: a joint over the part this cut replaces is retired here, at the revision it will
+    // be installed as, so every figure a commit reports describes the document that is held and not one that still carries geometry
+    // about to be released. Installation retires again at the same revision and installs this very object.
+    document = retireDetachedJoints(document, ticket.sourceRevision + 1);
     assertGeometryDocument(document, 'split candidate');
     if (!this.lifecycle.isCurrent(ticket))
       throw modelUnavailable('The split became stale during validation.');
@@ -295,6 +361,7 @@ export class SplitCandidateStore {
       metrics: result.metrics,
       connector: result.connector,
       ...(result.interface ? { interface: result.interface } : {}),
+      editableConnector,
       ...(result.automaticConnector ? { automaticConnector: result.automaticConnector } : {}),
       section: {
         area: result.cutA.area,

@@ -50,6 +50,7 @@ import { analyseTopology, estimateTopologyWorkspaceBytes } from '@cadfixer/mesh-
 import {
   HoleFillCandidateStore,
   GeometryEditStore,
+  JointEditStore,
   SplitCandidateStore,
   RepairCandidateStore,
   RepairHistoryStore,
@@ -147,6 +148,11 @@ export const splitCandidates = new SplitCandidateStore(
   repairHistory,
   geometryEdits,
 );
+/**
+ * Edits of an existing connector joint (Stage EC-3), on the same authoritative document and the same one-step history. It shares the
+ * document's edit lifecycle with the split store, so a joint edit and a split exclude one another by construction.
+ */
+export const jointEdits = new JointEditStore(residentDocuments, repairHistory, geometryEdits);
 /** Owns the one disposable nested Manifold worker, when a Boolean is active. */
 export const booleanOperations = new BooleanOperationController();
 
@@ -786,6 +792,7 @@ export const modelReleaseHandler: OperationHandler<'model/release'> = (payload) 
   holeFillCandidates.releaseDocument(documentId);
   geometryEdits.releaseDocument(documentId);
   splitCandidates.releaseDocument(documentId);
+  jointEdits.releaseDocument(documentId);
   releaseBoundaryPreview(documentId);
   booleanOperations.cancelDocument(documentId);
   topologyReports.release(documentId);

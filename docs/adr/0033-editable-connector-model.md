@@ -1,6 +1,6 @@
 # ADR 0033 — Editable connector model
 
-Status: accepted for Stage EC-1 (model, lifecycle, accounting) and Stage EC-2 (rebuild engine). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
+Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine) and Stage EC-3 (transactions). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
 
 ## Context
 
@@ -34,6 +34,17 @@ A committed split is two plain parts. Pins and sockets are Boolean results baked
 - **A defect found and closed:** explicit sites bypass the resolver, and nothing else enforced pin spacing, so a rebuild could have built two overlapping pins a split would never place. The spacing rule is now one function used by the resolver and the rebuild (`CONNECTOR_DOES_NOT_FIT`, as the resolver throws it).
 - The refusal codes a rebuild raises are a split's own: socket breakthrough, dimension out of policy, unsupported transform, footprint outside, support insufficient. Rebuild-only refusals are `INVALID_PLAN`: a plan that contradicts what the joint was built from.
 - Observed, not yet acted on: reading an automatic joint's sizes back as millimetres reproduces its coordinates exactly but need not reproduce the planner's round figure (4.799999892711639 for 4.8 in metres). The stage that records a joint should record the planner's own figure for display.
+
+## Stage EC-3 addendum — creation and the transaction
+
+- **A split records the joint** (`recordJointFromSplit`, at candidate resolve) and is never refused for it. Where it cannot, `SplitCandidateSummary.editableConnector` says why, with the metric, value and limit for the retention ceiling.
+- **Operations:** `joint/list` (read), `joint/propose` (builds a candidate by rebuilding from the retained cut; applies nothing), `joint/commit` (the only mutation), `joint/discard`. The edit vocabulary is numbers only: a male side, one size in millimetres, and positions `(u, v)` on the cut; the worker places the points.
+- **Single-phase commit, not the split's two-phase.** The design said to reuse the split transaction. It was not reused: that protocol exists because the page must ADOPT a split (new part ids, new assembly, new view) and can fail part way. An edit keeps every part id, name and placement, so there is nothing to adopt but a revision. It commits in one step like a hole fill; the worker dying between the swap and the reply is the boundary Policy A already covers. This is a deviation from the Stage EC-0 design, made for that reason.
+- **Guards** are the caller's and are read again by the store: document and revision, joint id, spec digest. A refused commit consumes nothing. Everything fallible is built before the swap.
+- **Defect found and closed: undo did not re-attach a joint for a repair, a fill or a generic edit.** Their inverse is mesh-only, so undoing one restored the mesh and left a retired descriptor where the joint was; only a split's and a joint edit's inverse carried `previousDocument`. A change that retires a joint now records the document it came from, and the claim in the Stage EC-1 text ("undo needs no rule of its own") is true for every kind of change.
+- **Defect found and closed: handlers reported `residentBytes` from the successor before the swap**, counting the bases of a joint the install was about to retire. Handlers now retire first.
+- **Unit-less models.** A joint on an STL records the unit the user asserted for the split in its frame; the document never gains one, and an edit sizes from the frame.
+- **A new test project** (`apps/web/src/workers/node-integration-tests`, Node types plus the DOM lib) drives the worker's own handlers on the real kernel. The worker handler modules name `Worker` and `Transferable`, so they compile only with a lib that declares them; the kernel-only project and the WebWorker project are unchanged.
 
 ## Not decided here
 

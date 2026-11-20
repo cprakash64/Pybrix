@@ -54,7 +54,8 @@ export interface JointSide {
 }
 
 /**
- * How a millimetre became a local length when the joint was built. The unit is the model's and the scale is the placement's;
+ * How a millimetre became a local length when the joint was built. The unit is the one the connectors were sized in (the document's
+ * when it states one, else the one asserted at split time) and the scale is the placement's;
  * nothing here converts or rescales anything. `mmPerCoordinate` is stored as the builder computed it and is not re-derived here.
  */
 export interface JointFrame {
@@ -116,6 +117,11 @@ export interface ConnectorJoint {
   readonly authority: JointInterfaceAuthority;
   /** `undefined` is a plain joint. */
   readonly connector: JointConnectorSpec | undefined;
+  /**
+   * The ordinal the next NEW pin is named with (`pin-<n>`). It only ever grows, so a pin id is never reused within a joint, not even
+   * after its pin was removed: an editor that selected a pin cannot find a different one wearing its name.
+   */
+  readonly nextPinOrdinal: number;
 }
 
 export const JointRetirement = {
@@ -207,7 +213,10 @@ export function jointAttachment(
   const b = findPart(document, joint.b.partId);
   if (a === undefined || b === undefined)
     return { attached: false, reason: JointRetirement.PartRemoved };
-  if (document.unit !== joint.frame.unit)
+  // A document that STATES a unit must state the one the connectors were sized in. One that states none (an STL) does not contradict
+  // the frame: the interpretation the connectors were sized under was asserted at split time and lives in the frame, and the document
+  // never gains a unit by it. Editing resolves sizes from the frame, never from the document.
+  if (document.unit !== undefined && document.unit !== joint.frame.unit)
     return { attached: false, reason: JointRetirement.UnitChanged };
   if (
     !samePlacement(a.transform, joint.a.builtTransform) ||
@@ -248,6 +257,18 @@ export function jointRetainedBytes(document: GeometryDocument): number {
     bytes += joint.authority.retainedBytes;
   }
   return bytes;
+}
+
+/**
+ * The live joints of `source` that `installable` no longer holds live: what installing it retires.
+ *
+ * A change that retires a joint must keep the document it came from, or Undo could not bring the joint back: a mesh-only inverse
+ * restores the part's mesh and leaves a descriptor where a joint was. The change records `source` as its inverse's
+ * `previousDocument` exactly when this is non-zero, and the one-undoable-change rule bounds what that retains.
+ */
+export function retiredByInstall(source: GeometryDocument, installable: GeometryDocument): number {
+  const stillLive = new Set(liveJoints(installable).map((joint) => joint.jointId));
+  return liveJoints(source).filter((joint) => !stillLive.has(joint.jointId)).length;
 }
 
 /* ---------------------------------------------------------------- retirement -- */

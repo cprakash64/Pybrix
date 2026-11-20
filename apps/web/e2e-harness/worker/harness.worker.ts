@@ -69,6 +69,12 @@ import {
   setSplitQualificationObserver,
 } from '../../src/workers/split-handlers';
 import {
+  jointCommitHandler,
+  jointDiscardHandler,
+  jointListHandler,
+  jointProposeHandler,
+} from '../../src/workers/joint-handlers';
+import {
   setTextureQualificationObserver,
   textureCreateHandler,
   textureLayoutHandler,
@@ -244,6 +250,11 @@ host.register('split/commit-release', splitCommitReleaseHandler);
 host.register('split/commit-ack', splitCommitAckHandler);
 host.register('split/commit-abort', splitCommitAbortHandler);
 host.register('split/discard', splitDiscardHandler);
+// Editing the connectors of an existing joint (Stage EC-3): the production handlers, unchanged.
+host.register('joint/list', jointListHandler);
+host.register('joint/propose', jointProposeHandler);
+host.register('joint/commit', jointCommitHandler);
+host.register('joint/discard', jointDiscardHandler);
 host.register('texture/create', textureCreateHandler);
 host.register('texture/select', textureSelectHandler);
 host.register('texture/layout', textureLayoutHandler);

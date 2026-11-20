@@ -145,6 +145,7 @@ function jointOf(result: SplitResult, request: PhysicalPinRequest): ConnectorJoi
     },
     authority: jointAuthorityOf(cut),
     connector: { policy: 'units-v2', kind: 'pin', maleSide: request.maleSide, elements: pins },
+    nextPinOrdinal: pins.length + 1,
   };
 }
 const specOf = (joint: ConnectorJoint): JointConnectorSpec => {
@@ -602,6 +603,7 @@ describe('an automatic connector rebuilds to the same bytes too, in every unit',
         },
         authority: jointAuthorityOf(cut),
         connector: undefined,
+        nextPinOrdinal: 1,
       };
       const spec: JointConnectorSpec = {
         policy: 'units-v2',

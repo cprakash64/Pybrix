@@ -1,0 +1,9 @@
+{
+  "//": "NODE-ONLY INTEGRATION TESTS THAT DRIVE THE WORKER'S OWN HANDLERS ON THE REAL KERNEL. They need what `../node-tests` has (Node globals and the WebAssembly kernel, which cannot start under jsdom) AND the worker's handler modules, which name `Worker` and `Transferable` through the Boolean controller and therefore compile only with a lib that declares them. So this project takes the DOM lib on top of Node types, and nothing else is allowed in: worker code itself is still checked under the WebWorker lib in `../tsconfig.json`, and kernel-only tests stay in `../node-tests`.",
+  "extends": "../../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

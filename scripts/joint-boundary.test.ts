@@ -41,20 +41,44 @@ describe('a document is installed in one place, and a joint is retired there', (
       expect(call.slice(-400)).toContain('retireDetachedJoints(');
   });
 
-  it('calls the retirement nowhere else', () => {
+  it('calls the retirement only where a document is about to be installed or reported', () => {
     const calling = everything.filter((file) => read(file).includes('retireDetachedJoints('));
+    // the definition; the install path; and each place that builds a successor document and REPORTS from it before the swap, so what it
+    // reports is the document as it will be held
     expect(rel(calling)).toEqual(
       [
+        'apps/web/src/workers/hole-fill-workflow-handlers.ts',
+        'apps/web/src/workers/repair-handlers.ts',
+        'packages/geometry-runtime/src/geometry-edit.ts',
         'packages/geometry-runtime/src/resident-documents.ts',
+        'packages/geometry-runtime/src/split-candidates.ts',
         'packages/mesh-core/src/joint.ts',
       ].sort(),
     );
   });
 
-  it('builds a joint list in no module but the model and its fixtures', () => {
-    const building = everything.filter((file) => /\bjoints\??:/.test(read(file)));
+  it('every module that installs a successor document retires first, or installs a document whose joints are its own', () => {
+    const installing = everything.filter((file) =>
+      /(?:residentDocuments|this\.resident)\.replace\(/.test(read(file)),
+    );
+    // joint-edits.ts installs a candidate whose only joint change is the successor of a joint that was attached a moment earlier
+    const ownJoints = ['packages/geometry-runtime/src/joint-edits.ts'];
+    for (const file of installing)
+      if (!ownJoints.includes(relative(ROOT, file)))
+        expect(read(file), relative(ROOT, file)).toContain('retireDetachedJoints(');
+  });
+
+  it('builds a joint list in the model, its fixtures and the two modules that create or replace a joint', () => {
+    // a `joints:` field that carries DESCRIPTORS to the page is not a record list, and is the only other one there is
+    const building = everything.filter((file) =>
+      read(file)
+        .split('\n')
+        .some((line) => /\bjoints\??:/.test(line) && !/JointDescriptor|describeJoints/.test(line)),
+    );
     expect(rel(building)).toEqual(
       [
+        'packages/geometry-runtime/src/joint-edits.ts',
+        'packages/geometry-runtime/src/split-candidates.ts',
         'packages/mesh-core/src/document-fixtures.ts',
         'packages/mesh-core/src/document.ts',
         'packages/mesh-core/src/joint.ts',
@@ -86,7 +110,9 @@ describe('a joint is session state: no writer, reader or page ever holds one', (
     }
   });
   it('is unknown to the page: it holds descriptors, never a record', () => {
-    for (const file of under('apps/web/src/'))
+    // the page is everything under `apps/web/src` that is not the worker, which owns the geometry and so names the records it retires
+    const workers = `apps${sep}web${sep}src${sep}workers${sep}`;
+    for (const file of under('apps/web/src/').filter((f) => !relative(ROOT, f).startsWith(workers)))
       expect(read(file), rel([file])[0]).not.toMatch(NAMES);
   });
   it('is unknown to the wire protocol, which carries a descriptor and nothing that holds a mesh', () => {

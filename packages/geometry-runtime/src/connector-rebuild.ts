@@ -1,16 +1,28 @@
 import {
+  classifyPlacement,
+  jointId as brandJointId,
   type CanonicalMesh,
   type ConnectorJoint,
   type JointConnectorSpec,
+  type JointFrame,
   type JointInterfaceAuthority,
+  type JointPin,
   type JointSite,
+  type PartId,
+  type PartTransform,
   type PlacementClass,
   MAX_PINS_PER_JOINT,
 } from '@cadfixer/mesh-core';
-import { invalidState, throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
+import {
+  invalidState,
+  isLengthUnit,
+  throwIfCancelled,
+  type CancellationToken,
+} from '@cadfixer/shared';
 import type { BooleanBackend } from './boolean-adapter';
 import { connectorSupportMargin } from './connector-policy';
 import type { ClosedPlaneClip } from './closed-plane-kernel';
+import { resolveMillimetresPerCoordinate } from './connector-dimensions';
 import {
   ConnectorRefusal,
   connectorManifestOf,
@@ -30,6 +42,7 @@ import {
   type PhysicalPinRequest,
   type PinCut,
   type SplitConnector,
+  type SplitResult,
   type SplitVector,
 } from './split-connectors';
 import { splitBufferSHA } from './split-source-identity';
@@ -180,9 +193,13 @@ export async function rebuildJointConnectors(
   spec: JointConnectorSpec | undefined,
   placement: PlacementClass,
   cancellation: CancellationToken,
+  /** The joint's next pin ordinal once this edit lands. It only ever grows: a pin id is never reused. */
+  nextPinOrdinal: number = joint.nextPinOrdinal,
 ): Promise<JointRebuild> {
   throwIfCancelled(cancellation);
   const cut = pinCutOfJoint(joint);
+  if (!Number.isSafeInteger(nextPinOrdinal) || nextPinOrdinal < joint.nextPinOrdinal)
+    throw planRefusal('A joint never gives a pin the name a pin once had.');
 
   if (spec === undefined)
     return Object.freeze({
@@ -190,7 +207,7 @@ export async function rebuildJointConnectors(
       pieceB: cut.pieceB,
       connector: undefined,
       manifest: undefined,
-      successor: successorOf(joint, cut.pieceA, cut.pieceB, undefined),
+      successor: successorOf(joint, cut.pieceA, cut.pieceB, undefined, nextPinOrdinal),
     });
 
   const [first] = spec.elements;
@@ -279,7 +296,7 @@ export async function rebuildJointConnectors(
     pieceB: built.pieceB,
     connector,
     manifest: connectorManifestOf(plan),
-    successor: successorOf(joint, built.pieceA, built.pieceB, spec),
+    successor: successorOf(joint, built.pieceA, built.pieceB, spec, nextPinOrdinal),
   });
 }
 
@@ -288,11 +305,151 @@ function successorOf(
   pieceA: CanonicalMesh,
   pieceB: CanonicalMesh,
   connector: JointConnectorSpec | undefined,
+  nextPinOrdinal: number,
 ): ConnectorJoint {
   return Object.freeze({
     ...joint,
     a: Object.freeze({ ...joint.a, builtMesh: pieceA }),
     b: Object.freeze({ ...joint.b, builtMesh: pieceB }),
     connector,
+    nextPinOrdinal,
   });
+}
+
+// ------------------------------------------------------------- recording a joint
+
+/** Why a split left no editable joint behind. The split itself is never refused for it. */
+export type JointNotRecorded =
+  | 'NOT_A_CLOSED_PLANE_CUT'
+  | 'UNIT_UNKNOWN'
+  | 'UNSUPPORTED_TRANSFORM'
+  | 'LEGACY_CONNECTOR'
+  | 'FRAME_DISAGREES';
+
+export type JointRecording =
+  | { readonly recorded: true; readonly joint: ConnectorJoint }
+  | { readonly recorded: false; readonly reason: JointNotRecorded };
+
+/**
+ * The editable joint a split leaves behind, assembled from the split's own result. Nothing is measured and no geometry is touched: the
+ * pieces the pin stage started from (the clip's) become the bases, the pieces the split returned become the built meshes, and the
+ * pins become the sites the plan recorded.
+ *
+ * The frame is resolved HERE, through the one resolver, from the document's unit and the source part's placement, for a plain cut as
+ * much as for one with connectors: a plain joint has to know how a millimetre becomes a coordinate if connectors are added to it later.
+ * When the split carries a plan, the frame it was resolved in must be the same one; if the two disagreed there would be two answers to
+ * "how big is a coordinate", and nothing is recorded.
+ *
+ * A manual pin's sizes are the millimetres that were asked for. An automatic pin's are its coordinates read back as millimetres, which
+ * reproduce those coordinates to the bit (the rebuild test holds it) but need not be the round figure the planner proposed.
+ */
+export function recordJointFromSplit(input: {
+  readonly jointId: string;
+  readonly unit: string | undefined;
+  readonly sourceTransform: PartTransform;
+  readonly result: SplitResult;
+  readonly a: { readonly partId: PartId; readonly transform: PartTransform };
+  readonly b: { readonly partId: PartId; readonly transform: PartTransform };
+}): JointRecording {
+  const { result } = input;
+  const clip = result.closedPlaneClip;
+  if (clip === undefined) return { recorded: false, reason: 'NOT_A_CLOSED_PLANE_CUT' };
+  if (result.connector.kind === 'dovetail') return { recorded: false, reason: 'LEGACY_CONNECTOR' };
+  // The unit the connectors were sized in: the document's when it states one, else the one the user asserted for this split, which
+  // the plan records. A plain cut on a unit-less model has neither, and records nothing.
+  const unit = input.unit ?? result.connectorPlan?.unitContext.unit;
+  const resolved = resolveMillimetresPerCoordinate({
+    unit,
+    placement: classifyPlacement(input.sourceTransform),
+  });
+  if (!resolved.ok)
+    return {
+      recorded: false,
+      reason: resolved.refusal === 'UNKNOWN_UNITS' ? 'UNIT_UNKNOWN' : 'UNSUPPORTED_TRANSFORM',
+    };
+  if (unit === undefined || !isLengthUnit(unit)) return { recorded: false, reason: 'UNIT_UNKNOWN' };
+  const frame: JointFrame = Object.freeze({
+    unit,
+    mmPerUnit: resolved.mmPerUnit,
+    placementScale: resolved.placementScale,
+    mmPerCoordinate: resolved.mmPerCoordinate,
+  });
+  const cut = pinCutOf(clip);
+
+  let connector: JointConnectorSpec | undefined;
+  let pinCount = 0;
+  const manifest = result.connectorPlan;
+  if (result.connector.kind === 'pin') {
+    const pin = result.connector;
+    if (manifest === undefined) return { recorded: false, reason: 'FRAME_DISAGREES' };
+    const context = manifest.unitContext;
+    if (
+      !Object.is(context.mmPerUnit, frame.mmPerUnit) ||
+      !Object.is(context.partScale, frame.placementScale) ||
+      !Object.is(context.mmPerCoordinate, frame.mmPerCoordinate)
+    )
+      return { recorded: false, reason: 'FRAME_DISAGREES' };
+    const intent = context.intentMm;
+    const pins: JointPin[] = manifest.pairs.map((pair) =>
+      Object.freeze({
+        pinId: pair.pairId,
+        site: Object.freeze({ u: pair.site.u, v: pair.site.v, local: pair.site.local }),
+        diameterMm: intent?.diameter ?? pin.diameter * frame.mmPerCoordinate,
+        depthMm: intent?.depth ?? pin.depth * frame.mmPerCoordinate,
+        clearanceMm: intent?.clearance ?? pin.clearance * frame.mmPerCoordinate,
+      }),
+    );
+    pinCount = pins.length;
+    connector = Object.freeze({
+      policy: 'units-v2',
+      kind: 'pin',
+      maleSide: pin.maleSide,
+      elements: Object.freeze(pins),
+    });
+  }
+  return {
+    recorded: true,
+    joint: Object.freeze({
+      kind: 'joint',
+      jointId: brandJointId(input.jointId),
+      a: Object.freeze({
+        partId: input.a.partId,
+        baseMesh: cut.pieceA,
+        builtMesh: result.pieceA,
+        builtTransform: input.a.transform,
+      }),
+      b: Object.freeze({
+        partId: input.b.partId,
+        baseMesh: cut.pieceB,
+        builtMesh: result.pieceB,
+        builtTransform: input.b.transform,
+      }),
+      frame,
+      authority: jointAuthorityOf(cut),
+      connector,
+      nextPinOrdinal: pinCount + 1,
+    }),
+  };
+}
+
+// ----------------------------------------------------------------------- digest
+
+/**
+ * The identity of what a joint's connectors ARE: the spec and the frame it is sized in, serialised in a fixed order and hashed with
+ * the repository's own SHA-256. DERIVED ON DEMAND, never stored, so it cannot disagree with the spec it names. A caller states the
+ * digest it saw when it asks for an edit, and the store compares it with its own reading at commit.
+ */
+export function jointSpecDigest(joint: Pick<ConnectorJoint, 'connector' | 'frame'>): string {
+  const text = JSON.stringify(
+    { frame: joint.frame, connector: joint.connector ?? null },
+    (_key, value: unknown) =>
+      typeof value === 'number' && !Number.isFinite(value)
+        ? `n:${String(value)}`
+        : Object.is(value, -0)
+          ? 'n:-0'
+          : value,
+  );
+  const units = new Uint16Array(text.length);
+  for (let i = 0; i < text.length; i += 1) units[i] = text.charCodeAt(i);
+  return splitBufferSHA([units]);
 }

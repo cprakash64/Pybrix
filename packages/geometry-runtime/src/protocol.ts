@@ -1,4 +1,5 @@
 import type { SplitTransactionStatus } from './split-candidates';
+import type { JointEditCandidateHandle, JointEditRequest, JointEditSummary } from './joint-edits';
 import type { SemanticRequestMetadata } from '@cadfixer/auto-split-contract';
 import type { Diagnostic, OperationId, SerializedAppError } from '@cadfixer/shared';
 import type { JointRetirement, MeshBounds, PartTransform } from '@cadfixer/mesh-core';
@@ -229,6 +230,20 @@ export interface OperationMap {
     payload: HoleFillCommitPayload;
     result: HoleFillCommitResult;
   };
+  /**
+   * Lists the connector joints of a document: ids, status, and the connectors in the page's own terms. READ-ONLY and geometry-free.
+   * The only source of a joint id, and of the `specDigest` an edit states.
+   */
+  'joint/list': { payload: JointListPayload; result: JointListResult };
+  /**
+   * Builds a CANDIDATE edit of one joint's connectors by rebuilding them from the pieces the cut left before any, through the same
+   * checks a split runs, and returns a disposable preview. Applies nothing.
+   */
+  'joint/propose': { payload: JointProposePayload; result: JointProposeResult };
+  /** Applies one stored, validated candidate. THE ONLY JOINT MUTATION. Identifiers cross, never geometry. */
+  'joint/commit': { payload: JointCommitPayload; result: JointCommitResult };
+  /** Releases a joint-edit candidate. */
+  'joint/discard': { payload: JointDiscardPayload; result: JointDiscardResult };
   'edit/preview': { payload: EditPreviewPayload; result: EditPreviewResult };
   'edit/commit': { payload: EditCommitPayload; result: EditCommitResult };
   'edit/discard': { payload: EditDiscardPayload; result: EditDiscardResult };
@@ -1072,6 +1087,69 @@ export interface JointDescriptor {
   readonly pinCount: number;
   /** Bytes retained for this joint beyond its parts' own geometry. Zero once retired. */
   readonly retainedBytes: number;
+  /**
+   * Identifies what the joint's connectors ARE. An edit states the digest it was made from, and the store compares it with its own
+   * reading. Present for an attached joint only.
+   */
+  readonly specDigest?: string;
+  /** The connectors, in the page's own terms: names, positions on the cut and sizes. Present for an attached joint with connectors. */
+  readonly connector?: {
+    readonly maleSide: 'A' | 'B';
+    readonly pins: readonly {
+      readonly pinId: string;
+      /** The pin's centre in the cut's own two axes. Never a point of the model. */
+      readonly u: number;
+      readonly v: number;
+      readonly diameterMm: number;
+      readonly depthMm: number;
+      readonly clearanceMm: number;
+    }[];
+  };
+}
+
+export interface JointListPayload {
+  readonly source: DocumentHandle;
+}
+export interface JointListResult {
+  readonly joints: readonly JointDescriptor[];
+}
+export interface JointProposePayload {
+  readonly source: DocumentHandle;
+  readonly jointId: string;
+  /** The `specDigest` of the descriptor the caller is looking at. */
+  readonly expectedSpecDigest: string;
+  readonly edit: JointEditRequest;
+}
+export interface JointProposeResult extends JointEditSummary {
+  readonly render: DocumentRenderSnapshot;
+  readonly parts: readonly PartDescriptor[];
+  /** The joint as the candidate would leave it. */
+  readonly after: JointDescriptor;
+}
+export interface JointCommitPayload {
+  readonly candidate: JointEditCandidateHandle;
+  readonly expectedSource: DocumentHandle;
+  readonly expectedJointId: string;
+  readonly expectedSpecDigest: string;
+}
+export interface JointCommitResult {
+  readonly handle: DocumentHandle;
+  readonly parentRevision: number;
+  readonly recordId: string;
+  readonly render: DocumentRenderSnapshot;
+  readonly parts: readonly PartDescriptor[];
+  readonly joints: readonly JointDescriptor[];
+  readonly residentBytes: number;
+  readonly triangleCount: number;
+  readonly vertexCount: number;
+  readonly bounds: MeshBounds | undefined;
+  readonly summary: JointEditSummary;
+}
+export interface JointDiscardPayload {
+  readonly candidate: JointEditCandidateHandle;
+}
+export interface JointDiscardResult {
+  readonly released: boolean;
 }
 
 /**

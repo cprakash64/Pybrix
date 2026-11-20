@@ -96,17 +96,18 @@ describe('attachment is derived from the parts', () => {
     });
   });
 
-  it('a different document unit detaches it as UNIT_CHANGED, and a document that states none does too', () => {
+  it('a document that states a different unit detaches it as UNIT_CHANGED', () => {
     const { document, joint } = jointedDocument();
     expect(jointAttachment({ ...document, unit: 'inch' }, joint)).toEqual({
       attached: false,
       reason: JointRetirement.UnitChanged,
     });
+  });
+
+  it('a document that states NO unit does not contradict the frame: the assertion made at split time stands', () => {
+    const { document, joint } = jointedDocument();
     const unitless: GeometryDocument = { parts: document.parts, joints: document.joints ?? [] };
-    expect(jointAttachment(unitless, joint)).toEqual({
-      attached: false,
-      reason: JointRetirement.UnitChanged,
-    });
+    expect(jointAttachment(unitless, joint)).toEqual({ attached: true });
   });
 
   it('gives one reason when several apply: a missing part, then unit, then placement, then geometry', () => {

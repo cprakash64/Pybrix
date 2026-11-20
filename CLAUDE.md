@@ -1078,11 +1078,11 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1 model, Stage EC-2 rebuild engine, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, ADR 0033)
 
 EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
-Neither builds a joint at split commit, installs an edit, or adds an operation, control or copy: a committed split is still two plain
-parts, and nothing yet puts a joint into a document. The transaction that applies a rebuild is the next stage.
+EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
+`joint/discard`). There is still no control and no copy: the page has typed client methods and nothing calls them yet (EC-4).
 
 - **A JOINT IS SESSION STATE IN THE WORKER'S DOCUMENT.** `GeometryDocument.joints` holds records for the two parts of one cut, the
   pre-connector pieces they were built from, the physical frame they were sized in and the engine's interface authority. No reader
@@ -1090,7 +1090,8 @@ parts, and nothing yet puts a joint into a document. The transaction that applie
   `JointDescriptor`s — ids, a status, a reason and counts — and never a mesh. A boundary test names every module allowed to build
   a joint list and every one that may never mention one.
 - **VALIDITY IS DERIVED FROM THE PARTS, NEVER STORED.** `jointAttachment` is the one function that says whether a joint is usable:
-  both parts present, the unit the frame names, both placements element-wise equal to the ones it was built under, and both meshes
+  both parts present, no document unit that contradicts the frame's (a unit-less model does not: the unit asserted at split time is the
+  frame's, and the document never gains one), both placements element-wise equal to the ones it was built under, and both meshes
   the exact OBJECTS it built. Identity, not content: a byte-equal copy is a change. The reasons come in a fixed order (part removed,
   unit, placement, geometry) so one document has one answer. A stored flag would be carried onto a changed part, because
   `withPartMesh`, `withPartTransform` and the split candidate all spread the previous document.
@@ -1133,9 +1134,33 @@ parts, and nothing yet puts a joint into a document. The transaction that applie
   per pin.
 - **THE ENGINE REBUILDS; IT INSTALLS NOTHING.** It returns two candidate meshes, the manifest and the successor joint record. Checking
   that the joint is attached, the transaction, the history record and the page are the next stage's.
-- **A RESIDENT TOTAL TAKEN BEFORE INSTALL OVER-COUNTS A JOINT ABOUT TO RETIRE.** The repair, fill and split handlers compute
-  `documentByteLength(successor)` before `replace`. That is exact today because no joint exists; the stage that creates one must
-  retire before reporting.
+- **A SPLIT RECORDS A JOINT AND IS NEVER REFUSED FOR IT.** `recordJointFromSplit` assembles it from the split's own result at
+  `SplitCandidateStore.resolve`: the clip's pieces become the bases, the returned pieces the built meshes, the plan's pins the sites. A
+  plain cut records a joint with no connectors, so connectors can be added later. Why one was not recorded travels in
+  `SplitCandidateSummary.editableConnector` (`UNIT_UNKNOWN`, `UNSUPPORTED_TRANSFORM`, `RETENTION_CEILING` with the metric, the value
+  and the limit, `NOT_A_CLOSED_PLANE_CUT`, `LEGACY_CONNECTOR`, `FRAME_DISAGREES`), and the pieces are then exactly what they always were.
+  The ceiling is judged on the document AS IT WILL BE INSTALLED, so a joint the cut itself retires is not counted against the new one.
+- **THE UNIT A JOINT WAS SIZED IN IS THE FRAME'S.** A document that states a unit must agree with it; one that states none (an STL) does
+  not contradict it, and the document never gains one. A plain cut on a unit-less model has no assertion to record and records nothing.
+- **AN EDIT IS A CANDIDATE, THEN ONE MUTATION.** `JointEditStore.begin` resolves the joint the caller named, proves it attached and
+  proves its connectors are what the caller saw (`JOINT_UNKNOWN`, `JOINT_RETIRED` with the reason, `JOINT_SPEC_STALE`), and takes the
+  document's ONE edit ticket, so an edit, a split and every other candidate exclude one another by construction. `resolve` validates
+  the rebuilt pieces (structure, ceilings, degenerate faces against what the BASES already carried) and the document gate.
+  `joint/commit` is the only mutation. The caller states the document and revision, the joint and the spec digest; the store compares
+  each with its own reading. A refused commit consumes nothing; the candidate is consumed only after the swap.
+- **THE SPEC DIGEST IS DERIVED, NEVER STORED** (`jointSpecDigest`), so it cannot disagree with the spec it names. The page states the
+  digest of the descriptor it is looking at.
+- **AN EDIT KEEPS EVERY PART ID, NAME AND PLACEMENT**, unlike a split. It commits in ONE step like a hole fill and not in the split's two
+  phases: a split must be ADOPTED (new part ids, a new assembly, a new view) and can fail part way, an edit has nothing to adopt but a
+  revision. The worker dying between the swap and the reply is the boundary Policy A already covers.
+- **PIN NAMES ONLY GROW.** `nextPinOrdinal` is a field of the joint; a removed pin's name is never given to another.
+- **RETIRE BEFORE REPORTING.** Every handler that builds its reply from a successor document before the swap builds it from the
+  document AS IT WILL BE INSTALLED (`retireDetachedJoints` at the revision it will be installed as), so a reported `residentBytes` never
+  counts geometry about to be released. Installation retires again and finds nothing left to do. A boundary test names the modules.
+- **A CHANGE THAT RETIRES A JOINT KEEPS THE DOCUMENT IT CAME FROM.** A mesh-only inverse restores the part and leaves a descriptor where
+  the joint was, so a repair, a fill or a generic edit that retires one records `previousDocument` (`retiredByInstall`), and Undo
+  installs that object. Without this, "undo of a repair re-attaches the connectors" was false for every change but a split. What it
+  retains is the joint's bases for as long as that one undo record lives.
 
 ## 3MF property-reference invariants (Stage 4A-2B3-R1)
 

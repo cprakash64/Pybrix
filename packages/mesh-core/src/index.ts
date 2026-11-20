@@ -56,6 +56,7 @@ export {
   MAX_PINS_PER_JOINT,
   MAX_RETIRED_JOINT_DESCRIPTORS,
   retireDetachedJoints,
+  retiredByInstall,
   retiredJoints,
 } from './joint';
 export type {

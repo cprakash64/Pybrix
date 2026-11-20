@@ -14,6 +14,7 @@ import {
 } from '@cadfixer/mesh-core';
 import { jointedDocument, tetrahedronMesh, translation } from '@cadfixer/mesh-core/fixtures';
 import { describeJoints } from './joint-descriptors';
+import { jointSpecDigest } from './connector-rebuild';
 import { documentByteLength, isDocument, ResidentDocumentStore } from './resident-documents';
 
 /*
@@ -182,7 +183,7 @@ describe('what a joint retains is charged, and released when it retires', () => 
 });
 
 describe('the page is told what a joint is, never what it holds', () => {
-  it('describes an attached joint with counts and no geometry', () => {
+  it("describes an attached joint with its connectors in the page's terms and no geometry", () => {
     const { document, joint } = jointedDocument({ authorityBytes: 10 });
     const [described] = describeJoints(document);
     expect(described).toEqual({
@@ -192,8 +193,15 @@ describe('the page is told what a joint is, never what it holds', () => {
       status: 'ATTACHED',
       pinCount: 1,
       retainedBytes: jointRetainedBytes(document),
+      specDigest: jointSpecDigest(joint),
+      connector: {
+        maleSide: 'A',
+        pins: [{ pinId: 'pin-1', u: 0, v: 0, diameterMm: 4, depthMm: 6, clearanceMm: 0.2 }],
+      },
     });
+    // nothing in it is a mesh, a base piece or a point of the model
     expect(JSON.parse(JSON.stringify(described))).toEqual(described);
+    expect(JSON.stringify(described)).not.toMatch(/local|baseMesh|builtMesh|positions|indices/);
   });
 
   it('describes a plain joint as zero pins', () => {

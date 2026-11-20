@@ -5,7 +5,10 @@ import {
   DEFAULT_DOCUMENT_LIMITS,
   documentTriangleCount,
   documentVertexCount,
+  jointRetainedBytes,
   meshByteLength,
+  retireDetachedJoints,
+  retiredByInstall,
   triangleCount,
   vertexCount,
   withPartMesh,
@@ -250,7 +253,12 @@ export class GeometryEditStore {
     if (!isDocument(source)) throw source;
     const prior = source.parts.find((p) => p.id === expectedPart);
     if (!prior) throw modelUnavailable('The selected part is no longer present.');
-    const { document } = validateGeometryEdit(entry.mesh, source, expectedPart);
+    // Retire before reporting (Stage EC-3): a joint over the part this edit replaces is retired when the store installs the document,
+    // so what `build` reports is the document as it will be held. The store retires again at the same revision and finds nothing.
+    const document = retireDetachedJoints(
+      validateGeometryEdit(entry.mesh, source, expectedPart).document,
+      expected.revision + 1,
+    );
     const render = build(entry.mesh, document);
     const previousMesh = prior.mesh;
     const inverse = {
@@ -258,6 +266,13 @@ export class GeometryEditStore {
       sourceFaceCount: triangleCount(previousMesh),
       sourceIndexCount: previousMesh.indices.length,
       byteLength: meshByteLength(previousMesh),
+      // A change that retires a joint keeps the document it came from, so Undo can bring the joint back (Stage EC-3).
+      ...(retiredByInstall(source, document) > 0
+        ? {
+            previousDocument: source,
+            byteLength: meshByteLength(previousMesh) + jointRetainedBytes(source),
+          }
+        : {}),
     };
     const next = this.resident.replace(expected, document);
     if (isAppError(next)) throw next;

@@ -46,6 +46,12 @@ import {
   splitConfirmScopeHandler,
 } from './split-handlers';
 import {
+  jointCommitHandler,
+  jointDiscardHandler,
+  jointListHandler,
+  jointProposeHandler,
+} from './joint-handlers';
+import {
   textureCreateHandler,
   textureLayoutHandler,
   textureSelectHandler,
@@ -115,6 +121,11 @@ host.register('split/commit-release', splitCommitReleaseHandler);
 host.register('split/commit-ack', splitCommitAckHandler);
 host.register('split/commit-abort', splitCommitAbortHandler);
 host.register('split/discard', splitDiscardHandler);
+// Editing the connectors of an existing joint (Stage EC-3): one read, one candidate builder, ONE mutation and a discard.
+host.register('joint/list', jointListHandler);
+host.register('joint/propose', jointProposeHandler);
+host.register('joint/commit', jointCommitHandler);
+host.register('joint/discard', jointDiscardHandler);
 // Auto Split, local half: two reads and one CANDIDATE. None of them commits; Apply is `split/commit`.
 host.register('autosplit/release', autoSplitReleaseHandler);
 host.register('autosplit/render', autoSplitRenderHandler);
