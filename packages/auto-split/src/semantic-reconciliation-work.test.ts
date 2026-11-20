@@ -75,8 +75,8 @@ it('preserves differing complementary beams while avoiding repeated evidence wor
   expect(reused.final).toEqual(plain.final);
   expect(reused.planes).toBe(plain.planes);
   expect(reused.operations).toBe(plain.operations);
-  // The provenance tie moves this existing candidate ahead of PEER_INTERVAL.
-  expect(reused.initial[1]?.provenance?.offsetSource).toBe('TARGET_MIN');
+  // Ties are ordered by coordinate alone, so the PEER_INTERVAL candidate keeps its place (no provenance tie-break).
+  expect(reused.initial[1]?.provenance?.offsetSource).toBe('PEER_INTERVAL');
   expect(reused.planes).toBe(4);
   expect(reused.operations).toBe(8);
   expect(reused.work).toBe(47954);

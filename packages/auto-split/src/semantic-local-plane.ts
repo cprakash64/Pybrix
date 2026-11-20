@@ -1,4 +1,3 @@
-import { compareSemanticPlanes as semanticOrder } from './semantic-plane-order';
 import {
   planOwnershipCompletion,
   admitOwnershipCompletion,
@@ -771,6 +770,33 @@ interface Candidate {
   offset: number;
   score: Score;
   section: number;
+}
+function semanticOrder(a: Candidate, b: Candidate): number {
+  return (
+    (a.groundedScope && b.groundedScope ? (b.localization ?? 0) - (a.localization ?? 0) : 0) ||
+    Number(!a.score.clean) - Number(!b.score.clean) ||
+    (!a.score.clean && !b.score.clean ? a.score.worstLeakage - b.score.worstLeakage : 0) ||
+    b.score.recall - a.score.recall ||
+    b.score.purity - a.score.purity ||
+    a.score.worstLeakage - b.score.worstLeakage ||
+    groundedFrontierDistance(a) - groundedFrontierDistance(b) ||
+    a.score.fraction - b.score.fraction ||
+    a.section - b.section ||
+    a.normal[0] - b.normal[0] ||
+    a.normal[1] - b.normal[1] ||
+    a.normal[2] - b.normal[2] ||
+    a.offset - b.offset
+  );
+}
+/** A dense, corroborated perimeter resolves ties that the sparse score cannot see. */
+function groundedFrontierDistance(candidate: Candidate): number {
+  const scope = candidate.groundedScope;
+  return scope?.boundaryWitness && scope.boundaryWitness.observedAxes.length >= 2
+    ? Math.max(
+        0,
+        Math.abs(candidate.offset - scope.intrinsicFrontier) - scope.pixelUncertainty - 1e-8,
+      )
+    : 0;
 }
 /** The frontier, fused source support and structured geometry must all corroborate approximation. */
 function assemblyBaseEligible(
