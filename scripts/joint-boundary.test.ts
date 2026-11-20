@@ -106,3 +106,50 @@ describe('the model is geometry-free and platform-free', () => {
     );
   });
 });
+
+describe('a rebuild goes through the pin stage a split uses, and builds nothing of its own (Stage EC-2)', () => {
+  const engine = read(join(ROOT, 'packages/geometry-runtime/src/split-connectors.ts'));
+  const rebuild = read(join(ROOT, 'packages/geometry-runtime/src/connector-rebuild.ts'));
+
+  it('has one place that cuts a pin and a socket, and the split and the rebuild both call it', () => {
+    expect(engine.match(/male = cylinder\(/g)).toHaveLength(1);
+    expect(engine.match(/constructPinConnectors\(/g)).toHaveLength(2); // the definition and the split's call
+    expect(rebuild).toContain('constructPinConnectors(');
+  });
+
+  it("reaches no validator, Boolean or primitive itself: every one it runs is the stage's", () => {
+    for (const name of [
+      'runValidatedBoolean',
+      'cylinder(',
+      'containFootprints',
+      'validateSocketDepth',
+      'validateConnectorSupport',
+      'createReceivingBroadphase',
+    ])
+      expect(rebuild, name).not.toContain(name);
+  });
+
+  it('shares the spacing rule with the resolver instead of restating it', () => {
+    expect(engine).toContain('minimumPinSpacing(radius, margin)');
+    expect(engine).toContain('pinsTooClose(candidate.point, chosen, minimumSpacing)');
+    expect(rebuild).toContain('minimumPinSpacing(');
+    expect(rebuild).toContain('pinsTooClose(');
+    expect(engine).not.toContain('radius * 2 + margin;');
+  });
+
+  it('reads a joint authority in one module, and only through the guard that minted it', () => {
+    const reading = everything.filter((file) =>
+      /authority\.detail|\{ detail \} = [\w.]*authority/.test(read(file)),
+    );
+    expect(rel(reading)).toEqual(['packages/geometry-runtime/src/connector-rebuild.ts']);
+    expect(rebuild).toContain('MINTED.has(detail)');
+  });
+
+  it('is geometry-runtime code: no React, Three.js, page or format import', () => {
+    for (const line of rebuild
+      .split('\n')
+      .filter((l) => l.startsWith('import') || l.startsWith('} from'))) {
+      expect(line).not.toMatch(/react|three|apps\/|file-formats/);
+    }
+  });
+});

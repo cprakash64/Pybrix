@@ -351,7 +351,14 @@ function connectorProblem(joint: ConnectorJoint): string | undefined {
       return 'a pin size is not positive and finite';
     if (!Number.isFinite(pin.clearanceMm) || pin.clearanceMm < 0)
       return 'a pin clearance is not finite and non-negative';
-    if (pin.site !== 'RESOLVED' && (!Number.isFinite(pin.site.u) || !Number.isFinite(pin.site.v)))
+    // The length is read as a number: the type says three, but a document can be built from a wire payload whose shape was asserted.
+    const localLength: number = pin.site.local.length;
+    if (
+      !Number.isFinite(pin.site.u) ||
+      !Number.isFinite(pin.site.v) ||
+      localLength !== 3 ||
+      !pin.site.local.every((value) => Number.isFinite(value))
+    )
       return 'a pin site is not finite';
   }
   return undefined;

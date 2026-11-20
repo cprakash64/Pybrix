@@ -252,6 +252,16 @@ export type {
   SplitTransactionStatus,
 } from './split-candidates';
 export type { ConnectorManifest } from './connector-plan';
+export {
+  jointAuthorityOf,
+  pinCutOf,
+  pinCutOfJoint,
+  pinCutRetainedBytes,
+  rebuildJointConnectors,
+  siteOnInterface,
+} from './connector-rebuild';
+export type { JointRebuild } from './connector-rebuild';
+export type { PinCut } from './split-connectors';
 export type {
   CutSurfaceSummary,
   PhysicalPinRequest,

@@ -203,7 +203,7 @@ function dimensionPolicyError(
  * AND the placement's scale; and the frame it was resolved in, which the plan records. Nothing downstream of this sees
  * millimetres. The unit and the placement were refused before this is reached, so only the physical range can fail here.
  */
-function resolvePhysicalPin(
+export function resolvePhysicalPin(
   request: PhysicalPinRequest,
   placement: PlacementClass,
 ): { readonly connector: PinConnector; readonly frame: PhysicalFrame } {
@@ -252,7 +252,7 @@ function resolvePhysicalPin(
  * A pin whose sizes came from the physical path (a physical request, or the automatic planner's millimetre policy) was judged
  * against the PHYSICAL range already. What is left to hold in local coordinates is only that the numbers are usable.
  */
-function assertRepresentablePin(pin: PinConnector, frame: PhysicalFrame | undefined): void {
+export function assertRepresentablePin(pin: PinConnector, frame: PhysicalFrame | undefined): void {
   const checks: readonly [ConnectorDimensionName, number, boolean][] = [
     ['PIN_DIAMETER', pin.diameter, true],
     ['PIN_DEPTH', pin.depth, true],
@@ -546,7 +546,11 @@ export function describeSplitSourceRefusal(reasons: readonly SplitSourceReason[]
   return repairable ? `${base} Repair can address these.` : base;
 }
 
-function requireSolid(mesh: CanonicalMesh, label: string, cancellation: CancellationToken): void {
+export function requireSolid(
+  mesh: CanonicalMesh,
+  label: string,
+  cancellation: CancellationToken,
+): void {
   assertMeshStructure(mesh, `split/${label}`);
   const r = analyseTopology(mesh, {
     documentId: 'split',
@@ -862,6 +866,19 @@ function describeSection(
   return { loopCount: roots.size, outline, outlineTruncated: kept < boundary.length };
 }
 
+/**
+ * HOW FAR APART TWO PINS MUST BE: two socket radii and the support margin. One rule, in one place, for the resolver that chooses
+ * sites and for a rebuild that is handed them, so a site set the resolver would have refused cannot arrive by another road.
+ */
+export function minimumPinSpacing(socketRadius: number, margin: number): number {
+  return socketRadius * 2 + margin;
+}
+
+/** Whether two sites are closer than `spacing`. A non-finite distance is too close: the comparison is written so NaN fails it. */
+export function pinsTooClose(a: SplitVector, b: SplitVector, spacing: number): boolean {
+  return !(Math.hypot(...sub(a, b)) >= spacing);
+}
+
 function pointInTriangle(
   p: readonly [number, number],
   triangle: readonly (readonly [number, number])[],
@@ -965,11 +982,11 @@ export function connectorCenters(
     );
   const eligible = cut.interiorCandidates.filter((candidate) => candidate.edgeDistance >= need),
     selected: SplitVector[] = [],
-    minimumSpacing = radius * 2 + margin;
+    minimumSpacing = minimumPinSpacing(radius, margin);
   while (selected.length < count) {
     const next = eligible
       .filter((candidate) =>
-        selected.every((chosen) => Math.hypot(...sub(candidate.point, chosen)) >= minimumSpacing),
+        selected.every((chosen) => !pinsTooClose(candidate.point, chosen, minimumSpacing)),
       )
       .sort((a, b) => {
         const distanceA = selected.length
@@ -1002,6 +1019,228 @@ export const SplitStage = {
   AddingConnectors: 'adding-connectors',
 } as const;
 export type SplitStage = (typeof SplitStage)[keyof typeof SplitStage];
+
+/**
+ * WHAT A CUT KEEPS SO THAT CONNECTORS CAN BE BUILT ON IT (Stage EC-2): the two pieces the kernel produced BEFORE any connector, the
+ * per-face provenance that says which source face each came from, whether each is a closed solid, the generated interface the pieces
+ * meet at, and the tolerance of the part the cut was made in. Everything the pin stage reads, and nothing else. A split builds one
+ * from its clip result; an editable joint retains one, so a rebuild starts from exactly what a first build did.
+ */
+export interface PinCut {
+  readonly pieceA: CanonicalMesh;
+  readonly pieceB: CanonicalMesh;
+  readonly provenanceA: Int32Array;
+  readonly provenanceB: Int32Array;
+  readonly closedA: boolean;
+  readonly closedB: boolean;
+  readonly interface: GeneratedSeparationInterface;
+  readonly tolerance: number;
+}
+
+export interface PinConstruction {
+  readonly pieceA: CanonicalMesh;
+  readonly pieceB: CanonicalMesh;
+  /** The sites, in the order they were cut, in the pieces' own (rebased) coordinates. */
+  readonly placements: readonly SplitVector[];
+}
+
+/**
+ * THE PIN STAGE, ONE IMPLEMENTATION FOR A SPLIT AND FOR A REBUILD (Stage EC-2).
+ *
+ * Containment of every footprint, receiving material for every socket, material support around every socket and behind every pin
+ * root, and only then the Booleans, one pair per site. It was the body of \`splitWithConnectors\`; it is a function so that an edit
+ * of an existing joint goes through the SAME validators, in the SAME order, with the SAME refusals, rather than through a copy that
+ * would drift. A refusal is thrown here exactly as it always was; nothing is built before the last check has passed.
+ *
+ * \`automaticDiagnostics\` is the automatic path's own record and is absent for a manual pin and for a rebuild.
+ */
+export async function constructPinConnectors(input: {
+  readonly backend: BooleanBackend;
+  readonly cut: PinCut;
+  readonly plan: ValidatedConnectorPlan;
+  readonly connector: PinConnector;
+  readonly sites: readonly SplitVector[];
+  readonly cancellation: CancellationToken;
+  readonly automaticDiagnostics: AutomaticConnectorDiagnostics | undefined;
+}): Promise<PinConstruction> {
+  const { backend, cut, connector: c, sites, cancellation, automaticDiagnostics } = input;
+  const validatedPlan = input.plan;
+  const { tolerance } = cut;
+  const automatic = automaticDiagnostics !== undefined;
+  const plane = { normal: cut.interface.frame.N };
+  const r = c.diameter / 2;
+  let pieceA = cut.pieceA,
+    pieceB = cut.pieceB;
+  const placements: SplitVector[] = [];
+  // RELEASE 2, SLICE 2B. The ONE footprint-containment check, for the manual sites just resolved and the automatic sites
+  // proposed above alike. It reads the GENERATED interface (not the compatibility surface the resolvers searched) and
+  // runs after every earlier refusal and before the first Boolean, so a refused plan has built nothing. It does not
+  // search for another site: the sites the existing resolvers chose are validated, or the plan is refused whole.
+  const containment = containFootprints(defined(validatedPlan), cut.interface, tolerance);
+  if (!containment.ok) {
+    const [failure] = containment.failures;
+    const refusal = defined(failure).refusal;
+    if (automatic)
+      automaticDiagnostics.reason =
+        refusal === ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE
+          ? 'INTERFACE_REGION_UNAVAILABLE'
+          : 'FOOTPRINT_NOT_CONTAINED';
+    throw invalidState(describeFootprintFailure(refusal), {
+      code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
+      refusal,
+      pairId: defined(failure).pairId,
+      footprintU: defined(failure).footprint.u,
+      footprintV: defined(failure).footprint.v,
+      footprintRadius: defined(failure).footprint.radius,
+      centerInMaterial: defined(failure).centerInMaterial,
+      ...(failure?.loopId === undefined ? {} : { loopId: failure.loopId }),
+      ...(failure?.overreach === undefined ? {} : { overreach: failure.overreach }),
+      invalidPairs: containment.failures.length,
+      checkedPairs: containment.checked,
+    });
+  }
+  // RELEASE 2, SLICE 2C. Is there receiving material throughout the socket the Booleans below will cut? The socket's
+  // axis, radius and depth are decided HERE, once, and the same three values are handed to the validator and to the
+  // primitive: nothing is derived twice. Every socket of the plan is checked against the receiving piece as the kernel
+  // produced it (before any socket of this plan is cut), so a plan with one bad socket builds nothing.
+  const socketVolume = {
+    axis: c.maleSide === 'A' ? scale(unit(plane.normal), -1) : unit(plane.normal),
+    radius: roundSocketRadius(c.diameter, c.clearance),
+    depth: c.depth,
+  };
+  const planPairs = defined(validatedPlan).plan.pairs;
+  const femaleSide: ReceivingPiece =
+      c.maleSide === 'A'
+        ? {
+            mesh: cut.pieceB,
+            provenance: cut.provenanceB,
+            closed: cut.closedB,
+          }
+        : {
+            mesh: cut.pieceA,
+            provenance: cut.provenanceA,
+            closed: cut.closedA,
+          },
+    maleSide: ReceivingPiece =
+      c.maleSide === 'A'
+        ? {
+            mesh: cut.pieceA,
+            provenance: cut.provenanceA,
+            closed: cut.closedA,
+          }
+        : {
+            mesh: cut.pieceB,
+            provenance: cut.provenanceB,
+            closed: cut.closedB,
+          },
+    // ONE female tree per plan, built by whichever of the two checks below needs it first.
+    femaleBroadphase = createReceivingBroadphase(femaleSide),
+    socketSweeps = sites.map((center, index) => ({
+      pairId: planPairs[index]?.pairId ?? `pin-${String(index + 1)}`,
+      center,
+      ...socketVolume,
+    }));
+  const axial = validateSocketDepth(
+    femaleSide,
+    socketSweeps,
+    tolerance,
+    cancellation,
+    femaleBroadphase,
+  );
+  if (!axial.ok) {
+    const refusal = axial.refusal;
+    if (automatic)
+      automaticDiagnostics.reason =
+        refusal === ConnectorRefusal.SOCKET_BREAKTHROUGH
+          ? 'SOCKET_BREAKTHROUGH'
+          : 'AXIAL_VALIDATION_UNAVAILABLE';
+    const first = 'failures' in axial ? axial.failures[0] : undefined;
+    throw invalidState(describeAxialFailure(refusal), {
+      code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
+      refusal,
+      socketRadius: socketVolume.radius,
+      socketDepth: socketVolume.depth,
+      ...('reason' in axial ? { reason: axial.reason } : {}),
+      ...(first === undefined ? {} : { pairId: first.pairId, faceIndex: first.faceIndex }),
+      ...('failures' in axial
+        ? { invalidPairs: axial.failures.length, checkedPairs: axial.checked }
+        : {}),
+    });
+  }
+  // RELEASE 2, SLICE 2D. `support-v1`: is there at least as much material around the socket and behind the pin root as Pybrix
+  // already requires around a connector at the cut face? The same shared validator for a manual and an automatic plan, run
+  // after every earlier check and before the first Boolean, over EVERY socket of the plan: one unsupported socket refuses the
+  // whole plan with nothing built. No other site, size or depth is tried.
+  const supportMargin = connectorSupportMargin(r, tolerance);
+  const support = validateConnectorSupport({
+    female: femaleSide,
+    femaleBroadphase,
+    male: maleSide,
+    sockets: socketSweeps,
+    pinRadius: r,
+    margin: supportMargin,
+    tolerance,
+    cancellation,
+  });
+  if (!support.ok) {
+    const refusal = support.refusal;
+    if (automatic)
+      automaticDiagnostics.reason =
+        refusal === ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT
+          ? 'SOCKET_SUPPORT_INSUFFICIENT'
+          : refusal === ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT
+            ? 'PIN_ROOT_SUPPORT_INSUFFICIENT'
+            : 'SUPPORT_VALIDATION_UNAVAILABLE';
+    const first = 'failures' in support ? support.failures[0] : undefined;
+    throw invalidState(describeSupportFailure(refusal), {
+      code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
+      refusal,
+      policy: support.policy,
+      pinRadius: r,
+      socketRadius: socketVolume.radius,
+      socketDepth: socketVolume.depth,
+      ...('margin' in support ? { margin: support.margin } : {}),
+      ...('reason' in support ? { reason: support.reason, role: support.role } : {}),
+      ...(first === undefined
+        ? {}
+        : {
+            role: first.role,
+            pairId: first.pairId,
+            faceIndex: first.faceIndex,
+            ...(first.dimension === undefined ? {} : { dimension: first.dimension }),
+          }),
+      ...('failures' in support
+        ? {
+            invalidPairs: new Set(support.failures.map((failure) => failure.pairId)).size,
+            checkedPairs: support.checked,
+            femaleFailures: support.failures.filter((failure) => failure.role === 'FEMALE').length,
+            maleFailures: support.failures.filter((failure) => failure.role === 'MALE').length,
+          }
+        : {}),
+    });
+  }
+  for (const center of sites) {
+    if (automatic) automaticDiagnostics.placementAttempts++;
+    throwIfCancelled(cancellation);
+    placements.push(center);
+    const axis = socketVolume.axis,
+      overlap = Math.max(tolerance * 8, c.depth * 1e-4),
+      primitiveDepth = c.depth + overlap,
+      primitiveCenter = add(center, scale(axis, (c.depth - overlap) / 2)),
+      male = cylinder(primitiveCenter, axis, r, primitiveDepth),
+      socket = cylinder(primitiveCenter, axis, socketVolume.radius, primitiveDepth);
+    if (c.maleSide === 'A') {
+      pieceA = (await runValidatedBoolean(backend, 'union', pieceA, male, cancellation)).mesh;
+      pieceB = (await runValidatedBoolean(backend, 'difference', pieceB, socket, cancellation))
+        .mesh;
+    } else {
+      pieceB = (await runValidatedBoolean(backend, 'union', pieceB, male, cancellation)).mesh;
+      pieceA = (await runValidatedBoolean(backend, 'difference', pieceA, socket, cancellation))
+        .mesh;
+    }
+  }
+  return { pieceA, pieceB, placements };
+}
 
 export async function splitWithConnectors(
   backend: BooleanBackend,
@@ -1197,174 +1436,27 @@ export async function splitWithConnectors(
         );
         sites = toLegacyConnectorPlan(validatedPlan).centers;
       }
-      // RELEASE 2, SLICE 2B. The ONE footprint-containment check, for the manual sites just resolved and the automatic sites
-      // proposed above alike. It reads the GENERATED interface (not the compatibility surface the resolvers searched) and
-      // runs after every earlier refusal and before the first Boolean, so a refused plan has built nothing. It does not
-      // search for another site: the sites the existing resolvers chose are validated, or the plan is refused whole.
-      const containment = containFootprints(defined(validatedPlan), clip.interface, tolerance);
-      if (!containment.ok) {
-        const [failure] = containment.failures;
-        const refusal = defined(failure).refusal;
-        if (automatic)
-          automaticDiagnostics.reason =
-            refusal === ConnectorRefusal.INTERFACE_REGION_UNAVAILABLE
-              ? 'INTERFACE_REGION_UNAVAILABLE'
-              : 'FOOTPRINT_NOT_CONTAINED';
-        throw invalidState(describeFootprintFailure(refusal), {
-          code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
-          refusal,
-          pairId: defined(failure).pairId,
-          footprintU: defined(failure).footprint.u,
-          footprintV: defined(failure).footprint.v,
-          footprintRadius: defined(failure).footprint.radius,
-          centerInMaterial: defined(failure).centerInMaterial,
-          ...(failure?.loopId === undefined ? {} : { loopId: failure.loopId }),
-          ...(failure?.overreach === undefined ? {} : { overreach: failure.overreach }),
-          invalidPairs: containment.failures.length,
-          checkedPairs: containment.checked,
-        });
-      }
-      // RELEASE 2, SLICE 2C. Is there receiving material throughout the socket the Booleans below will cut? The socket's
-      // axis, radius and depth are decided HERE, once, and the same three values are handed to the validator and to the
-      // primitive: nothing is derived twice. Every socket of the plan is checked against the receiving piece as the kernel
-      // produced it (before any socket of this plan is cut), so a plan with one bad socket builds nothing.
-      const socketVolume = {
-        axis: c.maleSide === 'A' ? scale(unit(plane.normal), -1) : unit(plane.normal),
-        radius: roundSocketRadius(c.diameter, c.clearance),
-        depth: c.depth,
-      };
-      const planPairs = defined(validatedPlan).plan.pairs;
-      const femaleSide: ReceivingPiece =
-          c.maleSide === 'A'
-            ? {
-                mesh: clip.pieceB,
-                provenance: clip.provenanceB,
-                closed: isClosedSolid(clip.reports[1]),
-              }
-            : {
-                mesh: clip.pieceA,
-                provenance: clip.provenanceA,
-                closed: isClosedSolid(clip.reports[0]),
-              },
-        maleSide: ReceivingPiece =
-          c.maleSide === 'A'
-            ? {
-                mesh: clip.pieceA,
-                provenance: clip.provenanceA,
-                closed: isClosedSolid(clip.reports[0]),
-              }
-            : {
-                mesh: clip.pieceB,
-                provenance: clip.provenanceB,
-                closed: isClosedSolid(clip.reports[1]),
-              },
-        // ONE female tree per plan, built by whichever of the two checks below needs it first.
-        femaleBroadphase = createReceivingBroadphase(femaleSide),
-        socketSweeps = sites.map((center, index) => ({
-          pairId: planPairs[index]?.pairId ?? `pin-${String(index + 1)}`,
-          center,
-          ...socketVolume,
-        }));
-      const axial = validateSocketDepth(
-        femaleSide,
-        socketSweeps,
-        tolerance,
+      const built = await constructPinConnectors({
+        backend,
+        cut: {
+          pieceA: clip.pieceA,
+          pieceB: clip.pieceB,
+          provenanceA: clip.provenanceA,
+          provenanceB: clip.provenanceB,
+          closedA: isClosedSolid(clip.reports[0]),
+          closedB: isClosedSolid(clip.reports[1]),
+          interface: clip.interface,
+          tolerance,
+        },
+        plan: defined(validatedPlan),
+        connector: c,
+        sites,
         cancellation,
-        femaleBroadphase,
-      );
-      if (!axial.ok) {
-        const refusal = axial.refusal;
-        if (automatic)
-          automaticDiagnostics.reason =
-            refusal === ConnectorRefusal.SOCKET_BREAKTHROUGH
-              ? 'SOCKET_BREAKTHROUGH'
-              : 'AXIAL_VALIDATION_UNAVAILABLE';
-        const first = 'failures' in axial ? axial.failures[0] : undefined;
-        throw invalidState(describeAxialFailure(refusal), {
-          code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
-          refusal,
-          socketRadius: socketVolume.radius,
-          socketDepth: socketVolume.depth,
-          ...('reason' in axial ? { reason: axial.reason } : {}),
-          ...(first === undefined ? {} : { pairId: first.pairId, faceIndex: first.faceIndex }),
-          ...('failures' in axial
-            ? { invalidPairs: axial.failures.length, checkedPairs: axial.checked }
-            : {}),
-        });
-      }
-      // RELEASE 2, SLICE 2D. `support-v1`: is there at least as much material around the socket and behind the pin root as Pybrix
-      // already requires around a connector at the cut face? The same shared validator for a manual and an automatic plan, run
-      // after every earlier check and before the first Boolean, over EVERY socket of the plan: one unsupported socket refuses the
-      // whole plan with nothing built. No other site, size or depth is tried.
-      const supportMargin = connectorSupportMargin(r, tolerance);
-      const support = validateConnectorSupport({
-        female: femaleSide,
-        femaleBroadphase,
-        male: maleSide,
-        sockets: socketSweeps,
-        pinRadius: r,
-        margin: supportMargin,
-        tolerance,
-        cancellation,
+        automaticDiagnostics: automatic ? automaticDiagnostics : undefined,
       });
-      if (!support.ok) {
-        const refusal = support.refusal;
-        if (automatic)
-          automaticDiagnostics.reason =
-            refusal === ConnectorRefusal.SOCKET_SUPPORT_INSUFFICIENT
-              ? 'SOCKET_SUPPORT_INSUFFICIENT'
-              : refusal === ConnectorRefusal.PIN_ROOT_SUPPORT_INSUFFICIENT
-                ? 'PIN_ROOT_SUPPORT_INSUFFICIENT'
-                : 'SUPPORT_VALIDATION_UNAVAILABLE';
-        const first = 'failures' in support ? support.failures[0] : undefined;
-        throw invalidState(describeSupportFailure(refusal), {
-          code: REFUSAL_TO_LEGACY_DETAILS_CODE[refusal] ?? refusal,
-          refusal,
-          policy: support.policy,
-          pinRadius: r,
-          socketRadius: socketVolume.radius,
-          socketDepth: socketVolume.depth,
-          ...('margin' in support ? { margin: support.margin } : {}),
-          ...('reason' in support ? { reason: support.reason, role: support.role } : {}),
-          ...(first === undefined
-            ? {}
-            : {
-                role: first.role,
-                pairId: first.pairId,
-                faceIndex: first.faceIndex,
-                ...(first.dimension === undefined ? {} : { dimension: first.dimension }),
-              }),
-          ...('failures' in support
-            ? {
-                invalidPairs: new Set(support.failures.map((failure) => failure.pairId)).size,
-                checkedPairs: support.checked,
-                femaleFailures: support.failures.filter((failure) => failure.role === 'FEMALE')
-                  .length,
-                maleFailures: support.failures.filter((failure) => failure.role === 'MALE').length,
-              }
-            : {}),
-        });
-      }
-      for (const center of sites) {
-        if (automatic) automaticDiagnostics.placementAttempts++;
-        throwIfCancelled(cancellation);
-        placements.push(center);
-        const axis = socketVolume.axis,
-          overlap = Math.max(tolerance * 8, c.depth * 1e-4),
-          primitiveDepth = c.depth + overlap,
-          primitiveCenter = add(center, scale(axis, (c.depth - overlap) / 2)),
-          male = cylinder(primitiveCenter, axis, r, primitiveDepth),
-          socket = cylinder(primitiveCenter, axis, socketVolume.radius, primitiveDepth);
-        if (c.maleSide === 'A') {
-          pieceA = (await runValidatedBoolean(backend, 'union', pieceA, male, cancellation)).mesh;
-          pieceB = (await runValidatedBoolean(backend, 'difference', pieceB, socket, cancellation))
-            .mesh;
-        } else {
-          pieceB = (await runValidatedBoolean(backend, 'union', pieceB, male, cancellation)).mesh;
-          pieceA = (await runValidatedBoolean(backend, 'difference', pieceA, socket, cancellation))
-            .mesh;
-        }
-      }
+      pieceA = built.pieceA;
+      pieceB = built.pieceB;
+      placements.push(...built.placements);
     } else if (c.kind === 'dovetail') {
       dimension(c.width, 'Dovetail width');
       dimension(c.depth, 'Dovetail depth');
@@ -1499,13 +1591,13 @@ function isClosedSolid(report: {
   );
 }
 
-function defined<T>(value: T | undefined): T {
+export function defined<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('Required bounded geometry evidence is missing.');
   return value;
 }
 
 /** Identity-only validation of a plan; a refusal keeps the legacy `details.code` the page already knows. */
-function issuePlan(
+export function issuePlan(
   plan: ConnectorPlan,
   face: GeneratedSeparationInterface,
 ): ValidatedConnectorPlan {

@@ -278,7 +278,7 @@ export const FIXTURE_PIN_SPEC: JointConnectorSpec = Object.freeze({
   elements: Object.freeze([
     Object.freeze({
       pinId: 'pin-1',
-      site: 'RESOLVED' as const,
+      site: Object.freeze({ u: 0, v: 0, local: Object.freeze([0, 0, 0] as const) }),
       diameterMm: 4,
       depthMm: 6,
       clearanceMm: 0.2,

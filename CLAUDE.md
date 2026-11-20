@@ -1078,11 +1078,11 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, Stage EC-2 rebuild engine, ADR 0033)
 
-EC-1 is the MODEL, its lifecycle and its accounting. It builds no joint, edits no connector and adds no operation, control or copy:
-a committed split is still two plain parts, and nothing yet puts a joint into a document. The engine that rebuilds from one and the
-transaction that applies the result are later stages.
+EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
+Neither builds a joint at split commit, installs an edit, or adds an operation, control or copy: a committed split is still two plain
+parts, and nothing yet puts a joint into a document. The transaction that applies a rebuild is the next stage.
 
 - **A JOINT IS SESSION STATE IN THE WORKER'S DOCUMENT.** `GeometryDocument.joints` holds records for the two parts of one cut, the
   pre-connector pieces they were built from, the physical frame they were sized in and the engine's interface authority. No reader
@@ -1102,7 +1102,7 @@ transaction that applies the result are later stages.
   attached again after undoing it.
 - **A PART IS IN AT MOST ONE ATTACHED JOINT**, because an edit rebuilds both of a joint's pieces. The document gate refuses two.
 - **INTENT IS STORED IN MILLIMETRES WITH ITS FRAME.** A pin carries `diameterMm`, `depthMm`, `clearanceMm`; a local length is
-  derived through the frame and never stored as intent. A site is `RESOLVED` or an explicit `(u, v)` in the interface frame, and an
+  derived through the frame and never stored as intent. A site is always explicit: the exact `local` point the pin was cut at plus its `(u, v)` in the interface frame, and an
   explicit site is validated, never trusted. `mmPerCoordinate` is stored as built and not re-derived by the model.
 - **RETAINED BYTES ARE COUNTED ONCE PER DISTINCT MESH AND NEVER WITH A PART.** `jointRetainedBytes` charges bases, stale built
   meshes and the authority's own bytes; `documentByteLength` includes it, so every resident total sees it. The ceiling
@@ -1110,6 +1110,29 @@ transaction that applies the result are later stages.
   above it a producer keeps the connectors as plain geometry and says so, and never refuses a split on account of editability.
   `npm run bench:joint-retention` measured accounting equal to the Node typed-array bytes and release on retirement to the byte;
   it is NOT a browser footprint, and the first stage that actually retains bases must measure that.
+- **A REBUILD STARTS FROM THE RETAINED CUT, NEVER FROM THE BUILT PIECES.** `rebuildJointConnectors` hands the two pre-connector pieces,
+  their provenance, the generated interface and the cut's tolerance (`PinCut`) and a connector spec to `constructPinConnectors`, the
+  ONE pin stage: footprint containment, receiving material, material support, then the Booleans. It was the body of
+  `splitWithConnectors` and is called by both, so there is no edit-only validator, relaxation or refusal; a boundary test holds that a
+  rebuild names no validator or primitive itself. Because every rebuild starts from the same cut, an edit never builds on an edit, and
+  editing a joint back to an earlier spec returns the same bytes. Differential, on the real kernel: a joint rebuilt from its own cut
+  is byte-identical to the split that made it, manual and automatic, one to three pins, male side A and B, four units and a scaled
+  placement, with an equal manifest. Booleans are never inverted.
+- **A SITE IS THE POINT IT NAMES.** `local` is the exact point cut; `u`/`v` are that point read through `interfaceCoordinates` and
+  nothing else. A rebuild recomputes them and refuses a pair that disagrees (`INVALID_PLAN`). `siteOnInterface(cut, u, v)` makes a site
+  from a requested `(u, v)` and may differ from the request by a rounding error; that is the price of cutting an exact point.
+- **TWO PINS HAVE ONE SPACING RULE.** `minimumPinSpacing` / `pinsTooClose` are used by the resolver that chooses sites AND by the
+  rebuild that is handed them. Explicit sites would otherwise have been a way to build overlapping pins a split would never place.
+- **A REBUILD PROVES ITS FRAME RATHER THAN ASSUMING IT.** The size is resolved through the same resolver with the unit and the current
+  placement, and must equal the frame the joint was built under to the bit, or it is `INVALID_PLAN`. An attached joint guarantees
+  that; the rebuild checks it anyway. The engine's cut lives in `JointInterfaceAuthority.detail`, opaque to the model, minted only by
+  `jointAuthorityOf` and read back only through a guard that refuses anything else. `provenanceSHA` names the per-face provenance and
+  not the geometry; identity of the pieces is by object.
+- **PIN IDS ARE NOT PLAN PAIR IDS.** The plan numbers pairs `pin-1…` by position, so after a pin is removed a refusal's `pairId` is a
+  position and the transaction stage must translate it. One size per joint is checked by the rebuild; the model already carries sizes
+  per pin.
+- **THE ENGINE REBUILDS; IT INSTALLS NOTHING.** It returns two candidate meshes, the manifest and the successor joint record. Checking
+  that the joint is attached, the transaction, the history record and the page are the next stage's.
 - **A RESIDENT TOTAL TAKEN BEFORE INSTALL OVER-COUNTS A JOINT ABOUT TO RETIRE.** The repair, fill and split handlers compute
   `documentByteLength(successor)` before `replace`. That is exact today because no joint exists; the stage that creates one must
   retire before reporting.

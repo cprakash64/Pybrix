@@ -30,17 +30,17 @@ function withSpec(elements: readonly JointPin[], maleSide: 'A' | 'B' = 'A'): Geo
 }
 const PIN: JointPin = {
   pinId: 'pin-1',
-  site: 'RESOLVED',
+  site: { u: 0, v: 0, local: [0, 0, 0] },
   diameterMm: 4,
   depthMm: 6,
   clearanceMm: 0.2,
 };
 
 describe('a valid jointed document', () => {
-  it('passes, attached or plain, with an explicit site or a resolved one', () => {
+  it('passes, attached or plain, with the sites it is given', () => {
     expect(codes(jointedDocument().document, true)).toEqual([]);
     expect(codes(jointedDocument({ connector: undefined }).document, true)).toEqual([]);
-    expect(codes(withSpec([{ ...PIN, site: { u: 1.5, v: -2 } }]))).toEqual([]);
+    expect(codes(withSpec([{ ...PIN, site: { u: 1.5, v: -2, local: [1, 2, 3] } }]))).toEqual([]);
     expect(
       codes(
         withSpec(
@@ -128,13 +128,18 @@ describe('a connector outside the model is refused', () => {
       DocumentValidationCode.JointConnectorMalformed,
     );
   });
-  it.each([
+  it.each<readonly [string, Partial<JointPin>]>([
     ['a zero diameter', { diameterMm: 0 }],
     ['a negative depth', { depthMm: -1 }],
     ['a non-finite depth', { depthMm: Number.NaN }],
     ['a negative clearance', { clearanceMm: -0.1 }],
     ['a non-finite clearance', { clearanceMm: Number.POSITIVE_INFINITY }],
-    ['a non-finite site', { site: { u: Number.NaN, v: 0 } }],
+    ['a non-finite u', { site: { u: Number.NaN, v: 0, local: [0, 0, 0] } }],
+    ['a non-finite local point', { site: { u: 0, v: 0, local: [0, Number.POSITIVE_INFINITY, 0] } }],
+    [
+      'a local point of the wrong length',
+      { site: { u: 0, v: 0, local: [0, 0] as unknown as [number, number, number] } },
+    ],
   ])('rejects %s', (_label, change) => {
     expect(codes(withSpec([{ ...PIN, ...change }]))).toContain(
       DocumentValidationCode.JointConnectorMalformed,

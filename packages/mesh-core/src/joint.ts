@@ -69,14 +69,25 @@ export interface JointFrame {
  * owns the type of `detail`; this package only needs to know what it costs and what it is named.
  */
 export interface JointInterfaceAuthority {
+  /** Identifies the per-face PROVENANCE the engine kept, not the geometry: two cuts of identically-faced meshes share one. */
   readonly provenanceSHA: string;
   /** Bytes `detail` holds beyond the two base meshes. Counted into the retained total. */
   readonly retainedBytes: number;
   readonly detail: object;
 }
 
-/** A pin's centre in the interface's own frame, or `RESOLVED`: the existing resolver chose it. An explicit site is validated, never trusted. */
-export type JointSite = { readonly u: number; readonly v: number } | 'RESOLVED';
+/**
+ * A pin's centre, always EXPLICIT (Stage EC-2): `local` is the exact point the pin was cut at, in the pieces' own coordinates, and
+ * `u`/`v` are that point in the interface's own frame, derived from it by the engine's one function and never the other way
+ * round. `local` is what a rebuild uses, so rebuilding an unchanged joint reproduces it to the bit; `u`/`v` are what an editor
+ * moves and what containment is judged in. A site is validated, never trusted: the engine recomputes `u`/`v` from `local` and a
+ * pair that disagrees is refused.
+ */
+export interface JointSite {
+  readonly u: number;
+  readonly v: number;
+  readonly local: readonly [number, number, number];
+}
 
 /** One pin. Intent is stored in MILLIMETRES, as C03-C records it; a local length is always derived through `JointFrame`. */
 export interface JointPin {
