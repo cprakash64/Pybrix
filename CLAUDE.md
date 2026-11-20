@@ -1078,12 +1078,12 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, ADR 0033)
 
 EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
 EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
-`joint/discard`). EC-4 makes the page a projection of the worker's joints. There is still no CONTROL that edits one: the page has typed
-client methods for the edit operations and nothing calls them yet.
+`joint/discard`). EC-4 makes the page a projection of the worker's joints. EC-5 adds the one control that changes a connector: a size, the
+male side, or taking the connectors off.
 
 - **A JOINT IS SESSION STATE IN THE WORKER'S DOCUMENT.** `GeometryDocument.joints` holds records for the two parts of one cut, the
   pre-connector pieces they were built from, the physical frame they were sized in and the engine's interface authority. No reader
@@ -1154,6 +1154,29 @@ client methods for the edit operations and nothing calls them yet.
   (`disclosureFor`), and the action region still draws one line. All the wording is in `connector-edit-presentation.ts`, exhaustive,
   and a test holds it to no claim about use (no fits, holds, strong, secure, printable) and no promise of an edit, because no control
   exists to make one.
+- **THE EDITOR CHANGES WHAT A CONNECTOR IS, NEVER WHERE IT SITS (EC-5).** Four values (diameter, depth, clearance, male side) and a removal.
+  Every pin is sent back with its own name and its own `(u, v)`, which the worker reads as "keep this site exactly" (`specFromEdit` reuses
+  the site object), so an edit of a size reproduces every untouched pin's point to the bit. Moving or adding a connector needs a handle
+  on the model: a pair of numbers on a cut the user cannot see by them is not a control, and the copy is held to not saying it exists.
+- **CHECK, THEN APPLY, AND THE SCREEN BETWEEN IS "Preview — not applied".** `use-connector-edit.ts` holds a DRAFT and a candidate HANDLE,
+  never geometry. Its state is keyed by the connectors it was made for (document, revision, joint, spec digest), so a draft or candidate
+  for connectors that have since changed reads as nothing; changing a value releases the candidate it made stale; a late answer for a
+  superseded check is released, not shown; a cancel says nothing; a candidate left when the editor goes is released. The apply states
+  the digest it started from, and the worker refuses it against connectors that are not those.
+- **A SIZE OUT OF RANGE IS NOT CHECKED.** The page uses the split's own range and sentence (0.01 to 1000 mm, zero clearance allowed), so one
+  size reads and is limited the same wherever it is typed; a refusal about geometry carries the worker's own sentence, the joint's own
+  refusals ours (`describeEditRefusal`), and no code is ever shown.
+- **AFTER AN APPLY THE SENTENCE IS "Connectors changed and checked" PLUS WHAT THE CHECK WAS NOT** (`CONNECTOR_EDIT_COPY.qualifier`): a
+  geometric check of the material around each connector, not a claim about strength, and not about how the pieces go together. It is shown
+  beside the control as well as in the status log, because a status log is not where a person looks after pressing a button.
+- **THE EDITOR IS MOUNTED BESIDE THE SPLIT'S RESULT, NOT INSIDE IT**, and a connector edit keeps what the split showed (the two pieces and
+  Export) through `connectorEditRevision`: the model revision that an edit, or the undo of one, produced. Equality with the current
+  revision is the whole test, and both pieces must still be parts. Undo split is NOT offered then, because the latest change is the edit
+  and the split's own record has been superseded; the edit's Undo is beside its controls and goes through `repair/undo`. Two real flows
+  found this: with the editor inside the result it vanished, with its Undo, the moment the model moved to the edit's revision.
+- **AN EDIT IS JUDGED BY THE FILES IT WRITES.** `e2e/connector-edit.spec.ts` changes a diameter through the shipped application, exports
+  both pieces and adds up their volumes with the divergence theorem written in the test: the pin minus its socket is -15.733 mm³ for
+  Ø4 / 6 / 0.2, -11.992 for Ø3, and nothing once the connectors are taken off, and undo returns the first.
 - **A SPLIT RECORDS A JOINT AND IS NEVER REFUSED FOR IT.** `recordJointFromSplit` assembles it from the split's own result at
   `SplitCandidateStore.resolve`: the clip's pieces become the bases, the returned pieces the built meshes, the plan's pins the sites. A
   plain cut records a joint with no connectors, so connectors can be added later. Why one was not recorded travels in

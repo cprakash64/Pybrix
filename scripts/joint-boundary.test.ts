@@ -230,3 +230,33 @@ describe('the page keeps no record of a connector (Stage EC-4)', () => {
         expect(read(file), rel([file])[0]).toContain('currentJoints(');
   });
 });
+
+describe("a connector is changed in one place, by the worker, on the caller's stated guards (Stage EC-5)", () => {
+  const page = under('apps/web/src/').filter(
+    (file) => !relative(ROOT, file).startsWith(`apps${sep}web${sep}src${sep}workers${sep}`),
+  );
+
+  it('proposes, applies and releases an edit in the editor hook alone, and never from a component', () => {
+    const calling = page.filter((file) =>
+      /\.(?:proposeJointEdit|commitJointEdit|discardJointEdit)\(/.test(read(file)),
+    );
+    expect(rel(calling)).toEqual(['apps/web/src/state/use-connector-edit.ts']);
+  });
+
+  it('adopts the result of an edit through the store, from the editor hook alone', () => {
+    const adopting = page.filter((file) => read(file).includes('.applyJointEditResult('));
+    expect(rel(adopting)).toEqual(['apps/web/src/state/use-connector-edit.ts']);
+  });
+
+  it('states the digest it started from when it applies, and sends a pin its own name and place', () => {
+    const hook = read(join(ROOT, 'apps/web/src/state/use-connector-edit.ts'));
+    expect(hook).toContain("expectedSpecDigest: joint.specDigest ?? ''");
+    expect(hook).toContain('pinId: pin.pinId');
+    expect(hook).toMatch(/u: pin\.u,\s*v: pin\.v,/);
+  });
+
+  it("sends nothing that moves or adds a connector: the editor's vocabulary is a size, a side and a removal", () => {
+    const hook = read(join(ROOT, 'apps/web/src/state/use-connector-edit.ts'));
+    expect(hook).not.toMatch(/siteOnInterface|\bpins: \[\s*\{\s*u:/);
+  });
+});

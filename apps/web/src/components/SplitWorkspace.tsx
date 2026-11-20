@@ -21,7 +21,9 @@ import {
   type SplitPieceView,
 } from '../state/split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
+import { ConnectorEditor } from './ConnectorEditor';
 import { ConnectorList } from './ConnectorList';
+import { MillimetreField } from './MillimetreField';
 import { useAutoSplitControls, useSplitControls } from '../state/workflow-controllers';
 import {
   SplitExportState,
@@ -185,6 +187,9 @@ export function SplitWorkspace(): ReactNode {
             <ConnectorList assembly={assembly} model={model} />
           </section>
         ) : null}
+        {/* The connectors of a cut are the worker's, not the split's: this is shown whenever the piece in view is one side of a cut whose
+            connectors can still be changed, and after a split's own result has gone from the screen. */}
+        <ConnectorEditor labels={assembly?.labels ?? {}} />
         <div
           hidden={
             (split.preview !== undefined || (split.applied !== undefined && !splitAgain)) &&
@@ -651,45 +656,6 @@ const unitSuffix = (unit: string | undefined): string | undefined => {
 const formatNumber2 = (value: number): string =>
   Number.isFinite(value) ? String(Number(value.toFixed(2))) : '—';
 
-function MillimetreField({
-  label,
-  value,
-  step = 0.1,
-  allowZero = false,
-  disabled,
-  onCommit,
-  testId,
-}: {
-  readonly label: string;
-  readonly value: number;
-  readonly step?: number;
-  readonly allowZero?: boolean;
-  readonly disabled: boolean;
-  readonly onCommit: (value: number) => void;
-  readonly testId: string;
-}): ReactNode {
-  const id = useId();
-  return (
-    <div className="split-params__field">
-      <label className="split-params__label" htmlFor={id}>
-        {label}
-      </label>
-      <NumberField
-        id={id}
-        label={`${label}, millimetres`}
-        value={value}
-        min={allowZero ? 0 : 0.01}
-        max={1000}
-        step={step}
-        suffix="mm"
-        disabled={disabled}
-        onCommit={onCommit}
-        testId={testId}
-      />
-    </div>
-  );
-}
-
 /* ---------------------------------------------------------------- result -- */
 
 function ResultSection({ split }: { readonly split: SplitControls }): ReactNode {
@@ -989,16 +955,19 @@ function SplitFooter({
         !splitAgain &&
         (split.phase === SplitPhase.Idle || split.phase === SplitPhase.Undoing) ? (
           <div className="convert-footer__actions">
-            <button
-              type="button"
-              className="secondary-action convert-footer__cancel"
-              disabled={working}
-              aria-busy={split.phase === SplitPhase.Undoing}
-              onClick={split.undo}
-              data-testid="split-undo"
-            >
-              {SPLIT_COPY.undoButton}
-            </button>
+            {/* Undo split reverses the latest change. After a connector edit that is the edit, whose own Undo is beside its controls. */}
+            {split.appliedUndoable || split.phase === SplitPhase.Undoing ? (
+              <button
+                type="button"
+                className="secondary-action convert-footer__cancel"
+                disabled={working}
+                aria-busy={split.phase === SplitPhase.Undoing}
+                onClick={split.undo}
+                data-testid="split-undo"
+              >
+                {SPLIT_COPY.undoButton}
+              </button>
+            ) : null}
             <button
               type="button"
               className="primary-action convert-footer__primary"

@@ -178,6 +178,8 @@ export interface SplitControls {
   readonly sizeNotice: SplitSizeNotice | undefined;
   readonly preview: SplitCreateResult | undefined;
   readonly applied: AppliedSplit | undefined;
+  /** Whether Undo split still reverses the latest change: false once a connector edit has superseded the split's own undo record. */
+  readonly appliedUndoable: boolean;
   readonly exportState: SplitExportState;
   readonly exportMessage: string | undefined;
   readonly setAxis: (axis: SplitAxis) => void;
@@ -267,7 +269,8 @@ export function connectorProblemOf(settings: ConnectorSettings): string | undefi
 }
 
 export function useSplitWorkflow(): SplitControls {
-  const { selectedWorkflow, model, activePartId, assembly, joints } = useWorkspaceState();
+  const { selectedWorkflow, model, activePartId, assembly, joints, connectorEditRevision } =
+    useWorkspaceState();
   const store = useWorkspaceStore();
   const client = useGeometryClient();
   const part = model?.parts.find((candidate) => candidate.partId === activePartId);
@@ -372,8 +375,17 @@ export function useSplitWorkflow(): SplitControls {
   const phase =
     rawPhase === SplitPhase.Preview && preview === undefined ? SplitPhase.Idle : rawPhase;
   /* The applied split ends when the document moves on — Undo, another edit, a new file. */
+  const stillHere = appliedState?.revision === model?.revision;
+  // A connector edit, or the undo of one, replaces the cut's two meshes and nothing else: the split's result (the pieces, Export) is
+  // still true of that revision. Undoing the SPLIT is not: its record has been superseded by the edit, so only `stillHere` offers it.
+  const continuedByConnectorEdit =
+    appliedState !== undefined &&
+    model !== undefined &&
+    connectorEditRevision === model.revision &&
+    model.parts.some((part) => part.partId === appliedState.pieceA) &&
+    model.parts.some((part) => part.partId === appliedState.pieceB);
   const applied =
-    rawPhase === SplitPhase.Undoing || appliedState?.revision === model?.revision
+    rawPhase === SplitPhase.Undoing || stillHere || continuedByConnectorEdit
       ? appliedState
       : undefined;
   const exportState =
@@ -1276,6 +1288,7 @@ export function useSplitWorkflow(): SplitControls {
     sizeNotice,
     preview,
     applied,
+    appliedUndoable: stillHere,
     exportState,
     exportMessage,
     setAxis,

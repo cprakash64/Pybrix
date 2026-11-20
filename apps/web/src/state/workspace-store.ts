@@ -16,6 +16,7 @@ import type {
   LocalRepairPlan,
   DocumentRenderSnapshot,
   EditCommitResult,
+  JointCommitResult,
   SplitCommitResult,
   SplitTransactionStatus,
   MeshBounds,
@@ -969,6 +970,12 @@ export interface WorkspaceState {
    * the descriptors it listed for one revision, and a slice whose handle is not the loaded model's is read as nothing (`jointsFor`).
    */
   readonly joints: JointsSlice | undefined;
+  /**
+   * The model revision (the application's own counter) that a connector edit, or the undo of one, produced. Such a change replaces both
+   * meshes of a cut and nothing else, so what the split showed as its result (the two pieces, Export) is still true of that revision;
+   * every other change ends it. Equality with the current revision is the whole test, so a stale value can never match.
+   */
+  readonly connectorEditRevision: number | undefined;
   /** `undefined` means no workflow is open. No workflow can be opened yet. */
   readonly selectedWorkflow: WorkflowId | undefined;
   /**
@@ -1156,6 +1163,7 @@ const MAX_STATUS_ENTRIES = 50;
 const INITIAL_STATE: WorkspaceState = {
   assembly: undefined,
   joints: undefined,
+  connectorEditRevision: undefined,
   selectedWorkflow: undefined,
   model: undefined,
   importedHandle: undefined,
@@ -2471,6 +2479,80 @@ export class WorkspaceStore {
       textureSelection: undefined,
     });
     return true;
+  }
+
+  /**
+   * Adopts the result of a connector edit: the SAME parts with new meshes, one revision on.
+   *
+   * No part id, name or placement changed, so what the page drew of the cut (the interfaces, the explode offsets, the labels) is still
+   * right and is carried to the new revision. The one it replaces is remembered under the parts' own key, so an Undo, which brings
+   * those parts back, finds the layout again instead of finding none. The joint list is NOT carried: it is the worker's, and the sync
+   * hook asks for the new revision's.
+   */
+  public applyJointEditResult(result: JointCommitResult): boolean {
+    const model = this.state.model;
+    if (
+      model?.handle.documentId !== result.handle.documentId ||
+      model.handle.revision !== result.parentRevision
+    )
+      return false;
+    const revision = this.nextModelRevision;
+    this.nextModelRevision += 1;
+    this.currentAnalysisToken = undefined;
+    this.currentRepairToken = undefined;
+    this.currentSelfIntersectionToken = undefined;
+    this.currentHoleFillToken = undefined;
+    const carried =
+      this.state.assembly?.revision === model.handle.revision ? this.state.assembly : undefined;
+    if (carried !== undefined) {
+      this.assemblyHistory.set(this.assemblyKey(model.handle.documentId, model.parts), carried);
+      if (this.assemblyHistory.size > 32) {
+        const oldest = this.assemblyHistory.keys().next().value;
+        if (oldest !== undefined) this.assemblyHistory.delete(oldest);
+      }
+    }
+    const active = result.parts.find((part) => part.partId === this.state.activePartId);
+    this.update({
+      assembly:
+        carried === undefined ? undefined : { ...carried, revision: result.handle.revision },
+      model: {
+        ...model,
+        handle: result.handle,
+        parts: result.parts,
+        render: result.render,
+        bounds: result.bounds,
+        triangleCount: result.triangleCount,
+        vertexCount: result.vertexCount,
+        residentBytes: result.residentBytes,
+        revision,
+      },
+      analysis: {
+        ...EMPTY_ANALYSIS,
+        state: AnalysisState.Idle,
+        handle: result.handle,
+        partId: this.state.activePartId,
+      },
+      selfIntersection: {
+        ...EMPTY_SELF_INTERSECTION,
+        handle: result.handle,
+        partId: this.state.activePartId,
+        band: bandForFaceCount(active?.triangleCount ?? result.triangleCount),
+      },
+      overlays: OVERLAYS_HIDDEN,
+      repair: { ...EMPTY_REPAIR, handle: result.handle, partId: this.state.activePartId },
+      holeFill: { ...EMPTY_HOLE_FILL, handle: result.handle, partId: this.state.activePartId },
+      texturePreview: undefined,
+      textureSelection: undefined,
+      splitPreview: undefined,
+      connectorEditRevision: revision,
+    });
+    return true;
+  }
+
+  /** Notes that the revision now held came from undoing a connector edit, which changed the same two meshes and nothing else. */
+  public noteConnectorEditUndone(): void {
+    const model = this.state.model;
+    if (model !== undefined) this.update({ connectorEditRevision: model.revision });
   }
 
   public applyRepairResult(result: {

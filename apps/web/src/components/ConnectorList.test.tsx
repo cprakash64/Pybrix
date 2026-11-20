@@ -214,7 +214,7 @@ describe("the connectors of an applied split are the worker's list", () => {
     };
     mount(ready([ended]));
     expect(screen.getByTestId('joint-retired')).toHaveTextContent(
-      'The record of these connectors has ended. A piece changed after the connectors were made.',
+      'These connectors can no longer be changed here. A piece changed after the connectors were made.',
     );
     expect(screen.queryByText(/Connection \d/)).toBeNull();
   });

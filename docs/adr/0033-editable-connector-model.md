@@ -1,6 +1,6 @@
 # ADR 0033 — Editable connector model
 
-Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine), Stage EC-3 (transactions) and Stage EC-4 (page projection). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
+Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine), Stage EC-3 (transactions) Stage EC-4 (page projection) and Stage EC-5 (the editor). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
 
 ## Context
 
@@ -54,6 +54,14 @@ A committed split is two plain parts. Pins and sockets are Boolean results baked
 - **What stayed.** The assembly layout's interfaces (explode offsets, labels, the footprints a later cut is tested against) are presentation and do not hold a connector. They keep their own sign test, which is about layout and not about whether a connector exists. This is a narrower change than "delete the sign test", and it is stated here so that the sign test's survival is not mistaken for the old connector record's.
 - **A repair or a fill discloses, before Apply**, that the connectors recorded with the piece's cut end as a record and remain as plain geometry, and that Undo brings the record back (true since EC-3).
 - **Not done.** No control edits a connector; the client has the methods and nothing calls them. A cut that crosses an attached pin is still refused by the page's guard, now sourced from the worker's list.
+
+## Stage EC-5 addendum — the editor
+
+- **Scope: size, male side, removal.** The editor changes what a connector is and never where it sits. Moving or adding one is a control on the model, not a pair of numbers on a cut the user cannot see by them; it is not built here and no sentence says it is.
+- **Where it lives.** Beside the split's result, not inside it, and it depends on the worker's joints and not on the split's state. A connector edit keeps what the split showed (the two pieces, Export) through a marker on the revision the edit produced; Undo split is not offered then, because the latest change is the edit.
+- **Adoption.** `applyJointEditResult` keeps every part and carries the layout to the new revision, remembering the one it replaced so an Undo, which brings those parts back, finds it. The edit's Undo is the existing `repair/undo`.
+- **Two defects found by driving the real flow**, both in the page and both invisible to the unit tests that preceded them: the editor sat inside the split's result and vanished with its Undo as soon as the model moved to the edit's revision; and the split's Export pieces went with it. Each is now held by `e2e/connector-edit.spec.ts`, which also judges the edit by the volumes of the files the application writes.
+- **Not done.** No handle on the model. No add or move. The editor appears in the Split workspace for the piece in view, not yet in the other workspaces.
 
 ## Not decided here
 
