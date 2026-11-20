@@ -4,7 +4,11 @@ import {
   connectorLimitSentence,
   describeChange,
 } from '../state/connector-edit-presentation';
-import { ConnectorEditPhase, useConnectorEdit } from '../state/use-connector-edit';
+import { ConnectorEditPhase } from '../state/use-connector-edit';
+import { useConnectorEditControls } from '../state/workflow-controllers';
+import { useWorkspaceState } from '../state/store-context';
+import { DEFAULT_WORKSPACE } from './shell/workspaces';
+import { WorkflowId } from '../state/workflows';
 import { CutFace } from './CutFace';
 import { MillimetreField } from './MillimetreField';
 import { NumberField } from './shell/number-field';
@@ -24,12 +28,19 @@ import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/pr
  */
 export function ConnectorEditor({
   labels,
+  defaultOpen = true,
 }: {
   readonly labels: Readonly<Record<string, string>>;
+  /** Open in the Split workspace, where the cut is the subject; closed in the others, where it is one section among several. */
+  readonly defaultOpen?: boolean;
 }): ReactNode {
-  const edit = useConnectorEdit();
+  const edit = useConnectorEditControls();
   const { joint, draft } = edit;
   const [selected, setSelected] = useState<number | undefined>(undefined);
+  // What the person chose by pressing the heading; until then the section is open where the cut is the subject, and open whenever there is
+  // a change to undo, so the sentence that says what was done and its Undo are never behind a closed heading. Kept HERE, not in the
+  // section, because the section is absent for the moment after an apply while the list of connectors is read again.
+  const [chosenOpen, setChosenOpen] = useState<boolean | undefined>(undefined);
   const busy =
     edit.phase === ConnectorEditPhase.Checking || edit.phase === ConnectorEditPhase.Applying;
 
@@ -63,7 +74,11 @@ export function ConnectorEditor({
   ];
 
   return (
-    <PanelSection title={CONNECTOR_EDIT_COPY.section}>
+    <PanelSection
+      title={CONNECTOR_EDIT_COPY.section}
+      open={chosenOpen ?? (defaultOpen || edit.undoable)}
+      onOpenChange={setChosenOpen}
+    >
       <div data-testid="connector-editor">
         <p className="convert-workspace__note">{CONNECTOR_EDIT_COPY.intro}</p>
         {outline === undefined ? (
@@ -334,5 +349,19 @@ function PositionField({
         testId={`connector-position-${axis}-${String(index)}`}
       />
     </div>
+  );
+}
+
+/**
+ * THE EDITOR WHEREVER A PIECE OF AN ATTACHED CUT IS IN VIEW (Stage EC-7). Every workspace mounts one of these and exactly one of them
+ * draws: the workspaces stay mounted while hidden, so an editor in each would be four copies of one set of controls with one id each.
+ * The draft, the candidate and the undo are the shared controller's, so a draft survives moving between workspaces and an edit made in
+ * one can be undone from another.
+ */
+export function ConnectorEditorSlot({ workflow }: { readonly workflow: WorkflowId }): ReactNode {
+  const { selectedWorkflow, assembly } = useWorkspaceState();
+  if ((selectedWorkflow ?? DEFAULT_WORKSPACE) !== workflow) return null;
+  return (
+    <ConnectorEditor labels={assembly?.labels ?? {}} defaultOpen={workflow === WorkflowId.Split} />
   );
 }

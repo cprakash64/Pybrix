@@ -18,7 +18,11 @@ import { WorkspaceStore } from './workspace-store';
 import { WorkflowId } from './workflows';
 import type { LoadedModel } from './model';
 import { SplitPhase, type SplitControls } from './use-split-workflow';
-import { SplitControlsProvider, useSplitControls } from './workflow-controllers';
+import {
+  ConnectorEditControlsProvider,
+  SplitControlsProvider,
+  useSplitControls,
+} from './workflow-controllers';
 import { SplitWorkspace } from '../components/SplitWorkspace';
 import { ShellLayoutProvider } from '../components/shell/shell-layout';
 const paint = vi.hoisted(() => ({
@@ -181,8 +185,10 @@ function setup(): TestSetup {
         <GeometryClientProvider client={client}>
           <ShellLayoutProvider>
             <SplitControlsProvider>
-              <SplitWorkspace />
-              {children}
+              <ConnectorEditControlsProvider>
+                <SplitWorkspace />
+                {children}
+              </ConnectorEditControlsProvider>
             </SplitControlsProvider>
           </ShellLayoutProvider>
         </GeometryClientProvider>

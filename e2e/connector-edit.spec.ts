@@ -430,3 +430,56 @@ test('a plain cut takes its first connector from the picture, and the pieces the
   expect(total).toBeGreaterThan(net(4, 6, 0.2) - 0.4);
   expect(total).toBeLessThan(net(4, 6, 0.2) + 0.4);
 });
+
+/*
+ * RELEASE 2, STAGE EC-7 — THE EDITOR IN EVERY WORKSPACE. One controller, drawn in whichever workspace is shown, so a connector can be
+ * changed from Repair, Convert or Texture as well as Split, and the draft, the apply and the undo are the same ones wherever they are
+ * reached. Judged as before, by where the exported files put the pin.
+ */
+test('the editor is in every workspace, an edit made in Convert reaches the pieces, and Split can undo it', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await open(page);
+  await splitWithDefaultPin(page);
+  const [first] = await allConnectorCentres(page);
+  if (first === undefined) throw new Error('the split wrote no connector');
+
+  const section = page.getByRole('region', { name: 'Change connectors' });
+  for (const workspace of ['repair', 'convert', 'texture', 'split']) {
+    await page.getByTestId(`workflow-${workspace}`).click();
+    await expect(section, workspace).toBeVisible();
+    await expect(section, workspace).toHaveCount(1);
+  }
+
+  // Convert: the section is collapsed there, and opens
+  await page.getByTestId('workflow-convert').click();
+  await expect(page.getByTestId('connector-editor')).toBeHidden();
+  await section.getByRole('button', { name: /Change connectors/ }).click();
+  await expect(page.getByTestId('connector-editor')).toBeVisible();
+  const u0 = Number(await page.getByTestId('connector-position-u-0').inputValue());
+  const v0 = Number(await page.getByTestId('connector-position-v-0').inputValue());
+  await page.getByTestId('connector-position-u-0').fill(String(u0 + 3));
+  await page.getByTestId('connector-position-v-0').fill(String(v0 + 4));
+  await page.getByTestId('connector-edit-check').click();
+  await expect(page.getByTestId('connector-edit-preview-label')).toHaveText(
+    'Preview — not applied',
+    { timeout: 60_000 },
+  );
+  await page.getByTestId('connector-edit-apply').click();
+  await expect(page.getByTestId('connector-edit-undo')).toBeVisible({ timeout: 60_000 });
+
+  // back in Split the pieces and Export are still there, and the pin is 5 mm from where it was
+  await page.getByTestId('workflow-split').click();
+  const [moved] = await allConnectorCentres(page);
+  if (moved === undefined) throw new Error('the edit wrote no connector');
+  expect(distance(moved, first)).toBeCloseTo(5, 1);
+
+  // the undo is the same one, reached from here
+  await expect(page.getByTestId('connector-edit-undo')).toBeVisible();
+  await page.getByTestId('connector-edit-undo').click();
+  await expect(page.getByTestId('connector-edit-undo')).toBeHidden({ timeout: 60_000 });
+  const [back] = await allConnectorCentres(page);
+  if (back === undefined) throw new Error('undo left no connector');
+  expect(distance(back, first)).toBeLessThan(0.005);
+});

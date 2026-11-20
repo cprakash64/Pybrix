@@ -306,3 +306,42 @@ describe('a connector is placed by looking at the cut, and the picture judges no
     );
   });
 });
+
+describe('the connector editor is one controller drawn in one workspace at a time (Stage EC-7)', () => {
+  const page = under('apps/web/src/').filter(
+    (file) => !relative(ROOT, file).startsWith(`apps${sep}web${sep}src${sep}workers${sep}`),
+  );
+
+  it('runs the editor hook once, in the controllers provider, so a draft belongs to the application and not to a workspace', () => {
+    const calling = page.filter((file) => /\buseConnectorEdit\(/.test(read(file)));
+    expect(rel(calling)).toEqual(
+      [
+        'apps/web/src/state/use-connector-edit.ts',
+        'apps/web/src/state/workflow-controllers.tsx',
+      ].sort(),
+    );
+  });
+
+  it('mounts the editor through its slot, once in each workspace and nowhere else', () => {
+    const mounting = page.filter((file) => /<ConnectorEditorSlot\b/.test(read(file)));
+    expect(rel(mounting)).toEqual(
+      [
+        'apps/web/src/components/ConvertWorkspace.tsx',
+        'apps/web/src/components/RepairWorkspace.tsx',
+        'apps/web/src/components/SplitWorkspace.tsx',
+        'apps/web/src/components/TextureWorkspace.tsx',
+      ].sort(),
+    );
+    const editor = read(join(ROOT, 'apps/web/src/components/ConnectorEditor.tsx'));
+    expect(editor).toMatch(
+      /\(selectedWorkflow \?\? DEFAULT_WORKSPACE\) !== workflow\) return null/,
+    );
+    // the editor itself is never mounted directly by a workspace: a second copy would be a second set of ids
+    const direct = page.filter(
+      (file) =>
+        /<ConnectorEditor\b(?!Slot)/.test(read(file)) &&
+        !relative(ROOT, file).endsWith('ConnectorEditor.tsx'),
+    );
+    expect(rel(direct)).toEqual([]);
+  });
+});

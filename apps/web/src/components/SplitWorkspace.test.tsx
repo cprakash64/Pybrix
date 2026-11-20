@@ -13,7 +13,10 @@ import { ShellLayoutProvider } from './shell/shell-layout';
 import { GeometryClientProvider } from '../runtime/client-context';
 import { GeometryClient } from '../runtime/geometry-client';
 import { WorkspaceProvider } from '../state/store-context';
-import { SplitControlsProvider } from '../state/workflow-controllers';
+import {
+  ConnectorEditControlsProvider,
+  SplitControlsProvider,
+} from '../state/workflow-controllers';
 import { WorkspaceStore } from '../state/workspace-store';
 import { WorkflowId } from '../state/workflows';
 import type { LoadedModel } from '../state/model';
@@ -100,8 +103,10 @@ function mount(configure: (store: WorkspaceStore) => void): WorkspaceStore {
       <GeometryClientProvider client={client}>
         <ShellLayoutProvider>
           <SplitControlsProvider>
-            <SplitWorkspace />
-            <SplitHud />
+            <ConnectorEditControlsProvider>
+              <SplitWorkspace />
+              <SplitHud />
+            </ConnectorEditControlsProvider>
           </SplitControlsProvider>
         </ShellLayoutProvider>
       </GeometryClientProvider>

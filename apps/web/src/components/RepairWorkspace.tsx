@@ -61,6 +61,7 @@ import {
 import { Icon } from './shell/Icon';
 import { InfoButton, InfoPanel, useInfoDisclosure, type InfoDisclosure } from './shell/info';
 import { PanelSection } from './shell/primitives';
+import { ConnectorEditorSlot } from './ConnectorEditor';
 
 /**
  * Intent first. Details retains mounted diagnostic and advanced-control owners,
@@ -122,6 +123,7 @@ export function RepairWorkspace(): ReactNode {
           )}
         </PanelSection>
         <RepairOutcome view={view} reasonInfo={reasonInfo} />
+        <ConnectorEditorSlot workflow={WorkflowId.Repair} />
       </div>
       <RepairFooter
         view={view}

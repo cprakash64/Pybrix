@@ -22,6 +22,8 @@ import {
   WorkspaceOutcome,
   useRevealOnMount,
 } from './shell/action-footer';
+import { WorkflowId } from '../state/workflows';
+import { ConnectorEditorSlot } from './ConnectorEditor';
 import { UnitInterpretationPrompt } from './UnitInterpretationPrompt';
 import { Icon } from './shell/Icon';
 import { NumberField } from './shell/number-field';
@@ -72,6 +74,7 @@ export function TextureWorkspace(): ReactNode {
             {texture.appliedRecordId === undefined ? null : <AppliedSection texture={texture} />}
           </>
         )}
+        <ConnectorEditorSlot workflow={WorkflowId.Texture} />
         <WorkspaceOutcome revealKey={texture.error}>
           {texture.error === undefined ? null : (
             <OutcomeAlert testId="texture-error">

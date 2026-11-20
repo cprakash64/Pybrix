@@ -10,13 +10,15 @@ import type {
   JointProposeResult,
   PartDescriptor,
 } from '@cadfixer/geometry-runtime';
-import { ConnectorEditor } from './ConnectorEditor';
+import { ConnectorEditor, ConnectorEditorSlot } from './ConnectorEditor';
 import { GeometryClientProvider } from '../runtime/client-context';
 import type { GeometryClient } from '../runtime/geometry-client';
 import { WorkspaceProvider } from '../state/store-context';
 import { WorkspaceStore } from '../state/workspace-store';
+import { ConnectorEditControlsProvider } from '../state/workflow-controllers';
 import { CONNECTOR_EDIT_COPY } from '../state/connector-edit-presentation';
 import type { LoadedModel } from '../state/model';
+import { WorkflowId } from '../state/workflows';
 
 /*
  * Stage EC-5. The editor as a person meets it: four values, a check, a preview that says nothing has changed, an apply and an undo. The
@@ -123,7 +125,9 @@ function mount(options: { readonly joints?: readonly JointDescriptor[] } = {}): 
   render(
     <WorkspaceProvider store={store}>
       <GeometryClientProvider client={client}>
-        <ConnectorEditor labels={{ a: 'Top', b: 'Bottom' }} />
+        <ConnectorEditControlsProvider>
+          <ConnectorEditor labels={{ a: 'Top', b: 'Bottom' }} />
+        </ConnectorEditControlsProvider>
       </GeometryClientProvider>
     </WorkspaceProvider>,
   );
@@ -417,5 +421,110 @@ describe('what the editor says', () => {
     const text = screen.getByTestId('connector-editor').textContent;
     expect(text).not.toMatch(/printable|watertight|\bfits?\b|\bstrong\b|secure|will hold/i);
     expect(text).not.toMatch(/\b(?:safe|safely|best|optimal|recommended|automatically|ideal)\b/i);
+  });
+});
+
+describe('the editor in every workspace (Stage EC-7)', () => {
+  /** All four workspaces' slots, mounted at once, as the tool panel mounts them: they stay mounted while hidden. */
+  function mountSlots(): { store: WorkspaceStore } {
+    const store = new WorkspaceStore();
+    const model: Omit<LoadedModel, 'revision'> = {
+      handle: at(1),
+      parts: [part('a'), part('b')],
+      render: { parts: [] },
+      source: {
+        fileName: 'cube.stl',
+        fileBytes: 1,
+        formatId: 'stl',
+        encoding: 'binary',
+        unit: undefined,
+        unsupportedFeatures: [],
+        externalReferences: [],
+        importedAt: 0,
+      },
+      bounds: undefined,
+      triangleCount: 24,
+      vertexCount: 72,
+      validation: { valid: true, issueCount: 0, warningCount: 0, truncated: false, codes: [] },
+      warnings: [],
+      residentBytes: 1,
+    };
+    store.commitImport(store.beginImport('cube.stl'), model);
+    store.setJoints({ status: 'READY', documentId: 'doc-1', revision: 1, joints: [joint()] });
+    const client = {
+      proposeJointEdit: vi.fn(),
+      commitJointEdit: vi.fn(),
+      discardJointEdit: vi.fn(() => ({ promise: Promise.resolve({ released: true }) })),
+      undoRepair: vi.fn(),
+    } as unknown as GeometryClient;
+    render(
+      <WorkspaceProvider store={store}>
+        <GeometryClientProvider client={client}>
+          <ConnectorEditControlsProvider>
+            <ConnectorEditorSlot workflow={WorkflowId.Repair} />
+            <ConnectorEditorSlot workflow={WorkflowId.Convert} />
+            <ConnectorEditorSlot workflow={WorkflowId.Split} />
+            <ConnectorEditorSlot workflow={WorkflowId.Texture} />
+          </ConnectorEditControlsProvider>
+        </GeometryClientProvider>
+      </WorkspaceProvider>,
+    );
+    return { store };
+  }
+  const sections = (): HTMLElement[] =>
+    screen.queryAllByRole('region', { name: CONNECTOR_EDIT_COPY.section });
+
+  it('draws one editor, in the workspace that is shown, whichever workspace that is', () => {
+    const { store } = mountSlots();
+    for (const workflow of [
+      WorkflowId.Repair,
+      WorkflowId.Convert,
+      WorkflowId.Split,
+      WorkflowId.Texture,
+    ]) {
+      act(() => {
+        store.selectWorkflow(workflow);
+      });
+      expect(sections(), workflow).toHaveLength(1);
+    }
+  });
+
+  it('opens in the Split workspace and is a collapsed section in the others', () => {
+    const { store } = mountSlots();
+    const expanded = (): string | null =>
+      screen
+        .getByRole('button', { name: new RegExp(CONNECTOR_EDIT_COPY.section) })
+        .getAttribute('aria-expanded');
+    act(() => {
+      store.selectWorkflow(WorkflowId.Split);
+    });
+    expect(expanded()).toBe('true');
+    act(() => {
+      store.selectWorkflow(WorkflowId.Convert);
+    });
+    expect(expanded()).toBe('false');
+  });
+
+  it('keeps one draft: a connector moved in one workspace is where it was left in the next', () => {
+    const { store } = mountSlots();
+    act(() => {
+      store.selectWorkflow(WorkflowId.Split);
+    });
+    fireEvent.change(screen.getByTestId('connector-position-u-0'), { target: { value: '5' } });
+    act(() => {
+      store.selectWorkflow(WorkflowId.Texture);
+    });
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(CONNECTOR_EDIT_COPY.section) }));
+    expect(screen.getByTestId('connector-position-u-0')).toHaveValue(5);
+    expect(screen.getByTestId('connector-edit-check')).toBeEnabled();
+  });
+
+  it('draws nothing in any workspace for a model with no attached cut', () => {
+    const { store } = mountSlots();
+    act(() => {
+      store.setJoints({ status: 'READY', documentId: 'doc-1', revision: 1, joints: [] });
+      store.selectWorkflow(WorkflowId.Repair);
+    });
+    expect(sections()).toHaveLength(0);
   });
 });

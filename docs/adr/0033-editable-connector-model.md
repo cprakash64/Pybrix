@@ -1,6 +1,6 @@
 # ADR 0033 — Editable connector model
 
-Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine), Stage EC-3 (transactions) Stage EC-4 (page projection) and Stage EC-5 (the editor) and Stage EC-6 (move and add). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
+Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine), Stage EC-3 (transactions) Stage EC-4 (page projection) and Stage EC-5 (the editor) and Stage EC-6 (move and add) and Stage EC-7 (every workspace). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
 
 ## Context
 
@@ -69,7 +69,14 @@ A committed split is two plain parts. Pins and sockets are Boolean results baked
 - **The page decides nothing about validity.** A drag is not clamped to the outline and two connectors can be placed too close in the draft. `joint/propose` refuses either with the engine's own sentence and the draft is kept; the alternative, a local test, would be a second implementation of the material and spacing rules.
 - **The outline is bounded.** Above 4,096 points it is omitted and the editor says it cannot draw the cut; sizes, the male side and removal still work.
 - **Adding.** Add connector appends an unnamed draft pin at the centre of the outline's bounds. The worker names it from `nextPinOrdinal`, which only grows, so a name is never given twice. A plain cut gets its first connector this way.
-- **Not done.** The editor is still only in the Split workspace. The picture shows the cut in its own axes, which are not labelled against the model's x, y and z, so it does not say which way is which on the model. No snap, no grid, no symmetric placement, no mirror between the two pieces. Whole-browser footprint with a joint retained at the retention ceiling is unmeasured.
+- **Not done.** (EC-7 has since put the editor in every workspace.) The picture shows the cut in its own axes, which are not labelled against the model's x, y and z, so it does not say which way is which on the model. No snap, no grid, no symmetric placement, no mirror between the two pieces. Whole-browser footprint with a joint retained at the retention ceiling is unmeasured.
+
+## Stage EC-7 addendum — the editor in every workspace
+
+- **Decision: one controller, one visible copy.** The editor's hook runs once in the controllers provider; each of the four workspaces mounts a slot that draws it only while that workspace is shown. Per-workspace copies were rejected: the workspaces stay mounted while hidden, so each would hold its own draft and its own undo, and four sets of controls would share ids.
+- **What it means to use.** A connector of a recorded cut can be changed from Repair, Convert, Split & Connect or Surface Texture, wherever a piece of that cut is the piece in view. In the three that are not about the cut it is a collapsed section, so it adds one row to a panel whose primary action is elsewhere. Repairing or texturing a piece still ends the record, and the disclosure that says so is unchanged; editing the connectors first is now possible without going back to Split.
+- **Defect found by driving it.** The section's open state was the section's own, and the section is absent for the moment after an apply while `joint/list` is read for the new revision. In Split (open by default) that was invisible; in the others the section returned collapsed with its Undo behind the heading. The state is now the editor's (`PanelSection` gained controlled `open` / `onOpenChange`) and the section is open while there is something to undo.
+- **Not done.** No editor in a workspace with no attached cut, and none for a cut whose record has ended (the list says why). A pending Repair or Texture preview and a pending connector check exclude each other in the worker as every candidate does; the editor then shows the worker's sentence. Whole-browser footprint at the retention ceiling is still unmeasured.
 
 ## Not decided here
 

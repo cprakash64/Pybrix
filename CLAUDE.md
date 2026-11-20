@@ -1078,7 +1078,7 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, EC-7 every workspace, ADR 0033)
 
 EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
 EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
@@ -1184,6 +1184,15 @@ two numbers to type, and add and remove for one connector.
 - **AFTER AN APPLY THE SENTENCE IS "Connectors changed and checked" PLUS WHAT THE CHECK WAS NOT** (`CONNECTOR_EDIT_COPY.qualifier`): a
   geometric check of the material around each connector, not a claim about strength, and not about how the pieces go together. It is shown
   beside the control as well as in the status log, because a status log is not where a person looks after pressing a button.
+- **THE EDITOR IS ONE CONTROLLER DRAWN IN ONE WORKSPACE AT A TIME (EC-7).** `useConnectorEdit` runs once, in `ConnectorEditControlsProvider`
+  (`workflow-controllers.tsx`), so the draft, the candidate and the undo belong to the application. Repair, Convert, Split & Connect
+  and Surface Texture each mount `ConnectorEditorSlot`, which draws the editor only while its workspace is the one shown: the workspaces
+  stay mounted while hidden, so a copy in each would be four sets of controls with the same ids. A draft survives moving between
+  workspaces, and an edit made in one can be undone from another. It is open in Split and a collapsed section elsewhere, and open
+  whenever there is a change to undo. That open state lives in the editor and is passed to `PanelSection` (new optional `open` /
+  `onOpenChange`): the section is absent for the moment after an apply while the connectors are listed again, and without this it came
+  back collapsed in the other workspaces with its Undo behind the heading. Found by driving the real flow from Convert. A boundary test
+  holds the single hook call and the four slots.
 - **THE EDITOR IS MOUNTED BESIDE THE SPLIT'S RESULT, NOT INSIDE IT**, and a connector edit keeps what the split showed (the two pieces and
   Export) through `connectorEditRevision`: the model revision that an edit, or the undo of one, produced. Equality with the current
   revision is the whole test, and both pieces must still be parts. Undo split is NOT offered then, because the latest change is the edit

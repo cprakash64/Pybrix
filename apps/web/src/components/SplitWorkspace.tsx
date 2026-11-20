@@ -21,7 +21,8 @@ import {
   type SplitPieceView,
 } from '../state/split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
-import { ConnectorEditor } from './ConnectorEditor';
+import { ConnectorEditorSlot } from './ConnectorEditor';
+import { WorkflowId } from '../state/workflows';
 import { ConnectorList } from './ConnectorList';
 import { MillimetreField } from './MillimetreField';
 import { useAutoSplitControls, useSplitControls } from '../state/workflow-controllers';
@@ -189,7 +190,7 @@ export function SplitWorkspace(): ReactNode {
         ) : null}
         {/* The connectors of a cut are the worker's, not the split's: this is shown whenever the piece in view is one side of a cut whose
             connectors can still be changed, and after a split's own result has gone from the screen. */}
-        <ConnectorEditor labels={assembly?.labels ?? {}} />
+        <ConnectorEditorSlot workflow={WorkflowId.Split} />
         <div
           hidden={
             (split.preview !== undefined || (split.applied !== undefined && !splitAgain)) &&

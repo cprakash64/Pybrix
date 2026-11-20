@@ -14,6 +14,7 @@ import { useAutoSplit, type AutoSplitControls, type AutoSplitOptions } from './u
 import { useSplitWorkflow, type SplitControls } from './use-split-workflow';
 import { useTextureWorkflow, type TextureControls } from './use-texture-workflow';
 import { useJointSync } from './use-joint-sync';
+import { useConnectorEdit, type ConnectorEditControls } from './use-connector-edit';
 import { useTopologyAnalysis, type TopologyAnalysisControls } from './use-topology-analysis';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { RepairPlanState } from './workspace-store';
@@ -40,6 +41,7 @@ const HoleFillContext = createContext<HoleFillControls | undefined>(undefined);
 const SplitContext = createContext<SplitControls | undefined>(undefined);
 const AutoSplitContext = createContext<AutoSplitControls | undefined>(undefined);
 const TextureContext = createContext<TextureControls | undefined>(undefined);
+const ConnectorEditContext = createContext<ConnectorEditControls | undefined>(undefined);
 
 export function AnalysisControlsProvider({
   children,
@@ -152,6 +154,19 @@ export function TextureControlsProvider({ children }: { readonly children: React
   return <TextureContext.Provider value={controls}>{children}</TextureContext.Provider>;
 }
 
+/**
+ * The connector editor's controller: ONE draft, ONE candidate and ONE undo for the whole application, so the editor can be shown in any
+ * workspace without each copy holding its own. It starts no work by itself; it holds a draft and releases the candidate it made.
+ */
+export function ConnectorEditControlsProvider({
+  children,
+}: {
+  readonly children: ReactNode;
+}): ReactNode {
+  const controls = useConnectorEdit();
+  return <ConnectorEditContext.Provider value={controls}>{children}</ConnectorEditContext.Provider>;
+}
+
 /** All of them, in the order their automatic work depends on. */
 /**
  * Keeps the page's list of connector joints in step with the worker, once for the whole application. It renders nothing: a hook that
@@ -173,7 +188,9 @@ export function WorkflowControllersProvider({
       <RepairControlsProvider>
         <HoleFillControlsProvider>
           <SplitControlsProvider>
-            <TextureControlsProvider>{children}</TextureControlsProvider>
+            <TextureControlsProvider>
+              <ConnectorEditControlsProvider>{children}</ConnectorEditControlsProvider>
+            </TextureControlsProvider>
           </SplitControlsProvider>
         </HoleFillControlsProvider>
       </RepairControlsProvider>
@@ -204,6 +221,10 @@ export function useSplitControls(): SplitControls {
 
 export function useAutoSplitControls(): AutoSplitControls {
   return required(useContext(AutoSplitContext), 'useAutoSplitControls');
+}
+
+export function useConnectorEditControls(): ConnectorEditControls {
+  return required(useContext(ConnectorEditContext), 'useConnectorEditControls');
 }
 
 export function useTextureControls(): TextureControls {

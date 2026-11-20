@@ -13,7 +13,10 @@ import { ShellLayoutProvider } from './shell/shell-layout';
 import { GeometryClientProvider } from '../runtime/client-context';
 import { GeometryClient } from '../runtime/geometry-client';
 import { WorkspaceProvider } from '../state/store-context';
-import { TextureControlsProvider } from '../state/workflow-controllers';
+import {
+  ConnectorEditControlsProvider,
+  TextureControlsProvider,
+} from '../state/workflow-controllers';
 import { WorkspaceStore } from '../state/workspace-store';
 import { WorkflowId } from '../state/workflows';
 import type { LoadedModel } from '../state/model';
@@ -106,9 +109,11 @@ function mount(configure: (store: WorkspaceStore) => void): WorkspaceStore {
       <GeometryClientProvider client={client}>
         <ShellLayoutProvider>
           <TextureControlsProvider>
-            <TextureWorkspace />
-            <TextureHud />
-            <TextureInspector />
+            <ConnectorEditControlsProvider>
+              <TextureWorkspace />
+              <TextureHud />
+              <TextureInspector />
+            </ConnectorEditControlsProvider>
           </TextureControlsProvider>
         </ShellLayoutProvider>
       </GeometryClientProvider>
