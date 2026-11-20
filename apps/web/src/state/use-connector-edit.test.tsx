@@ -18,7 +18,13 @@ import type { GeometryClient } from '../runtime/geometry-client';
 import { WorkspaceProvider } from './store-context';
 import { StatusSeverity, WorkspaceStore } from './workspace-store';
 import { CONNECTOR_EDIT_COPY } from './connector-edit-presentation';
-import { ConnectorEditPhase, draftProblem, useConnectorEdit } from './use-connector-edit';
+import {
+  ConnectorEditPhase,
+  draftProblem,
+  NEW_CONNECTOR,
+  useConnectorEdit,
+} from './use-connector-edit';
+import { DEFAULT_CONNECTOR } from './use-split-workflow';
 import type { LoadedModel } from './model';
 
 /*
@@ -66,6 +72,11 @@ function loaded(store: WorkspaceStore, revision = 1): void {
   };
   store.commitImport(store.beginImport('cube.stl'), model);
 }
+/** A 20 mm square cut, in the cut's own axes. */
+const OUTLINE = {
+  bounds: { minU: -10, maxU: 10, minV: -10, maxV: 10 },
+  loops: [{ role: 'OUTER' as const, points: [-10, -10, 10, -10, 10, 10, -10, 10] }],
+};
 /** A recorded cut with no connectors: no `connector` key at all, as the worker describes one. */
 function plainCut(): JointDescriptor {
   return {
@@ -76,6 +87,7 @@ function plainCut(): JointDescriptor {
     pinCount: 0,
     retainedBytes: 0,
     specDigest: 'digest-plain',
+    cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE },
   };
 }
 function joint(overrides: Partial<JointDescriptor> = {}, diameterMm = 4): JointDescriptor {
@@ -87,6 +99,7 @@ function joint(overrides: Partial<JointDescriptor> = {}, diameterMm = 4): JointD
     pinCount: 1,
     retainedBytes: 0,
     specDigest: `digest-${String(diameterMm)}`,
+    cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE },
     connector: {
       maleSide: 'A',
       axis: [-1, 0, 0],
@@ -226,18 +239,29 @@ describe('the connectors an edit starts from', () => {
       depthMm: 6,
       clearanceMm: 0.2,
       maleSide: 'A',
+      pins: [{ pinId: 'pin-1', u: 1.5, v: -2 }],
     });
     expect(result.current.changed).toBe(false);
     expect(result.current.phase).toBe(ConnectorEditPhase.Idle);
   });
 
-  it("offers nothing for a cut with no connectors, a cut whose record has ended, or another piece's cut", () => {
+  it('offers a cut with no connectors, with nothing to change until one is added', () => {
     const { store, result } = mount();
     list(store, [plainCut()]);
-    expect(result.current.joint).toBeUndefined();
+    expect(result.current.joint?.jointId).toBe('doc-1/joint/1');
+    expect(result.current.draft?.pins).toEqual([]);
+    expect(result.current.changed).toBe(false);
+  });
+
+  it("offers nothing for a cut whose record has ended, another piece's cut, or a cut with no face to show", () => {
+    const { store, result } = mount();
     list(store, [joint({ status: 'RETIRED', reason: 'GEOMETRY_CHANGED' })]);
     expect(result.current.joint).toBeUndefined();
     list(store, [joint({ aPartId: 'x', bPartId: 'y' })]);
+    expect(result.current.joint).toBeUndefined();
+    list(store, [
+      { ...plainCut(), cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: undefined } },
+    ]);
     expect(result.current.joint).toBeUndefined();
   });
 
@@ -253,11 +277,11 @@ describe('the connectors an edit starts from', () => {
     });
     expect(client.proposeJointEdit).not.toHaveBeenCalled();
     expect(
-      draftProblem({ diameterMm: 4, depthMm: 6, clearanceMm: 0, maleSide: 'A' }),
+      draftProblem({ diameterMm: 4, depthMm: 6, clearanceMm: 0, maleSide: 'A', pins: [] }),
     ).toBeUndefined();
-    expect(draftProblem({ diameterMm: 4, depthMm: 6, clearanceMm: -1, maleSide: 'A' })).toMatch(
-      /Clearance/,
-    );
+    expect(
+      draftProblem({ diameterMm: 4, depthMm: 6, clearanceMm: -1, maleSide: 'A', pins: [] }),
+    ).toMatch(/Clearance/);
   });
 
   it('will not check a draft that changes nothing', () => {
@@ -581,5 +605,142 @@ describe('refusals and the things that supersede a check', () => {
     expect(store.getSnapshot().model?.handle.revision).toBe(1);
     expect(result.current.phase).toBe(ConnectorEditPhase.Idle);
     expect(result.current.message).toBe('That model is no longer available.');
+  });
+});
+
+describe('placing connectors on the cut', () => {
+  it('moves one connector in the draft, keeps its name, and sends the new place with the same name', () => {
+    const { store, result, client } = mount();
+    list(store, [joint()]);
+    act(() => {
+      result.current.movePin(0, 4, 5);
+    });
+    expect(result.current.draft?.pins).toEqual([{ pinId: 'pin-1', u: 4, v: 5 }]);
+    expect(result.current.changed).toBe(true);
+    expect(result.current.canCheck).toBe(true);
+    act(() => {
+      result.current.check();
+    });
+    const edit = (client.proposeJointEdit.mock.calls[0] as unknown[])[3] as JointEditRequest;
+    expect(edit).toMatchObject({ kind: 'SET_CONNECTORS', pins: [{ pinId: 'pin-1', u: 4, v: 5 }] });
+  });
+
+  it('ignores a place that is not a number, and an index that is not a connector', () => {
+    const { store, result } = mount();
+    list(store, [joint()]);
+    act(() => {
+      result.current.movePin(0, Number.NaN, 1);
+      result.current.movePin(7, 1, 1);
+    });
+    expect(result.current.changed).toBe(false);
+  });
+
+  it('adds a connector at the middle of the cut with no name, up to the cut limit', () => {
+    const { store, result, client } = mount();
+    list(store, [joint()]);
+    let index: number | undefined;
+    act(() => {
+      index = result.current.addPin();
+    });
+    expect(index).toBe(1);
+    expect(result.current.draft?.pins).toEqual([
+      { pinId: 'pin-1', u: 1.5, v: -2 },
+      { u: 0, v: 0 },
+    ]);
+    act(() => {
+      result.current.check();
+    });
+    const edit = (client.proposeJointEdit.mock.calls[0] as unknown[])[3] as {
+      readonly pins: readonly object[];
+    };
+    expect(edit.pins).toEqual([
+      { pinId: 'pin-1', u: 1.5, v: -2 },
+      { u: 0, v: 0 },
+    ]);
+    // the cut holds four: three more fill it, and a fifth is not added
+    for (let i = 0; i < 2; i += 1)
+      act(() => {
+        result.current.addPin();
+      });
+    act(() => {
+      index = result.current.addPin();
+    });
+    expect(index).toBeUndefined();
+    expect(result.current.draft?.pins).toHaveLength(4);
+  });
+
+  it('adds the first connector to a plain cut, at the split’s own sizes', () => {
+    const { store, result, client } = mount();
+    list(store, [plainCut()]);
+    expect(result.current.canCheck).toBe(false);
+    act(() => {
+      result.current.addPin();
+    });
+    expect(result.current.canCheck).toBe(true);
+    act(() => {
+      result.current.check();
+    });
+    expect((client.proposeJointEdit.mock.calls[0] as unknown[])[3]).toEqual({
+      kind: 'SET_CONNECTORS',
+      maleSide: 'A',
+      diameterMm: NEW_CONNECTOR.diameterMm,
+      depthMm: NEW_CONNECTOR.depthMm,
+      clearanceMm: NEW_CONNECTOR.clearanceMm,
+      pins: [{ u: 0, v: 0 }],
+    });
+  });
+
+  it('takes a connector out, and checks taking out the last one as taking the connectors off', () => {
+    const { store, result, client } = mount();
+    list(store, [joint()]);
+    act(() => {
+      result.current.removePin(0);
+    });
+    expect(result.current.draft?.pins).toEqual([]);
+    expect(result.current.canCheck).toBe(true);
+    act(() => {
+      result.current.check();
+    });
+    expect((client.proposeJointEdit.mock.calls[0] as unknown[])[3]).toEqual({
+      kind: 'REMOVE_CONNECTORS',
+    });
+  });
+
+  it('does not check a cut with no connectors and none added, whatever sizes were typed', () => {
+    const { store, result, client } = mount();
+    list(store, [plainCut()]);
+    act(() => {
+      result.current.setDraft({ diameterMm: 3 });
+    });
+    expect(result.current.changed).toBe(true);
+    expect(result.current.canCheck).toBe(false);
+    act(() => {
+      result.current.check();
+    });
+    expect(client.proposeJointEdit).not.toHaveBeenCalled();
+  });
+
+  it('reads more connectors than the cut holds as a problem, in the sentence the cut gives', () => {
+    expect(
+      draftProblem(
+        {
+          diameterMm: 4,
+          depthMm: 6,
+          clearanceMm: 0.2,
+          maleSide: 'A',
+          pins: [0, 1, 2, 3, 4].map((u) => ({ u, v: 0 })),
+        },
+        4,
+      ),
+    ).toBe('A cut holds at most 4 connectors.');
+  });
+
+  it("starts a new connector at the split's own defaults", () => {
+    expect(NEW_CONNECTOR).toEqual({
+      diameterMm: DEFAULT_CONNECTOR.diameter,
+      depthMm: DEFAULT_CONNECTOR.depth,
+      clearanceMm: DEFAULT_CONNECTOR.clearance,
+      maleSide: DEFAULT_CONNECTOR.maleSide,
+    });
   });
 });

@@ -1092,6 +1092,21 @@ export interface JointDescriptor {
    * reading. Present for an attached joint only.
    */
   readonly specDigest?: string;
+  /**
+   * The face of the cut, for a view the page draws and a pin is placed on: the outline in the cut's own two axes, and the factor that
+   * turns a length in those axes into millimetres. Present for an attached joint, with or without connectors.
+   */
+  readonly cutFace?: {
+    /** Millimetres in one unit of the cut's own axes (`u`, `v`): the unit the pins' positions are stated in. */
+    readonly mmPerCoordinate: number;
+    /** The most connectors one cut holds. */
+    readonly maxPins: number;
+    /**
+     * The cut's outline, or `undefined` when it has too many points to describe. DISPLAY ONLY: it decides nothing, and a position the
+     * page proposes is judged by the worker against the real cut, never against this.
+     */
+    readonly outline: JointOutline | undefined;
+  };
   /** The connectors, in the page's own terms: names, positions on the cut and sizes. Present for an attached joint with connectors. */
   readonly connector?: {
     readonly maleSide: 'A' | 'B';
@@ -1114,6 +1129,20 @@ export interface JointDescriptor {
       readonly clearanceMm: number;
     }[];
   };
+}
+
+/** The outline of a cut in its own axes: closed loops, each a flat `[u0, v0, u1, v1, …]`, material inside an OUTER loop and not inside a HOLE. */
+export interface JointOutline {
+  readonly bounds: {
+    readonly minU: number;
+    readonly maxU: number;
+    readonly minV: number;
+    readonly maxV: number;
+  };
+  readonly loops: readonly {
+    readonly role: 'OUTER' | 'HOLE';
+    readonly points: readonly number[];
+  }[];
 }
 
 export interface JointListPayload {

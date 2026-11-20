@@ -1,6 +1,6 @@
 # ADR 0033 — Editable connector model
 
-Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine), Stage EC-3 (transactions) Stage EC-4 (page projection) and Stage EC-5 (the editor). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
+Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine), Stage EC-3 (transactions) Stage EC-4 (page projection) and Stage EC-5 (the editor) and Stage EC-6 (move and add). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
 
 ## Context
 
@@ -57,11 +57,19 @@ A committed split is two plain parts. Pins and sockets are Boolean results baked
 
 ## Stage EC-5 addendum — the editor
 
-- **Scope: size, male side, removal.** The editor changes what a connector is and never where it sits. Moving or adding one is a control on the model, not a pair of numbers on a cut the user cannot see by them; it is not built here and no sentence says it is.
+- **Scope: size, male side, removal.** EC-5 changed what a connector is and not where it sits: a pair of numbers on a cut the user cannot see by them is not a control, so moving or adding one waited for a view of the cut. EC-6 built that view.
 - **Where it lives.** Beside the split's result, not inside it, and it depends on the worker's joints and not on the split's state. A connector edit keeps what the split showed (the two pieces, Export) through a marker on the revision the edit produced; Undo split is not offered then, because the latest change is the edit.
 - **Adoption.** `applyJointEditResult` keeps every part and carries the layout to the new revision, remembering the one it replaced so an Undo, which brings those parts back, finds it. The edit's Undo is the existing `repair/undo`.
 - **Two defects found by driving the real flow**, both in the page and both invisible to the unit tests that preceded them: the editor sat inside the split's result and vanished with its Undo as soon as the model moved to the edit's revision; and the split's Export pieces went with it. Each is now held by `e2e/connector-edit.spec.ts`, which also judges the edit by the volumes of the files the application writes.
-- **Not done.** No handle on the model. No add or move. The editor appears in the Split workspace for the piece in view, not yet in the other workspaces.
+- **Not done here.** Move and add arrived in EC-6 (below). The editor appears in the Split workspace for the piece in view, not yet in the other workspaces.
+
+## Stage EC-6 addendum — move and add
+
+- **Decision: a 2D picture of the cut, not handles on the model.** The worker describes the cut's outline in the cut's own axes (`JointDescriptor.cutFace`: outline loops, `mmPerCoordinate`, the most pins a cut holds); the page draws it as an SVG. A 3D handle would need the viewport to hold a pick plane, a drag controller and a second statement of where the cut is; the picture needs none of that, is testable in jsdom and Playwright, and leaves the viewport untouched. Cost: the person looks at a flat view of the cut and not at the model; the connector markers in the viewport still show the pins in 3D.
+- **The page decides nothing about validity.** A drag is not clamped to the outline and two connectors can be placed too close in the draft. `joint/propose` refuses either with the engine's own sentence and the draft is kept; the alternative, a local test, would be a second implementation of the material and spacing rules.
+- **The outline is bounded.** Above 4,096 points it is omitted and the editor says it cannot draw the cut; sizes, the male side and removal still work.
+- **Adding.** Add connector appends an unnamed draft pin at the centre of the outline's bounds. The worker names it from `nextPinOrdinal`, which only grows, so a name is never given twice. A plain cut gets its first connector this way.
+- **Not done.** The editor is still only in the Split workspace. The picture shows the cut in its own axes, which are not labelled against the model's x, y and z, so it does not say which way is which on the model. No snap, no grid, no symmetric placement, no mirror between the two pieces. Whole-browser footprint with a joint retained at the retention ceiling is unmeasured.
 
 ## Not decided here
 

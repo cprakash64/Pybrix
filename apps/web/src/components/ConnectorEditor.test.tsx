@@ -40,6 +40,11 @@ const at = (revision: number): DocumentHandle => ({
   documentId: 'doc-1' as DocumentId,
   revision,
 });
+const OUTLINE = {
+  bounds: { minU: -10, maxU: 10, minV: -10, maxV: 10 },
+  loops: [{ role: 'OUTER' as const, points: [-10, -10, 10, -10, 10, 10, -10, 10] }],
+};
+const CUT_FACE = { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE };
 const joint = (diameterMm = 4, maleSide: 'A' | 'B' = 'A'): JointDescriptor => ({
   jointId: 'doc-1/joint/1',
   aPartId: 'a',
@@ -48,6 +53,7 @@ const joint = (diameterMm = 4, maleSide: 'A' | 'B' = 'A'): JointDescriptor => ({
   pinCount: 1,
   retainedBytes: 0,
   specDigest: `digest-${String(diameterMm)}-${maleSide}`,
+  cutFace: CUT_FACE,
   connector: {
     maleSide,
     axis: [-1, 0, 0],
@@ -65,6 +71,7 @@ const plainCut: JointDescriptor = {
   pinCount: 0,
   retainedBytes: 0,
   specDigest: 'digest-plain',
+  cutFace: CUT_FACE,
 };
 const candidate = {
   candidateId: 'c-1',
@@ -157,10 +164,25 @@ describe('the editor shows the connectors as they are', () => {
     expect(screen.getByTestId('connector-edit-remove')).toBeEnabled();
   });
 
-  it('says in its first sentence that where a connector sits does not change here', () => {
+  it('draws the cut with the connector on it and lists where it sits, in millimetres', () => {
     mount();
     expect(screen.getByText(CONNECTOR_EDIT_COPY.intro)).toBeInTheDocument();
-    expect(CONNECTOR_EDIT_COPY.intro).toMatch(/Where they sit does not change/);
+    expect(screen.getByTestId('cut-face-pin-0')).toHaveAttribute('data-u', '1');
+    expect(screen.getByTestId('connector-position-u-0')).toHaveValue(1);
+    expect(screen.getByTestId('connector-position-v-0')).toHaveValue(2);
+  });
+
+  it('says so, and still offers the sizes and the removal, for a cut it cannot draw', () => {
+    mount({
+      joints: [{ ...joint(), cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: undefined } }],
+    });
+    expect(screen.getByTestId('connector-edit-no-face')).toHaveTextContent(
+      CONNECTOR_EDIT_COPY.noFace,
+    );
+    expect(screen.queryByTestId('cut-face')).toBeNull();
+    expect(screen.queryByTestId('connector-edit-add')).toBeNull();
+    expect(screen.getByTestId('connector-edit-diameter')).toBeEnabled();
+    expect(screen.getByTestId('connector-edit-remove')).toBeEnabled();
   });
 
   it('draws nothing for a cut whose connectors cannot be changed', () => {
@@ -291,8 +313,102 @@ describe('checking and applying', () => {
   });
 });
 
+describe('moving, adding and taking out a connector', () => {
+  it('typing a position moves the connector in the draft and makes the change checkable', () => {
+    mount();
+    fireEvent.change(screen.getByTestId('connector-position-u-0'), { target: { value: '3.5' } });
+    expect(screen.getByTestId('cut-face-pin-0')).toHaveAttribute('data-u', '3.5');
+    expect(screen.getByTestId('cut-face-pin-0')).toHaveAttribute('data-v', '2');
+    expect(screen.getByTestId('connector-edit-check')).toBeEnabled();
+  });
+
+  it('moves a connector with the arrow keys by half a millimetre, and takes it out with Delete', () => {
+    mount();
+    const pin = screen.getByTestId('cut-face-pin-0');
+    fireEvent.keyDown(pin, { key: 'ArrowRight' });
+    expect(screen.getByTestId('cut-face-pin-0')).toHaveAttribute('data-u', '1.5');
+    fireEvent.keyDown(screen.getByTestId('cut-face-pin-0'), { key: 'ArrowUp', shiftKey: true });
+    expect(screen.getByTestId('cut-face-pin-0')).toHaveAttribute('data-v', '4.5');
+    fireEvent.keyDown(screen.getByTestId('cut-face-pin-0'), { key: 'Delete' });
+    expect(screen.queryByTestId('cut-face-pin-0')).toBeNull();
+    // taking out the last one is taking the connectors off, and the check says so
+    expect(screen.getByTestId('connector-edit-check')).toBeEnabled();
+  });
+
+  it('follows a drag across the picture, by where the pointer is over the cut', () => {
+    mount();
+    const svg = screen.getByTestId('cut-face');
+    // 24.8 wide by 24.8 tall in the view (20 plus a margin of 2.4 each side), drawn at 10 px a unit
+    svg.getBoundingClientRect = (): DOMRect =>
+      ({
+        left: 0,
+        top: 0,
+        width: 248,
+        height: 248,
+        right: 248,
+        bottom: 248,
+        x: 0,
+        y: 0,
+      }) as DOMRect;
+    const pin = screen.getByTestId('cut-face-pin-0');
+    // the connector sits at (1, 2): x = (1 + 12.4) * 10 = 134, y = (-2 + 12.4) * 10 = 104
+    fireEvent.pointerDown(pin, { clientX: 134, clientY: 104, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 164, clientY: 74, pointerId: 1 });
+    expect(Number(screen.getByTestId('cut-face-pin-0').getAttribute('data-u'))).toBeCloseTo(4, 6);
+    expect(Number(screen.getByTestId('cut-face-pin-0').getAttribute('data-v'))).toBeCloseTo(5, 6);
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(screen.getByTestId('cut-face')).toHaveAttribute('data-dragging', 'false');
+    expect(screen.getByTestId('connector-position-u-0')).toHaveValue(4);
+  });
+
+  it('adds a connector at the middle of the cut, up to the cut limit, and says when it is full', () => {
+    mount({ joints: [plainCut] });
+    expect(screen.getByTestId('connector-edit-none-yet')).toBeInTheDocument();
+    expect(screen.queryByTestId('connector-edit-remove')).toBeNull();
+    expect(screen.getByTestId('connector-edit-check')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('connector-edit-add'));
+    expect(screen.getByTestId('cut-face-pin-0')).toHaveAttribute('data-u', '0');
+    expect(screen.getByTestId('cut-face-pin-0')).toHaveAttribute('data-v', '0');
+    expect(screen.getByTestId('connector-edit-check')).toBeEnabled();
+    for (let i = 0; i < 3; i += 1) fireEvent.click(screen.getByTestId('connector-edit-add'));
+    expect(screen.getByTestId('connector-edit-add')).toBeDisabled();
+    expect(screen.getByTestId('connector-edit-add-note')).toHaveTextContent(
+      'A cut holds at most 4 connectors.',
+    );
+  });
+
+  it('sends a moved connector with its name and its new place, and an added one with no name', async () => {
+    const { propose } = mount();
+    propose.mockReturnValue(later(proposal(joint(4))));
+    fireEvent.change(screen.getByTestId('connector-position-v-0'), { target: { value: '-3' } });
+    fireEvent.click(screen.getByTestId('connector-edit-add'));
+    fireEvent.click(screen.getByTestId('connector-edit-check'));
+    await settle();
+    expect(propose.mock.calls[0]?.[3]).toEqual({
+      kind: 'SET_CONNECTORS',
+      maleSide: 'A',
+      diameterMm: 4,
+      depthMm: 6,
+      clearanceMm: 0.2,
+      pins: [
+        { pinId: 'pin-1', u: 1, v: -3 },
+        { u: 0, v: 0 },
+      ],
+    });
+  });
+
+  it('checks taking every connector out as a removal', async () => {
+    const { propose } = mount();
+    propose.mockReturnValue(later(proposal(plainCut)));
+    fireEvent.click(screen.getByTestId('connector-position-remove-0'));
+    fireEvent.click(screen.getByTestId('connector-edit-check'));
+    await settle();
+    expect(propose.mock.calls[0]?.[3]).toEqual({ kind: 'REMOVE_CONNECTORS' });
+  });
+});
+
 describe('what the editor says', () => {
-  it('makes no claim about use and promises neither a move nor an addition', async () => {
+  it('makes no claim about use and calls no place good before the check has', async () => {
     const { propose } = mount();
     propose.mockReturnValue(later(proposal(joint(3))));
     fireEvent.change(screen.getByTestId('connector-edit-diameter'), { target: { value: '3' } });
@@ -300,6 +416,6 @@ describe('what the editor says', () => {
     await settle();
     const text = screen.getByTestId('connector-editor').textContent;
     expect(text).not.toMatch(/printable|watertight|\bfits?\b|\bstrong\b|secure|will hold/i);
-    expect(text).not.toMatch(/\b(?:move|moves|drag|add|adds)\b(?! to)/i);
+    expect(text).not.toMatch(/\b(?:safe|safely|best|optimal|recommended|automatically|ideal)\b/i);
   });
 });

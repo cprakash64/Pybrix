@@ -255,8 +255,54 @@ describe("a connector is changed in one place, by the worker, on the caller's st
     expect(hook).toMatch(/u: pin\.u,\s*v: pin\.v,/);
   });
 
-  it("sends nothing that moves or adds a connector: the editor's vocabulary is a size, a side and a removal", () => {
+  it("sends a connector's place only as the pair of numbers the person set, never as a site, a frame or a point of the model", () => {
     const hook = read(join(ROOT, 'apps/web/src/state/use-connector-edit.ts'));
-    expect(hook).not.toMatch(/siteOnInterface|\bpins: \[\s*\{\s*u:/);
+    expect(hook).not.toMatch(/siteOnInterface|interfaceCoordinates|\blocal:|\bcenter\b/);
+  });
+});
+
+describe('a connector is placed by looking at the cut, and the picture judges nothing (Stage EC-6)', () => {
+  const page = under('apps/web/src/').filter(
+    (file) => !relative(ROOT, file).startsWith(`apps${sep}web${sep}src${sep}workers${sep}`),
+  );
+  const face = read(join(ROOT, 'apps/web/src/components/CutFace.tsx'));
+  const arithmetic = read(join(ROOT, 'apps/web/src/state/cut-face-view.ts'));
+
+  it('draws the cut from the worker description alone, importing no runtime, worker or model value', () => {
+    for (const source of [face, arithmetic])
+      for (const line of source.split('\n').filter((l) => /^import |^} from /.test(l)))
+        expect(line).not.toMatch(/runtime\/|workers\/|@cadfixer\/(?!geometry-runtime)|three/);
+    // the only runtime package symbol either imports is a TYPE
+    expect(face).toMatch(/import type \{ JointOutline \} from '@cadfixer\/geometry-runtime'/);
+    expect(arithmetic).toMatch(/import type \{ JointOutline \} from '@cadfixer\/geometry-runtime'/);
+  });
+
+  it('does not keep a connector inside the outline or away from another: the worker alone judges a place', () => {
+    for (const source of [face, arithmetic].map((text) =>
+      text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''),
+    ))
+      expect(source).not.toMatch(
+        /pointInPolygon|insideOutline|minimumPinSpacing|pinsTooClose|\bclamp/i,
+      );
+  });
+
+  it('reads the cut face description in the editor and the hook alone', () => {
+    const reading = page.filter((file) => /\.cutFace\b/.test(read(file)));
+    expect(rel(reading)).toEqual(
+      [
+        'apps/web/src/components/ConnectorEditor.tsx',
+        'apps/web/src/state/use-connector-edit.ts',
+      ].sort(),
+    );
+  });
+
+  it('describes the outline in the one module that reads the cut, and nowhere else', () => {
+    const describing = everything.filter((file) => read(file).includes('describeCutOutline('));
+    expect(rel(describing)).toEqual(
+      [
+        'packages/geometry-runtime/src/connector-rebuild.ts',
+        'packages/geometry-runtime/src/joint-descriptors.ts',
+      ].sort(),
+    );
   });
 });

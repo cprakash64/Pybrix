@@ -8,8 +8,9 @@ import type { JointDescriptor } from '@cadfixer/geometry-runtime';
  *
  * WHAT THIS FILE WILL NOT SAY. Nothing here claims a connector fits, holds, is strong, is secure or is printable: Pybrix checks where
  * material is and how thick it is around a connector, and nothing about use. And nothing here offers more than the editor can do: it
- * changes the SIZE of the connectors of a cut, their male side, and removes them. It does not move one or add one, and no sentence says
- * it does.
+ * changes the size of the connectors of a cut, which piece carries the pin, where each connector sits on the cut, how many there are
+ * (up to the cut's limit) and takes them off. It does not judge a position itself: whether one has room is what Check change answers,
+ * and no sentence here says a position is good before that.
  */
 
 /** Said BEFORE a repair or a fill is applied to a piece whose cut has connectors Pybrix can still edit. */
@@ -71,7 +72,18 @@ export function disclosureFor(
 export const CONNECTOR_EDIT_COPY = Object.freeze({
   section: 'Change connectors',
   intro:
-    'Change the size of the connectors on this cut, swap which piece carries the pin, or take the connectors off. Where they sit does not change.',
+    'Change the size of the connectors on this cut, which piece carries the pin, and where each one sits. Add a connector to the cut, or take them off.',
+  facePicture:
+    'The cut, drawn in its own two axes. Drag a connector, or select it and use the arrow keys. Pybrix checks each position when you check the change.',
+  facePictureGroup: 'Connector positions',
+  addConnector: 'Add connector',
+  addConnectorNote: 'A new connector starts at the middle of the cut. Move it where you want it.',
+  noConnectorsYet: 'This cut has no connectors. New ones start at the sizes below.',
+  across: 'Across',
+  along: 'Along',
+  removeOne: 'Remove',
+  noFace:
+    'Pybrix cannot draw this cut, so its connectors cannot be moved or added here. Their sizes can still be changed and they can be taken off.',
   diameter: 'Pin diameter',
   depth: 'Depth',
   clearance: 'Clearance, per side',
@@ -100,6 +112,10 @@ export const CONNECTOR_EDIT_COPY = Object.freeze({
   nothingToChange: 'The connectors on this cut can no longer be changed here.',
 });
 
+/** What the cut says when it holds as many connectors as it can. The same sentence the draft's own check gives. */
+export const connectorLimitSentence = (max: number): string =>
+  `A cut holds at most ${String(max)} connectors.`;
+
 /** The sentence for a refusal of an edit: ours for the refusals about the joint, the worker's own for the ones about the geometry. */
 export function describeEditRefusal(code: unknown, workerMessage: string): string {
   switch (code) {
@@ -123,7 +139,14 @@ export function describeEditRefusal(code: unknown, workerMessage: string): strin
 
 const mm = (value: number): string => String(Number(value.toFixed(2)));
 
-/** What a change to the size or the male side would do, in one sentence: only the values that differ are named. */
+const connectorCount = (count: number): string =>
+  count === 1 ? '1 connector' : `${String(count)} connectors`;
+
+/**
+ * What a change would do, in one sentence: the connectors added, taken out and moved, then only the values that differ. A moved
+ * connector is one that keeps its name and has a different place; the worker names a new connector, so a name that was not there before
+ * is an added one.
+ */
 export function describeChange(
   before: JointDescriptor,
   after: JointDescriptor,
@@ -131,17 +154,30 @@ export function describeChange(
 ): string {
   const was = before.connector;
   const now = after.connector;
-  if (was === undefined || now === undefined) return CONNECTOR_EDIT_COPY.removeReady;
-  const [a] = was.pins;
-  const [b] = now.pins;
-  if (a === undefined || b === undefined) return CONNECTOR_EDIT_COPY.ready;
+  if (now === undefined) return CONNECTOR_EDIT_COPY.removeReady;
   const parts: string[] = [];
-  if (a.diameterMm !== b.diameterMm)
-    parts.push(`pin diameter ${mm(a.diameterMm)} to ${mm(b.diameterMm)} mm`);
-  if (a.depthMm !== b.depthMm) parts.push(`depth ${mm(a.depthMm)} to ${mm(b.depthMm)} mm`);
-  if (a.clearanceMm !== b.clearanceMm)
-    parts.push(`clearance ${mm(a.clearanceMm)} to ${mm(b.clearanceMm)} mm`);
-  if (was.maleSide !== now.maleSide) parts.push(`the pin moves to ${sideLabel(now.maleSide)}`);
+  const earlier = new Map((was?.pins ?? []).map((pin) => [pin.pinId, pin]));
+  const added = now.pins.filter((pin) => !earlier.has(pin.pinId)).length;
+  const kept = new Set(now.pins.map((pin) => pin.pinId));
+  const taken = (was?.pins ?? []).filter((pin) => !kept.has(pin.pinId)).length;
+  const moved = now.pins.filter((pin) => {
+    const old = earlier.get(pin.pinId);
+    return old !== undefined && (old.u !== pin.u || old.v !== pin.v);
+  }).length;
+  if (added > 0) parts.push(`${connectorCount(added)} added`);
+  if (taken > 0) parts.push(`${connectorCount(taken)} taken out`);
+  if (moved > 0) parts.push(`${connectorCount(moved)} moved`);
+  const [a] = was?.pins ?? [];
+  const [b] = now.pins;
+  if (a !== undefined && b !== undefined) {
+    if (a.diameterMm !== b.diameterMm)
+      parts.push(`pin diameter ${mm(a.diameterMm)} to ${mm(b.diameterMm)} mm`);
+    if (a.depthMm !== b.depthMm) parts.push(`depth ${mm(a.depthMm)} to ${mm(b.depthMm)} mm`);
+    if (a.clearanceMm !== b.clearanceMm)
+      parts.push(`clearance ${mm(a.clearanceMm)} to ${mm(b.clearanceMm)} mm`);
+  }
+  if (was !== undefined && was.maleSide !== now.maleSide)
+    parts.push(`the pin moves to ${sideLabel(now.maleSide)}`);
   return parts.length === 0
     ? CONNECTOR_EDIT_COPY.ready
     : `${parts.join('; ').replace(/^./, (c) => c.toUpperCase())}. ${CONNECTOR_EDIT_COPY.ready}`;

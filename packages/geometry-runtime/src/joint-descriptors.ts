@@ -1,5 +1,6 @@
 import {
   applyPartTransform,
+  MAX_PINS_PER_JOINT,
   jointAttachment,
   meshByteLength,
   retiredJoints,
@@ -8,7 +9,7 @@ import {
   type GeometryDocument,
   type PartTransform,
 } from '@cadfixer/mesh-core';
-import { jointSpecDigest } from './connector-rebuild';
+import { describeCutOutline, jointSpecDigest } from './connector-rebuild';
 import type { JointDescriptor } from './protocol';
 
 /**
@@ -47,6 +48,15 @@ export function describeJoints(document: GeometryDocument): readonly JointDescri
         pinCount: record.connector?.elements.length ?? 0,
         retainedBytes,
         ...(attachment.attached ? { specDigest: jointSpecDigest(record) } : {}),
+        ...(attachment.attached
+          ? {
+              cutFace: {
+                mmPerCoordinate: record.frame.mmPerCoordinate,
+                maxPins: MAX_PINS_PER_JOINT,
+                outline: describeCutOutline(record),
+              },
+            }
+          : {}),
         ...(attachment.attached && record.connector !== undefined
           ? {
               connector: {

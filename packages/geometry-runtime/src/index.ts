@@ -27,6 +27,7 @@ export type {
   ModelReleaseResult,
   PartDescriptor,
   JointDescriptor,
+  JointOutline,
   JointListPayload,
   JointListResult,
   JointProposePayload,
@@ -268,6 +269,7 @@ export type {
 } from './split-candidates';
 export type { ConnectorManifest } from './connector-plan';
 export {
+  describeCutOutline,
   jointAuthorityOf,
   jointSpecDigest,
   pinCutOf,

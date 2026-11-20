@@ -18,6 +18,7 @@ import {
 } from '@cadfixer/mesh-core';
 import { CancellationSource, isAppError, uncancellable } from '@cadfixer/shared';
 import {
+  describeCutOutline,
   describeJoints,
   documentByteLength,
   isDocument,
@@ -108,9 +109,11 @@ async function splitCube(options: {
   readonly unit?: GeometryDocument['unit'];
   readonly transform?: PartTransform;
   readonly store?: SplitCandidateStore;
+  /** A mesh other than the 20 mm cube the plane x = 0 halves. */
+  readonly mesh?: CanonicalMesh;
 }): Promise<Split> {
   const store = options.store ?? splitCandidates;
-  const mesh = cube(20);
+  const mesh = options.mesh ?? cube(20);
   const base = singlePartDocument(mesh, options.unit === undefined ? {} : { unit: options.unit });
   const [only] = base.parts;
   if (only === undefined) throw new Error('expected a part');
@@ -182,6 +185,126 @@ const set = (
   clearanceMm: 0.2,
   pins: [{ pinId: 'pin-1', u: 0, v: 0 }],
   ...overrides,
+});
+
+/** The signed volume of a closed indexed mesh, by the divergence theorem, in cubic coordinate units. */
+function signedVolume(mesh: CanonicalMesh): number {
+  let volume = 0;
+  const { positions: p, indices: ix } = mesh;
+  for (let t = 0; t + 2 < ix.length; t += 3) {
+    const a = 3 * (ix[t] ?? 0),
+      b = 3 * (ix[t + 1] ?? 0),
+      c = 3 * (ix[t + 2] ?? 0);
+    const ax = p[a] ?? 0,
+      ay = p[a + 1] ?? 0,
+      az = p[a + 2] ?? 0;
+    const bx = p[b] ?? 0,
+      by = p[b + 1] ?? 0,
+      bz = p[b + 2] ?? 0;
+    const cx = p[c] ?? 0,
+      cy = p[c + 1] ?? 0,
+      cz = p[c + 2] ?? 0;
+    volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+  }
+  return volume;
+}
+const piecesVolume = (handle: DocumentHandle): number =>
+  documentOf(handle).parts.reduce((total, part) => total + signedVolume(part.mesh), 0);
+
+describe('moving a connector, and adding one where the person put it (Stage EC-6)', () => {
+  it('moves a pin to the place it was given: the descriptor says where, the pieces change, and the volumes still add up', async () => {
+    const split = await splitCube({ connector: PIN, unit: 'millimeter' });
+    const joint = onlyJoint(split.handle);
+    const before = piecesVolume(split.handle);
+    const [original] = liveJoints(documentOf(split.handle));
+    const propose = await proposeHandler();
+    const proposed = await propose(
+      {
+        source: split.handle,
+        jointId: joint.jointId,
+        expectedSpecDigest: joint.specDigest ?? '',
+        edit: set({ pins: [{ pinId: 'pin-1', u: 3, v: 2 }] }),
+      },
+      context(),
+    );
+    const [pin] = proposed.value.after.connector?.pins ?? [];
+    expect(pin?.pinId).toBe('pin-1');
+    // the cut cuts the exact point, which may differ from the request by a rounding error and no more
+    expect(pin?.u).toBeCloseTo(3, 4);
+    expect(pin?.v).toBeCloseTo(2, 4);
+    const commit = createJointCommitHandler(PRODUCTION_JOINT_COMMIT_WORK);
+    const committed = await commit(
+      {
+        candidate: proposed.value.candidate,
+        expectedSource: split.handle,
+        expectedJointId: joint.jointId,
+        expectedSpecDigest: joint.specDigest ?? '',
+      },
+      context(),
+    );
+    const after = piecesVolume(committed.value.handle);
+    // the same pin and socket, somewhere else in the same material: the pieces together hold the volume they held
+    expect(Math.abs(after - before)).toBeLessThan(0.05);
+    const [moved] = liveJoints(documentOf(committed.value.handle));
+    expect(moved?.connector?.elements[0]?.site).not.toBe(original?.connector?.elements[0]?.site);
+    // and Undo puts the first place back
+    const undone = await repairUndoHandler(
+      { handle: committed.value.handle, recordId: committed.value.recordId },
+      context(),
+    );
+    expect(piecesVolume(undone.value.handle)).toBeCloseTo(before, 6);
+  });
+
+  it('refuses a place off the material, and two connectors in one place, and changes nothing', async () => {
+    const split = await splitCube({ connector: PIN, unit: 'millimeter' });
+    const joint = onlyJoint(split.handle);
+    const propose = await proposeHandler();
+    const held = jointEdits.stats().candidateCount;
+    const attempt = (pins: readonly { pinId?: string; u: number; v: number }[]): Promise<unknown> =>
+      propose(
+        {
+          source: split.handle,
+          jointId: joint.jointId,
+          expectedSpecDigest: joint.specDigest ?? '',
+          edit: set({ pins }),
+        },
+        context(),
+      );
+    // a 20 mm cut: 60 mm across is not on it
+    const offCut = await refusal(attempt([{ pinId: 'pin-1', u: 60, v: 0 }]));
+    expect(isAppError(offCut), String(offCut)).toBe(true);
+    // two connectors with the same centre cannot both have their own room
+    const together = await refusal(
+      attempt([
+        { pinId: 'pin-1', u: 0, v: 0 },
+        { u: 0.1, v: 0 },
+      ]),
+    );
+    expect(isAppError(together), String(together)).toBe(true);
+    expect(code(together)).not.toBe(code(offCut));
+    expect(jointEdits.stats().candidateCount).toBe(held);
+    expect(residentDocuments.revisionOf(split.handle.documentId)).toBe(split.handle.revision);
+  });
+
+  it('adds the first connector to a plain cut at the place it was given, and the descriptor says so', async () => {
+    const split = await splitCube({ connector: { kind: 'none' }, unit: 'millimeter' });
+    const joint = onlyJoint(split.handle);
+    expect(joint.pinCount).toBe(0);
+    const propose = await proposeHandler();
+    const proposed = await propose(
+      {
+        source: split.handle,
+        jointId: joint.jointId,
+        expectedSpecDigest: joint.specDigest ?? '',
+        edit: set({ pins: [{ u: -4, v: 3 }] }),
+      },
+      context(),
+    );
+    const [pin] = proposed.value.after.connector?.pins ?? [];
+    expect(pin?.pinId).toBe('pin-1');
+    expect(pin?.u).toBeCloseTo(-4, 4);
+    expect(pin?.v).toBeCloseTo(3, 4);
+  });
 });
 
 describe('a split leaves an editable joint behind, and is never refused for it', () => {
@@ -903,5 +1026,90 @@ describe('a later change to a piece retires the joint and the reply says what is
     expect(residentDocuments.stats().totalBytes).toBe(documentByteLength(installed));
     expect(jointSpecDigest).toBeTypeOf('function');
     expect(new CancellationSource().token.isCancelled).toBe(false);
+  });
+});
+
+/** A closed cylinder of radius 10 and length 20 along x, `segments` sided: the plane x = 0 cuts it in a `segments`-gon. */
+function cylinder(segments: number): CanonicalMesh {
+  const vertices = segments * 2 + 2;
+  const positions = createPositionArray(vertices * 3);
+  for (let i = 0; i < segments; i += 1) {
+    const angle = (i / segments) * Math.PI * 2;
+    const y = 10 * Math.cos(angle);
+    const z = 10 * Math.sin(angle);
+    positions.set([-10, y, z], i * 3);
+    positions.set([10, y, z], (segments + i) * 3);
+  }
+  const south = segments * 2;
+  const north = segments * 2 + 1;
+  positions.set([-10, 0, 0], south * 3);
+  positions.set([10, 0, 0], north * 3);
+  const indices = createIndexArray(segments * 12);
+  let k = 0;
+  for (let i = 0; i < segments; i += 1) {
+    const j = (i + 1) % segments;
+    const a = i;
+    const b = j;
+    const c = segments + i;
+    const d = segments + j;
+    indices.set([a, b, c, b, d, c, north, c, d, south, b, a], k);
+    k += 12;
+  }
+  return { positions, indices, metadata: {} };
+}
+
+describe('the face of a cut is described to the page, for a view it draws', () => {
+  const area = (points: readonly number[]): number => {
+    let sum = 0;
+    for (let i = 0; i < points.length; i += 2) {
+      const j = (i + 2) % points.length;
+      sum += (points[i] ?? 0) * (points[j + 1] ?? 0) - (points[j] ?? 0) * (points[i + 1] ?? 0);
+    }
+    return sum / 2;
+  };
+
+  it("gives a square cut its outline in the cut's own axes, the unit factor and the most pins it holds", async () => {
+    const split = await splitCube({ connector: PIN, unit: 'millimeter' });
+    const joint = onlyJoint(split.handle);
+    expect(joint.cutFace?.mmPerCoordinate).toBe(1);
+    expect(joint.cutFace?.maxPins).toBe(4);
+    const outline = joint.cutFace?.outline;
+    if (outline === undefined) throw new Error('expected an outline');
+    expect(outline.loops).toHaveLength(1);
+    expect(outline.loops[0]?.role).toBe('OUTER');
+    expect(outline.bounds).toEqual({ minU: -10, maxU: 10, minV: -10, maxV: 10 });
+    expect(Math.abs(area(outline.loops[0]?.points ?? []))).toBeCloseTo(400, 6);
+    // the pin the split made sits inside what is drawn
+    const [pin] = joint.connector?.pins ?? [];
+    expect(Math.abs(pin?.u ?? 99)).toBeLessThan(10);
+    expect(Math.abs(pin?.v ?? 99)).toBeLessThan(10);
+  });
+
+  it("describes a plain cut's face too, since connectors can be added to it", async () => {
+    const split = await splitCube({ connector: { kind: 'none' }, unit: 'millimeter' });
+    const joint = onlyJoint(split.handle);
+    expect(joint.connector).toBeUndefined();
+    expect(joint.cutFace?.outline?.loops).toHaveLength(1);
+  });
+
+  it('describes a round cut by its polygon, and says there is no outline for one with too many points', async () => {
+    const round = await splitCube({
+      connector: { kind: 'none' },
+      unit: 'millimeter',
+      mesh: cylinder(64),
+    });
+    const outline = onlyJoint(round.handle).cutFace?.outline;
+    // each side facet is cut along its edge and along its diagonal, so the polygon carries a vertex on every edge too
+    expect(outline?.loops[0]?.points.length).toBe(64 * 2 * 2);
+    expect(Math.abs(area(outline?.loops[0]?.points ?? []))).toBeCloseTo(
+      0.5 * 64 * 100 * Math.sin((2 * Math.PI) / 64),
+      4, // the mesh is stored in Float32
+    );
+    // a cut with more points than the page is sent has no outline, and says so; resizing and removal still work without one
+    const [live] = liveJoints(documentOf(round.handle));
+    if (live === undefined) throw new Error('expected a joint');
+    expect(describeCutOutline(live, 100)).toBeUndefined();
+    expect(describeCutOutline(live, 128)?.loops[0]?.points.length).toBe(64 * 2 * 2);
+    expect(describeJoints(documentOf(round.handle))[0]?.cutFace?.mmPerCoordinate).toBe(1);
   });
 });

@@ -195,6 +195,7 @@ describe('the page is told what a joint is, never what it holds', () => {
       pinCount: 1,
       retainedBytes: jointRetainedBytes(document),
       specDigest: jointSpecDigest(joint),
+      cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: undefined },
       connector: {
         maleSide: 'A',
         // male side A points against the cut's normal (the fixture's is +x); the identity placement leaves it alone

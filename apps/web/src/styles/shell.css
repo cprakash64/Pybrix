@@ -4870,3 +4870,76 @@
 .split-hud__disclosure[open] .split-hud__lines {
   margin-top: 0.5rem;
 }
+
+/* The face of a cut, with its connectors (EC-6). */
+.cut-face {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  margin: 4px 0 8px;
+  background: var(--cad-well);
+  border: 1px solid var(--cad-border);
+  border-radius: 6px;
+  touch-action: none;
+  user-select: none;
+}
+.cut-face__outline {
+  fill: var(--cad-control-raised);
+  stroke: var(--cad-border-strong);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.cut-face__pin {
+  cursor: grab;
+  outline: none;
+}
+.cut-face[data-dragging='true'] .cut-face__pin {
+  cursor: grabbing;
+}
+.cut-face__socket {
+  fill: none;
+  stroke: var(--cad-text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.cut-face__body {
+  fill: var(--cad-accent-soft);
+  stroke: var(--cad-accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.cut-face__number {
+  fill: var(--cad-text-strong);
+  pointer-events: none;
+}
+.cut-face__pin:focus-visible .cut-face__body,
+.cut-face__pin--selected .cut-face__body {
+  stroke: var(--cad-accent-hover);
+  stroke-width: 3;
+}
+.cut-face__pin:focus-visible .cut-face__socket {
+  stroke: var(--cad-accent-ring);
+}
+.connector-positions {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.connector-positions__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: end;
+}
+.connector-positions__row--selected .connector-positions__name {
+  color: var(--cad-text-strong);
+  font-weight: 600;
+}
+.connector-positions__name {
+  align-self: center;
+  color: var(--cad-text);
+  font-size: var(--fs-meta);
+}

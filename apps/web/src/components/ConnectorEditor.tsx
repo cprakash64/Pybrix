@@ -1,16 +1,23 @@
-import type { ReactNode } from 'react';
-import { CONNECTOR_EDIT_COPY, describeChange } from '../state/connector-edit-presentation';
+import { useState, type ReactNode } from 'react';
+import {
+  CONNECTOR_EDIT_COPY,
+  connectorLimitSentence,
+  describeChange,
+} from '../state/connector-edit-presentation';
 import { ConnectorEditPhase, useConnectorEdit } from '../state/use-connector-edit';
+import { CutFace } from './CutFace';
 import { MillimetreField } from './MillimetreField';
+import { NumberField } from './shell/number-field';
 import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/primitives';
 
 /**
  * CHANGING THE CONNECTORS OF A CUT (Stage EC-5).
  *
- * Four values and two actions. The size of the pin, how deep it goes, the clearance around it and which piece carries it can be
- * changed, and the connectors can be taken off; where they sit cannot, and the section says so in its own first sentence. A change is
- * CHECKED first, by the worker, which rebuilds the connectors from the pieces the cut left and runs every check a split runs, and only
- * then applied: the screen between the two is labelled "Preview — not applied" and the model is untouched until Apply.
+ * The size of the pin, how deep it goes, the clearance around it, which piece carries it, and WHERE each connector sits on the cut: a
+ * picture of the cut to drag a connector on, the same two numbers to type, a button to add one and one to take one out. The picture
+ * and the fields edit one draft, so they cannot disagree. A change is CHECKED first, by the worker, which rebuilds the connectors from
+ * the pieces the cut left and runs every check a split runs (it, and not the picture, decides whether a place has room), and only then
+ * applied: the screen between the two is labelled "Preview — not applied" and the model is untouched until Apply.
  *
  * It claims what was checked and what was not. After an apply the status line says the connectors were "changed and checked", with the
  * same qualifier a split carries: a geometric check of the material around each connector, not a claim about strength.
@@ -22,6 +29,7 @@ export function ConnectorEditor({
 }): ReactNode {
   const edit = useConnectorEdit();
   const { joint, draft } = edit;
+  const [selected, setSelected] = useState<number | undefined>(undefined);
   const busy =
     edit.phase === ConnectorEditPhase.Checking || edit.phase === ConnectorEditPhase.Applying;
 
@@ -44,6 +52,9 @@ export function ConnectorEditor({
 
   if (joint === undefined || draft === undefined) return undo;
 
+  const outline = joint.cutFace?.outline;
+  const mmPerCoordinate = joint.cutFace?.mmPerCoordinate ?? 1;
+  const maxPins = joint.cutFace?.maxPins ?? 4;
   const sideLabel = (side: 'A' | 'B'): string =>
     labels[side === 'A' ? joint.aPartId : joint.bPartId] ?? (side === 'A' ? 'Piece A' : 'Piece B');
   const sideOptions: readonly SegmentedOption<'A' | 'B'>[] = [
@@ -55,6 +66,99 @@ export function ConnectorEditor({
     <PanelSection title={CONNECTOR_EDIT_COPY.section}>
       <div data-testid="connector-editor">
         <p className="convert-workspace__note">{CONNECTOR_EDIT_COPY.intro}</p>
+        {outline === undefined ? (
+          <p className="convert-workspace__note" data-testid="connector-edit-no-face">
+            {CONNECTOR_EDIT_COPY.noFace}
+          </p>
+        ) : (
+          <>
+            <p className="format-options__label">{CONNECTOR_EDIT_COPY.facePictureGroup}</p>
+            <CutFace
+              outline={outline}
+              mmPerCoordinate={mmPerCoordinate}
+              pins={draft.pins}
+              diameterMm={draft.diameterMm}
+              clearanceMm={draft.clearanceMm}
+              selected={selected}
+              disabled={busy}
+              onSelect={setSelected}
+              onMove={edit.movePin}
+              onRemove={(index) => {
+                edit.removePin(index);
+                setSelected(undefined);
+              }}
+            />
+            <p className="panel__note">{CONNECTOR_EDIT_COPY.facePicture}</p>
+            {draft.pins.length === 0 ? (
+              <p className="panel__note" data-testid="connector-edit-none-yet">
+                {CONNECTOR_EDIT_COPY.noConnectorsYet}
+              </p>
+            ) : (
+              <ul className="connector-positions" data-testid="connector-positions">
+                {draft.pins.map((pin, index) => (
+                  <li
+                    key={pin.pinId ?? `new-${String(index)}`}
+                    className={`connector-positions__row${selected === index ? ' connector-positions__row--selected' : ''}`}
+                    data-testid={`connector-position-${String(index)}`}
+                  >
+                    <span className="connector-positions__name">{`Connector ${String(index + 1)}`}</span>
+                    <PositionField
+                      label={CONNECTOR_EDIT_COPY.across}
+                      index={index}
+                      axis="u"
+                      value={pin.u * mmPerCoordinate}
+                      disabled={busy}
+                      onCommit={(millimetres) => {
+                        edit.movePin(index, millimetres / mmPerCoordinate, pin.v);
+                      }}
+                    />
+                    <PositionField
+                      label={CONNECTOR_EDIT_COPY.along}
+                      index={index}
+                      axis="v"
+                      value={pin.v * mmPerCoordinate}
+                      disabled={busy}
+                      onCommit={(millimetres) => {
+                        edit.movePin(index, pin.u, millimetres / mmPerCoordinate);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      disabled={busy}
+                      onClick={() => {
+                        edit.removePin(index);
+                        setSelected(undefined);
+                      }}
+                      aria-label={`${CONNECTOR_EDIT_COPY.removeOne} connector ${String(index + 1)}`}
+                      data-testid={`connector-position-remove-${String(index)}`}
+                    >
+                      {CONNECTOR_EDIT_COPY.removeOne}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="panel__actions">
+              <button
+                type="button"
+                className="secondary-action"
+                disabled={busy || draft.pins.length >= maxPins}
+                onClick={() => {
+                  setSelected(edit.addPin());
+                }}
+                data-testid="connector-edit-add"
+              >
+                {CONNECTOR_EDIT_COPY.addConnector}
+              </button>
+            </div>
+            <p className="panel__note" data-testid="connector-edit-add-note">
+              {draft.pins.length >= maxPins
+                ? connectorLimitSentence(maxPins)
+                : CONNECTOR_EDIT_COPY.addConnectorNote}
+            </p>
+          </>
+        )}
         <div className="split-params__grid">
           <MillimetreField
             label={CONNECTOR_EDIT_COPY.diameter}
@@ -176,23 +280,59 @@ export function ConnectorEditor({
               type="button"
               className="primary-action"
               onClick={edit.check}
-              disabled={!edit.changed || edit.problem !== undefined}
+              disabled={!edit.canCheck}
               data-testid="connector-edit-check"
             >
               {CONNECTOR_EDIT_COPY.check}
             </button>
-            <button
-              type="button"
-              className="secondary-action"
-              onClick={edit.checkRemoval}
-              data-testid="connector-edit-remove"
-            >
-              {CONNECTOR_EDIT_COPY.remove}
-            </button>
+            {joint.connector === undefined ? null : (
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={edit.checkRemoval}
+                data-testid="connector-edit-remove"
+              >
+                {CONNECTOR_EDIT_COPY.remove}
+              </button>
+            )}
           </div>
         ) : null}
         {undo}
       </div>
     </PanelSection>
+  );
+}
+
+/** One signed position, in millimetres from the cut's own origin, typed. Committing moves the connector in the draft, like a drag. */
+function PositionField({
+  label,
+  index,
+  axis,
+  value,
+  disabled,
+  onCommit,
+}: {
+  readonly label: string;
+  readonly index: number;
+  readonly axis: 'u' | 'v';
+  readonly value: number;
+  readonly disabled: boolean;
+  readonly onCommit: (millimetres: number) => void;
+}): ReactNode {
+  return (
+    <div className="split-params__field">
+      <span className="split-params__label">{label}</span>
+      <NumberField
+        label={`Connector ${String(index + 1)}, ${label.toLowerCase()}, millimetres`}
+        value={value}
+        min={-100000}
+        max={100000}
+        step={0.1}
+        suffix="mm"
+        disabled={disabled}
+        onCommit={onCommit}
+        testId={`connector-position-${axis}-${String(index)}`}
+      />
+    </div>
   );
 }

@@ -23,9 +23,11 @@ import type { BooleanBackend } from './boolean-adapter';
 import { connectorSupportMargin } from './connector-policy';
 import type { ClosedPlaneClip } from './closed-plane-kernel';
 import { resolveMillimetresPerCoordinate } from './connector-dimensions';
+import type { JointOutline } from './protocol';
 import {
   ConnectorRefusal,
   connectorManifestOf,
+  deriveInterfaceRegion,
   draftFromRequest,
   interfaceCoordinates,
   planManualPins,
@@ -136,6 +138,39 @@ export function pinCutOfJoint(joint: ConnectorJoint): PinCut {
       refusal: ConnectorRefusal.INVALID_PLAN,
     });
   return cut;
+}
+
+/**
+ * The outline of a joint's cut in the cut's own axes, for a view the page draws, or `undefined` when the joint was not made by this
+ * module or has too many points to describe. The most points a description holds is a bound on what the page is sent, not a tolerance:
+ * a cut with more is described as having no outline, and the editor then offers no face to place a pin on.
+ */
+export const MAX_OUTLINE_POINTS = 4096;
+export function describeCutOutline(
+  joint: ConnectorJoint,
+  /** The most points to describe. A parameter so a test can reach the limit on a cut of ordinary size; the page is sent the default. */
+  maxPoints: number = MAX_OUTLINE_POINTS,
+): JointOutline | undefined {
+  const { detail } = joint.authority;
+  if (!MINTED.has(detail)) return undefined;
+  const { cut } = detail as JointCutDetail;
+  const region = deriveInterfaceRegion(cut.interface);
+  if (region.loops.length === 0) return undefined;
+  let points = 0;
+  for (const loop of region.loops) points += loop.end - loop.start;
+  if (points > maxPoints) return undefined;
+  const { uv } = cut.interface.sharedRegion;
+  return Object.freeze({
+    bounds: region.bounds,
+    loops: Object.freeze(
+      region.loops.map((loop) =>
+        Object.freeze({
+          role: loop.role,
+          points: Object.freeze(Array.from(uv.subarray(2 * loop.start, 2 * loop.end))),
+        }),
+      ),
+    ),
+  });
 }
 
 // -------------------------------------------------------------------------- sites

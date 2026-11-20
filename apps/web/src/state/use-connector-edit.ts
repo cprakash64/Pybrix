@@ -8,7 +8,11 @@ import type {
   OperationHandle,
 } from '@cadfixer/geometry-runtime';
 import { useGeometryClient } from '../runtime/client-context';
-import { CONNECTOR_EDIT_COPY, describeEditRefusal } from './connector-edit-presentation';
+import {
+  CONNECTOR_EDIT_COPY,
+  connectorLimitSentence,
+  describeEditRefusal,
+} from './connector-edit-presentation';
 import { currentJoints } from './joint-presentation';
 import { isValidDimension } from './split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
@@ -17,9 +21,9 @@ import { StatusSeverity } from './workspace-store';
 /**
  * CHANGING THE CONNECTORS OF A CUT (Stage EC-5): the draft, the check, the apply and the undo, over `joint/propose` and `joint/commit`.
  *
- * What it edits is a size (diameter, depth, clearance), the male side, or whether the connectors are there at all. Where a connector sits
- * is not editable here: a position is a point on a cut the user cannot see by its two numbers, and a control for it belongs with a
- * handle on the model, not with a pair of fields.
+ * What it edits is a size (diameter, depth, clearance), the male side, and the connectors themselves: which there are and where each sits
+ * on the cut, in the cut's own two axes. A position is something a person places by looking at the face of the cut, so the view of that
+ * face (`CutFace`) is where one is dragged, nudged or added; this hook holds only the draft the view edits.
  *
  * THE STATE IS THE WORKER'S. The editor holds a DRAFT of four values and a CANDIDATE handle, never geometry: `joint/propose` builds the
  * candidate in the worker, rebuilding the connectors from the pieces the cut left before any and running every check a split runs, and
@@ -39,12 +43,34 @@ export const ConnectorEditPhase = {
 } as const;
 export type ConnectorEditPhase = (typeof ConnectorEditPhase)[keyof typeof ConnectorEditPhase];
 
+/** A connector's place in the draft: its name when it already has one, and its centre in the cut's own axes. A new one has no name. */
+export interface DraftPin {
+  readonly pinId?: string;
+  readonly u: number;
+  readonly v: number;
+}
+
 export interface ConnectorDraft {
   readonly diameterMm: number;
   readonly depthMm: number;
   readonly clearanceMm: number;
   readonly maleSide: 'A' | 'B';
+  readonly pins: readonly DraftPin[];
 }
+
+/**
+ * What a connector added to a cut with none starts as: the split's own defaults, so a connector made here and one made by a split are
+ * the same until someone changes them. A test holds this to the split's constant.
+ */
+export const NEW_CONNECTOR = Object.freeze({
+  diameterMm: 4,
+  depthMm: 6,
+  clearanceMm: 0.2,
+  maleSide: 'A' as const,
+});
+
+/** How far a keyboard nudge moves a connector, in millimetres. */
+export const NUDGE_MM = 0.5;
 
 type Kind = 'SET' | 'REMOVE';
 
@@ -78,6 +104,8 @@ export interface ConnectorEditControls {
   readonly draft: ConnectorDraft | undefined;
   /** Whether the draft differs from the connectors as they are. */
   readonly changed: boolean;
+  /** Whether Check change has something to check: a difference, in range, that leaves connectors or takes them all off. */
+  readonly canCheck: boolean;
   /** The first value the worker would refuse for being out of range, in a sentence, or `undefined`. */
   readonly problem: string | undefined;
   readonly phase: ConnectorEditPhase;
@@ -92,6 +120,12 @@ export interface ConnectorEditControls {
   readonly appliedSentence: string | undefined;
   readonly undoing: boolean;
   readonly setDraft: (change: Partial<ConnectorDraft>) => void;
+  /** Moves one connector of the draft to a place on the cut, in the cut's own axes. */
+  readonly movePin: (index: number, u: number, v: number) => void;
+  /** Adds a connector to the draft at the middle of the cut's extent, and returns its index, or `undefined` when the cut is full. */
+  readonly addPin: () => number | undefined;
+  /** Takes one connector out of the draft. Taking out the last one leaves a cut with none. */
+  readonly removePin: (index: number) => void;
   readonly check: () => void;
   readonly checkRemoval: () => void;
   readonly cancelCheck: () => void;
@@ -100,19 +134,22 @@ export interface ConnectorEditControls {
   readonly undo: () => void;
 }
 
-function draftOf(joint: JointDescriptor): ConnectorDraft | undefined {
-  const [first] = joint.connector?.pins ?? [];
-  if (joint.connector === undefined || first === undefined) return undefined;
+function draftOf(joint: JointDescriptor): ConnectorDraft {
+  const connector = joint.connector;
+  const [first] = connector?.pins ?? [];
+  if (connector === undefined || first === undefined) return { ...NEW_CONNECTOR, pins: [] };
   return {
     diameterMm: first.diameterMm,
     depthMm: first.depthMm,
     clearanceMm: first.clearanceMm,
-    maleSide: joint.connector.maleSide,
+    maleSide: connector.maleSide,
+    pins: connector.pins.map((pin) => ({ pinId: pin.pinId, u: pin.u, v: pin.v })),
   };
 }
 
 /** The first size outside the range the worker judges a connector in, named, or `undefined`. Same range, same sentence as the split's. */
-export function draftProblem(draft: ConnectorDraft): string | undefined {
+export function draftProblem(draft: ConnectorDraft, maxPins = 4): string | undefined {
+  if (draft.pins.length > maxPins) return connectorLimitSentence(maxPins);
   const checks: readonly (readonly [number, string, boolean])[] = [
     [draft.diameterMm, CONNECTOR_EDIT_COPY.diameter, false],
     [draft.depthMm, CONNECTOR_EDIT_COPY.depth, false],
@@ -129,12 +166,28 @@ function sameRevision(a: DocumentHandle | undefined, b: DocumentHandle | undefin
   return a.documentId === b.documentId && a.revision === b.revision;
 }
 
+function samePins(a: readonly DraftPin[], b: readonly DraftPin[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((pin, index) => {
+      const other = b[index];
+      return (
+        other !== undefined &&
+        pin.pinId === other.pinId &&
+        Object.is(pin.u, other.u) &&
+        Object.is(pin.v, other.v)
+      );
+    })
+  );
+}
+
 function sameDraft(a: ConnectorDraft, b: ConnectorDraft): boolean {
   return (
     Object.is(a.diameterMm, b.diameterMm) &&
     Object.is(a.depthMm, b.depthMm) &&
     Object.is(a.clearanceMm, b.clearanceMm) &&
-    a.maleSide === b.maleSide
+    a.maleSide === b.maleSide &&
+    samePins(a.pins, b.pins)
   );
 }
 
@@ -148,8 +201,10 @@ export function useConnectorEdit(): ConnectorEditControls {
   const joint = listed.find(
     (candidate) =>
       candidate.status === 'ATTACHED' &&
-      candidate.connector !== undefined &&
       candidate.specDigest !== undefined &&
+      candidate.cutFace !== undefined &&
+      // a cut with no connectors is offered only when its face can be shown, since a connector is added by placing it on the face
+      (candidate.connector !== undefined || candidate.cutFace.outline !== undefined) &&
       (candidate.aPartId === activePartId || candidate.bPartId === activePartId),
   );
   const key =
@@ -211,7 +266,11 @@ export function useConnectorEdit(): ConnectorEditControls {
   const fields = joint === undefined ? undefined : draftOf(joint);
   const draft = current.draft ?? fields;
   const changed = draft !== undefined && fields !== undefined && !sameDraft(draft, fields);
-  const problem = draft === undefined ? undefined : draftProblem(draft);
+  const problem =
+    draft === undefined ? undefined : draftProblem(draft, joint?.cutFace?.maxPins ?? 4);
+  // Taking every connector out of the draft is taking them off the cut, and a cut with none has nothing to take off.
+  const removesAll = changed && draft.pins.length === 0 && joint?.connector !== undefined;
+  const canCheck = changed && (removesAll || (problem === undefined && draft.pins.length > 0));
 
   const replace = useCallback(
     (next: Omit<EditState, 'key'>): void => {
@@ -237,6 +296,36 @@ export function useConnectorEdit(): ConnectorEditControls {
     [current.draft, fields, key, release, setState],
   );
 
+  const movePin = useCallback(
+    (index: number, u: number, v: number): void => {
+      const pins = draft?.pins;
+      if (pins === undefined || !Number.isFinite(u) || !Number.isFinite(v)) return;
+      const pin = pins[index];
+      if (pin === undefined) return;
+      setDraft({ pins: pins.map((p, i) => (i === index ? { ...p, u, v } : p)) });
+    },
+    [draft?.pins, setDraft],
+  );
+
+  const addPin = useCallback((): number | undefined => {
+    const outline = joint?.cutFace?.outline;
+    const pins = draft?.pins;
+    if (outline === undefined || pins === undefined) return undefined;
+    if (pins.length >= (joint?.cutFace?.maxPins ?? 4)) return undefined;
+    const { minU, maxU, minV, maxV } = outline.bounds;
+    setDraft({ pins: [...pins, { u: (minU + maxU) / 2, v: (minV + maxV) / 2 }] });
+    return pins.length;
+  }, [draft?.pins, joint?.cutFace, setDraft]);
+
+  const removePin = useCallback(
+    (index: number): void => {
+      const pins = draft?.pins;
+      if (pins === undefined || index < 0 || index >= pins.length) return;
+      setDraft({ pins: pins.filter((_pin, i) => i !== index) });
+    },
+    [draft?.pins, setDraft],
+  );
+
   const propose = useCallback(
     (kind: Kind): void => {
       if (
@@ -246,7 +335,7 @@ export function useConnectorEdit(): ConnectorEditControls {
         draft === undefined
       )
         return;
-      if (kind === 'SET' && (problem !== undefined || !changed)) return;
+      if (kind === 'SET' && (problem !== undefined || !changed || draft.pins.length === 0)) return;
       const edit: JointEditRequest =
         kind === 'REMOVE'
           ? { kind: 'REMOVE_CONNECTORS' }
@@ -256,9 +345,10 @@ export function useConnectorEdit(): ConnectorEditControls {
               diameterMm: draft.diameterMm,
               depthMm: draft.depthMm,
               clearanceMm: draft.clearanceMm,
-              // Every pin keeps its name and its place: the editor changes what the connectors are, not where they sit.
-              pins: (joint.connector?.pins ?? []).map((pin) => ({
-                pinId: pin.pinId,
+              // A connector that already has a name keeps it, and one at the place it was keeps its point exactly (the worker reads an
+              // unchanged `(u, v)` as "this site, to the bit"); a new one has no name and the worker gives it the next.
+              pins: draft.pins.map((pin) => ({
+                ...(pin.pinId === undefined ? {} : { pinId: pin.pinId }),
                 u: pin.u,
                 v: pin.v,
               })),
@@ -323,8 +413,8 @@ export function useConnectorEdit(): ConnectorEditControls {
   );
 
   const check = useCallback((): void => {
-    propose('SET');
-  }, [propose]);
+    propose(removesAll ? 'REMOVE' : 'SET');
+  }, [propose, removesAll]);
   const checkRemoval = useCallback((): void => {
     propose('REMOVE');
   }, [propose]);
@@ -440,6 +530,7 @@ export function useConnectorEdit(): ConnectorEditControls {
     joint,
     draft,
     changed,
+    canCheck,
     problem,
     phase: current.phase,
     kind: current.candidate?.kind,
@@ -449,6 +540,9 @@ export function useConnectorEdit(): ConnectorEditControls {
     appliedSentence: appliedHere?.sentence,
     undoing,
     setDraft,
+    movePin,
+    addPin,
+    removePin,
     check,
     checkRemoval,
     cancelCheck,

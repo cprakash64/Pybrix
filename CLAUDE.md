@@ -1078,12 +1078,13 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, ADR 0033)
 
 EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
 EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
-`joint/discard`). EC-4 makes the page a projection of the worker's joints. EC-5 adds the one control that changes a connector: a size, the
-male side, or taking the connectors off.
+`joint/discard`). EC-4 makes the page a projection of the worker's joints. EC-5 adds the control that changes a connector: a size, the
+male side, or taking the connectors off. EC-6 adds WHERE a connector sits and HOW MANY there are: a picture of the cut to drag on, the same
+two numbers to type, and add and remove for one connector.
 
 - **A JOINT IS SESSION STATE IN THE WORKER'S DOCUMENT.** `GeometryDocument.joints` holds records for the two parts of one cut, the
   pre-connector pieces they were built from, the physical frame they were sized in and the engine's interface authority. No reader
@@ -1152,12 +1153,26 @@ male side, or taking the connectors off.
   the worker, exactly, and the connector stops being listed.
 - **A REPAIR OR A FILL SAYS WHAT IT DOES TO RECORDED CONNECTORS BEFORE APPLY**, in the sentence that already says what Apply does
   (`disclosureFor`), and the action region still draws one line. All the wording is in `connector-edit-presentation.ts`, exhaustive,
-  and a test holds it to no claim about use (no fits, holds, strong, secure, printable) and no promise of an edit, because no control
-  exists to make one.
-- **THE EDITOR CHANGES WHAT A CONNECTOR IS, NEVER WHERE IT SITS (EC-5).** Four values (diameter, depth, clearance, male side) and a removal.
-  Every pin is sent back with its own name and its own `(u, v)`, which the worker reads as "keep this site exactly" (`specFromEdit` reuses
-  the site object), so an edit of a size reproduces every untouched pin's point to the bit. Moving or adding a connector needs a handle
-  on the model: a pair of numbers on a cut the user cannot see by them is not a control, and the copy is held to not saying it exists.
+  and a test holds it to no claim about use (no fits, holds, strong, secure, printable) and no word that calls a place good, safe or
+  recommended: the worker alone says whether a place has room, and only when the change is checked.
+- **THE EDITOR CHANGES WHAT A CONNECTOR IS (EC-5) AND WHERE IT SITS (EC-6).** Four values (diameter, depth, clearance, male side), a
+  removal, and the connectors themselves. Every pin is sent back with its own name and its own `(u, v)`, which the worker reads as "keep
+  this site exactly" (`specFromEdit` reuses the site object), so an edit of a size or of ANOTHER pin reproduces every untouched pin's point
+  to the bit. A connector the person added is sent with no name and the worker names it from `nextPinOrdinal`.
+- **A POSITION IS PLACED BY LOOKING AT THE CUT, AND THE PICTURE JUDGES NOTHING (EC-6).** `JointDescriptor.cutFace` carries the cut's outline
+  in its own `(u, v)` axes, the unit factor and the most pins the cut holds; `describeCutOutline` (`connector-rebuild.ts`, the one module
+  that reads the cut) draws it from the retained interface and returns nothing above 4,096 outline points, in which case the sizes and the
+  removal stay available and no picture is offered. `CutFace` is an SVG with `v` drawn upward (the one negation is `toViewY`); a drag
+  follows the pointer through window listeners, an arrow key moves a connector 0.5 mm (Shift: five times that), Delete takes it out, and
+  the same two numbers can be typed in millimetres. The picture does not keep a connector inside the outline or away from another: whether
+  a place has room, and whether two are far enough apart, is `joint/propose` and nothing else, so a second opinion drawn on the page cannot
+  disagree with it. A boundary test bans the page from the outline test and the spacing rule.
+- **A PLAIN CUT TAKES ITS FIRST CONNECTOR HERE.** A cut recorded with no connectors is offered when it can be drawn; Add connector puts a new
+  one at the middle of the cut's extent at the split's own default sizes (a test holds `NEW_CONNECTOR` to `DEFAULT_CONNECTOR`). Taking
+  every connector out of the draft is checked as the removal, since that is what it is.
+- **A MOVE IS JUDGED BY A DISTANCE, NOT BY VOLUME.** Moving a pin leaves the pieces' volumes where they were, so the e2e reads the pin's
+  place from the tip and socket-bottom rings of the exported files and compares DISTANCES, which a turned or flipped cut axis cannot
+  change. The expected distance of a drag is computed from the picture's own box and the 12 % margin written out in the spec.
 - **CHECK, THEN APPLY, AND THE SCREEN BETWEEN IS "Preview — not applied".** `use-connector-edit.ts` holds a DRAFT and a candidate HANDLE,
   never geometry. Its state is keyed by the connectors it was made for (document, revision, joint, spec digest), so a draft or candidate
   for connectors that have since changed reads as nothing; changing a value releases the candidate it made stale; a late answer for a
