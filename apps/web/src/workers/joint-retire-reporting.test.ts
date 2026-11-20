@@ -67,6 +67,7 @@ function jointedOver(built: CanonicalMesh): { document: GeometryDocument; joint:
     frame: { unit: 'millimeter', mmPerUnit: 1, placementScale: 1, mmPerCoordinate: 1 },
     authority: { provenanceSHA: 'sha', retainedBytes: 4096, detail: {} },
     connector: undefined,
+    cutNormal: [1, 0, 0],
     nextPinOrdinal: 1,
   };
   return {

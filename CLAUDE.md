@@ -1078,11 +1078,12 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, ADR 0033)
 
 EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
 EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
-`joint/discard`). There is still no control and no copy: the page has typed client methods and nothing calls them yet (EC-4).
+`joint/discard`). EC-4 makes the page a projection of the worker's joints. There is still no CONTROL that edits one: the page has typed
+client methods for the edit operations and nothing calls them yet.
 
 - **A JOINT IS SESSION STATE IN THE WORKER'S DOCUMENT.** `GeometryDocument.joints` holds records for the two parts of one cut, the
   pre-connector pieces they were built from, the physical frame they were sized in and the engine's interface authority. No reader
@@ -1134,6 +1135,25 @@ EC-3 records a joint at split commit and makes an edit a transaction (`joint/lis
   per pin.
 - **THE ENGINE REBUILDS; IT INSTALLS NOTHING.** It returns two candidate meshes, the manifest and the successor joint record. Checking
   that the joint is attached, the transaction, the history record and the page are the next stage's.
+- **THE PAGE KEEPS NO RECORD OF A CONNECTOR (EC-4).** What the page knows is what `joint/list` said about the revision it holds
+  (`WorkspaceState.joints`, read through `currentJoints`, which reads a slice for another revision, another document or no model as
+  nothing). `useJointSync` asks once for every revision the model comes to hold and is mounted once, in the controllers provider; an
+  answer for a revision the model has left is refused by the store. A list that could not be read is `UNAVAILABLE` and the inspector
+  says so; it is never read as "no connectors". This replaced a list inside the assembly layout that was built from the size a split
+  asked for and carried across later cuts by a sign test at `1e-8` that silently dropped what it could not place. The pair field, the pair
+  migration and the local pick arithmetic are gone, and a boundary test keeps them gone. The assembly layout's INTERFACES (explode
+  offsets, labels, the interface footprints a later cut is tested against) are page presentation and are unchanged; they hold no connector.
+- **THE WORKER PUTS A PIN IN THE SCENE FOR THE PAGE.** A joint descriptor carries each pin's centre in the scene's coordinates, the axis the
+  pin points along and `mmPerSceneUnit`, so a scene length is millimetres divided by it, the placement scale cancelling out. The page
+  therefore holds no placement inverse, interface or mesh to place a marker or answer a pick. The guard radius of a connector is
+  `hypot(depth × 1.0001, socket radius)` in the scene; the engine's floor of eight split tolerances is dropped, so it errs outward.
+- **A CUT IS GUARDED BY THE WORKER'S CONNECTORS ALONE.** `preservesAssemblyInterfaces` takes the connectors the worker lists, so a plane
+  near an attached pin is refused whether or not a layout was kept. A later cut of a piece in an attached joint retires the joint in
+  the worker, exactly, and the connector stops being listed.
+- **A REPAIR OR A FILL SAYS WHAT IT DOES TO RECORDED CONNECTORS BEFORE APPLY**, in the sentence that already says what Apply does
+  (`disclosureFor`), and the action region still draws one line. All the wording is in `connector-edit-presentation.ts`, exhaustive,
+  and a test holds it to no claim about use (no fits, holds, strong, secure, printable) and no promise of an edit, because no control
+  exists to make one.
 - **A SPLIT RECORDS A JOINT AND IS NEVER REFUSED FOR IT.** `recordJointFromSplit` assembles it from the split's own result at
   `SplitCandidateStore.resolve`: the clip's pieces become the bases, the returned pieces the built meshes, the plan's pins the sites. A
   plain cut records a joint with no connectors, so connectors can be added later. Why one was not recorded travels in

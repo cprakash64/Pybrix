@@ -328,6 +328,14 @@ function jointProblem(joint: ConnectorJoint): string | undefined {
     return 'a joint has an unusable physical frame';
   if (!Number.isSafeInteger(joint.nextPinOrdinal) || joint.nextPinOrdinal < 1)
     return 'a joint has no next pin ordinal';
+  // Read as numbers: the type says three, but a document can be built from a wire payload whose shape was asserted, not proved.
+  const normal: readonly number[] = joint.cutNormal;
+  if (
+    normal.length !== 3 ||
+    !normal.every((value) => Number.isFinite(value)) ||
+    !normal.some((value) => value !== 0)
+  )
+    return 'a joint has no usable cut normal';
   const { authority } = joint;
   if (authority.provenanceSHA.length === 0) return 'a joint has no interface identity';
   if (!Number.isSafeInteger(authority.retainedBytes) || authority.retainedBytes < 0)

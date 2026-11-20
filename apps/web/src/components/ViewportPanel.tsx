@@ -1,7 +1,5 @@
-import {
-  connectorAtAssemblyPoint,
-  type AssemblyPresentation,
-} from '../state/assembly-presentation';
+import { type AssemblyPresentation } from '../state/assembly-presentation';
+import { connectorAtPoint, connectorPairsOf, currentJoints } from '../state/joint-presentation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   createViewport,
@@ -69,6 +67,7 @@ export function ViewportPanel(): ReactNode {
   const {
     viewportFailure,
     assembly,
+    joints,
     model,
     activePartId,
     analysis,
@@ -163,7 +162,13 @@ export function ViewportPanel(): ReactNode {
                 number,
                 number,
               ];
-            store.selectConnectorPair(connectorAtAssemblyPoint(presentation, selected, point));
+            store.selectConnectorPair(
+              connectorAtPoint(
+                connectorPairsOf(currentJoints(state.joints, state.model.handle)),
+                selected,
+                point,
+              ),
+            );
           }
           // Surface Texture's one selection tool: the worker grows the flat
           // region from this face. Nothing else listens for the click.
@@ -319,7 +324,9 @@ export function ViewportPanel(): ReactNode {
 
   useEffect(() => {
     const pair = assemblyCurrent
-      ? assembly?.connectorPairs.find((p) => p.id === assembly.selectedPairId)
+      ? connectorPairsOf(currentJoints(joints, model?.handle)).find(
+          (p) => p.id === assembly?.selectedPairId,
+        )
       : undefined;
     const points = pair
       ? [pair.a, pair.b].map(
@@ -334,7 +341,7 @@ export function ViewportPanel(): ReactNode {
         )
       : undefined;
     viewportRef.current?.setConnectorGuide(points);
-  }, [assembly, assemblyCurrent]);
+  }, [assembly, assemblyCurrent, joints, model]);
 
   /**
    * Points the overlay, preview and change-overlay frame at the active part.

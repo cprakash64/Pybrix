@@ -5,6 +5,7 @@ import {
 } from '../runtime/split-commit-transaction';
 import { sameSemanticPlane } from '@cadfixer/auto-split';
 import { assemblyForSplitPreview, preservesAssemblyInterfaces } from './assembly-presentation';
+import { connectorPairsOf, currentJoints } from './joint-presentation';
 import { flushSync } from 'react-dom';
 import { afterPaint } from './after-paint';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -266,7 +267,7 @@ export function connectorProblemOf(settings: ConnectorSettings): string | undefi
 }
 
 export function useSplitWorkflow(): SplitControls {
-  const { selectedWorkflow, model, activePartId, assembly } = useWorkspaceState();
+  const { selectedWorkflow, model, activePartId, assembly, joints } = useWorkspaceState();
   const store = useWorkspaceStore();
   const client = useGeometryClient();
   const part = model?.parts.find((candidate) => candidate.partId === activePartId);
@@ -675,11 +676,21 @@ export function useSplitWorkflow(): SplitControls {
         return;
       }
 
+      // The interfaces are the layout's, and only the current revision's; the connectors are the worker's own list for this revision.
+      const layout =
+        assembly?.documentId === model.handle.documentId &&
+        assembly.revision === model.handle.revision
+          ? assembly
+          : undefined;
       if (
         !byComponents &&
-        assembly?.documentId === model.handle.documentId &&
-        assembly.revision === model.handle.revision &&
-        !preservesAssemblyInterfaces(assembly, part.partId, splitPlane, part.transform)
+        !preservesAssemblyInterfaces(
+          layout,
+          part.partId,
+          splitPlane,
+          part.transform,
+          connectorPairsOf(currentJoints(joints, model.handle)),
+        )
       ) {
         abandonPreparation();
         setError('This cut crosses an existing connection. Move the cut between connections.');
@@ -801,6 +812,7 @@ export function useSplitWorkflow(): SplitControls {
     },
     [
       assembly,
+      joints,
       available,
       client,
       componentRanks,

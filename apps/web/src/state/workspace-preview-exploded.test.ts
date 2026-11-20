@@ -83,7 +83,6 @@ const assembly: AssemblyPresentation = {
     { partId: 'part-1-B', offset: [-4, 0, 0] },
   ],
   interfaces: [],
-  connectorPairs: [],
   labels: {},
 };
 

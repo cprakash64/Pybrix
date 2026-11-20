@@ -4,9 +4,9 @@ import type {
   SplitCommitResult,
   SplitCreateResult,
   SplitPlane,
-  SplitConnector,
 } from '@cadfixer/geometry-runtime';
 import type { MeshBounds } from '@cadfixer/mesh-core';
+import type { ConnectorPairView } from './joint-presentation';
 export type AssemblyVector = readonly [number, number, number];
 export interface AssemblyInterface {
   readonly id: string;
@@ -15,16 +15,6 @@ export interface AssemblyInterface {
   readonly normal: AssemblyVector;
   readonly origin: AssemblyVector;
   readonly footprint: readonly AssemblyVector[];
-  readonly connectorPairIds: readonly string[];
-}
-export interface AssemblyConnectorPair {
-  readonly id: string;
-  readonly interfaceId: string;
-  readonly a: string;
-  readonly b: string;
-  readonly center: AssemblyVector;
-  readonly connector: Exclude<SplitConnector, { kind: 'none' }>;
-  readonly guardRadiusWorld: number;
 }
 export interface AssemblyPresentation {
   readonly documentId: string;
@@ -33,7 +23,6 @@ export interface AssemblyPresentation {
   readonly connectorMode: 'automatic' | 'unavailable' | 'plain' | 'manual';
   readonly offsets: readonly { readonly partId: string; readonly offset: AssemblyVector }[];
   readonly interfaces: readonly AssemblyInterface[];
-  readonly connectorPairs: readonly AssemblyConnectorPair[];
   readonly selectedPairId?: string | undefined;
   readonly labels: Readonly<Record<string, string>>;
 }
@@ -172,7 +161,6 @@ export function assemblyAfterSplit(
     previous = undefined;
   const live = new Set(result.parts.map((p) => p.partId)),
     interfaces: AssemblyInterface[] = [],
-    pairs: AssemblyConnectorPair[] = [],
     worldPlane = context?.plane
       ? {
           origin: assemblyPoint(context.plane.origin, context.sourceTransform),
@@ -199,8 +187,6 @@ export function assemblyAfterSplit(
     }
     if (!live.has(a) || !live.has(b)) continue;
     interfaces.push({ ...old, a, b });
-    for (const pair of previous?.connectorPairs ?? [])
-      if (pair.interfaceId === old.id) pairs.push({ ...pair, a, b });
   }
   if (worldPlane && context) {
     const local = result.interface,
@@ -221,31 +207,7 @@ export function assemblyAfterSplit(
               context.sourceTransform,
             ),
           )
-        : [origin],
-      connectorPairIds: string[] = [];
-    if (result.connector.kind !== 'none')
-      for (const [index, center] of (local?.placements ?? []).entries()) {
-        const id = `${result.recordId}/connector/${String(index)}`;
-        connectorPairIds.push(id);
-        pairs.push({
-          id,
-          interfaceId: result.recordId,
-          a: result.pieceAId,
-          b: result.pieceBId,
-          center: assemblyPoint(center, context.sourceTransform),
-          connector: result.connector,
-          guardRadiusWorld:
-            transformNormUpper(context.sourceTransform) *
-            Math.hypot(
-              result.connector.depth +
-                Math.max(result.metrics.tolerance * 8, result.connector.depth * 0.0001),
-              result.connector.kind === 'pin'
-                ? result.connector.diameter / 2 + result.connector.clearance
-                : Math.hypot(result.connector.width, result.connector.length) +
-                    result.connector.clearance * 2,
-            ),
-        });
-      }
+        : [origin];
     interfaces.push({
       id: result.recordId,
       a: result.pieceAId,
@@ -253,7 +215,6 @@ export function assemblyAfterSplit(
       origin,
       normal: worldPlane.normal,
       footprint,
-      connectorPairIds,
     });
   }
   const labels: Record<string, string> = {};
@@ -279,9 +240,6 @@ export function assemblyAfterSplit(
             ? 'plain'
             : 'manual',
     interfaces: interfaces.slice(-128),
-    connectorPairs: pairs
-      .filter((p) => interfaces.slice(-128).some((e) => e.id === p.interfaceId))
-      .slice(-512),
     labels,
     offsets: explosionOffsets(result.parts, interfaces, diagonal),
   };
@@ -298,100 +256,28 @@ export function preservesAssemblyInterfaces(
   sourcePartId: string,
   plane: SplitPlane,
   transform: readonly number[],
+  /** The connectors the worker lists for this revision. They guard the plane; the page keeps no record of its own. */
+  pairs: readonly ConnectorPairView[],
 ): boolean {
-  if (!assembly) return true;
   const origin = assemblyPoint(plane.origin, transform),
     normal = assemblyNormal(plane.normal, transform);
-  for (const edge of assembly.interfaces) {
+  for (const edge of assembly?.interfaces ?? []) {
     if (edge.a !== sourcePartId && edge.b !== sourcePartId) continue;
     const signed = edge.footprint.map((p) =>
       normal.reduce((s, n, k) => s + n * (defined(p[k]) - defined(origin[k])), 0),
     );
     if (!signed.length || !(signed.every((s) => s > 1e-8) || signed.every((s) => s < -1e-8)))
       return false;
-    for (const pair of assembly.connectorPairs)
-      if (pair.interfaceId === edge.id) {
-        const distance = Math.abs(
-          normal.reduce((s, n, k) => s + n * (defined(pair.center[k]) - defined(origin[k])), 0),
-        );
-        if (distance <= pair.guardRadiusWorld) return false;
-      }
+  }
+  // A connector guards the plane by its own reach, and the worker, not this layout, says which connectors exist.
+  for (const pair of pairs) {
+    if (pair.a !== sourcePartId && pair.b !== sourcePartId) continue;
+    const distance = Math.abs(
+      normal.reduce((s, n, k) => s + n * (defined(pair.center[k]) - defined(origin[k])), 0),
+    );
+    if (distance <= pair.guardRadiusWorld) return false;
   }
   return true;
-}
-
-function transformNormUpper(t: readonly number[]): number {
-  const row = Math.max(
-      ...[0, 1, 2].map(
-        (k) => Math.abs(t[k] ?? 0) + Math.abs(t[k + 3] ?? 0) + Math.abs(t[k + 6] ?? 0),
-      ),
-    ),
-    col = Math.max(
-      ...[0, 3, 6].map(
-        (k) => Math.abs(t[k] ?? 0) + Math.abs(t[k + 1] ?? 0) + Math.abs(t[k + 2] ?? 0),
-      ),
-    );
-  return Math.sqrt(row * col);
-}
-
-/** Select a persisted pin footprint on its own piece; its mate is the stored pair identity. */
-export function connectorAtAssemblyPoint(
-  assembly: AssemblyPresentation,
-  part: PartDescriptor,
-  worldPoint: AssemblyVector,
-): string | undefined {
-  const t = part.transform,
-    a = t[0],
-    b = t[3],
-    c = t[6],
-    d = t[1],
-    e = t[4],
-    f = t[7],
-    g = t[2],
-    h = t[5],
-    i = t[8],
-    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-  if (Math.abs(det) < 1e-14) return undefined;
-  const local = (p: AssemblyVector): AssemblyVector => {
-    const px = p[0] - t[9],
-      py = p[1] - t[10],
-      pz = p[2] - t[11];
-    return [
-      ((e * i - f * h) * px + (c * h - b * i) * py + (b * f - c * e) * pz) / det,
-      ((f * g - d * i) * px + (a * i - c * g) * py + (c * d - a * f) * pz) / det,
-      ((d * h - e * g) * px + (b * g - a * h) * py + (a * e - b * d) * pz) / det,
-    ];
-  };
-  // Keep the transform calculation identical for the picked surface and stored interface center.
-  const picked = local(worldPoint),
-    matches: string[] = [];
-  for (const pair of assembly.connectorPairs) {
-    if ((pair.a !== part.partId && pair.b !== part.partId) || pair.connector.kind !== 'pin')
-      continue;
-    const edge = assembly.interfaces.find((e) => e.id === pair.interfaceId);
-    if (!edge) continue;
-    const n = edge.normal,
-      raw: AssemblyVector = [
-        a * n[0] + d * n[1] + g * n[2],
-        b * n[0] + e * n[1] + h * n[2],
-        c * n[0] + f * n[1] + i * n[2],
-      ],
-      length = Math.hypot(...raw),
-      normal = vector(raw.map((v) => v / length)),
-      center = local(pair.center),
-      diff = vector(picked.map((v, k) => v - defined(center[k]))),
-      axial = diff.reduce((sum, v, k) => sum + v * defined(normal[k]), 0),
-      along = axial * (pair.connector.maleSide === 'A' ? -1 : 1),
-      padding = pair.connector.diameter * 0.03,
-      radius = pair.connector.diameter / 2 + pair.connector.clearance + padding;
-    if (
-      along >= -padding &&
-      along <= pair.connector.depth + padding &&
-      diff.reduce((sum, v) => sum + v * v, 0) - axial * axial <= radius * radius
-    )
-      matches.push(pair.id);
-  }
-  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /** The part-local boxes of `parts`, placed by each part's own transform, as one world box. */

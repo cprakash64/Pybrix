@@ -324,6 +324,7 @@ export function jointedDocument(options: JointFixtureOptions = {}): {
       detail: Object.freeze({}),
     }),
     connector: 'connector' in options ? options.connector : FIXTURE_PIN_SPEC,
+    cutNormal: [1, 0, 0] as const,
     nextPinOrdinal: 2,
   });
   return {

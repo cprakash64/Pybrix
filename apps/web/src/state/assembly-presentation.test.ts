@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
-import type { PartDescriptor, SplitCommitResult } from '@cadfixer/geometry-runtime';
+import type {
+  JointDescriptor,
+  PartDescriptor,
+  SplitCommitResult,
+} from '@cadfixer/geometry-runtime';
+import { connectorAtPoint, connectorPairsOf } from './joint-presentation';
 import {
   assemblyAfterSplit,
   assemblyForSplitPreview,
   assemblyNormal,
   explosionOffsets,
-  connectorAtAssemblyPoint,
   preservesAssemblyInterfaces,
 } from './assembly-presentation';
 import type { SplitAssemblyContext } from './assembly-presentation';
@@ -66,7 +70,7 @@ function result(
   } as unknown as SplitCommitResult;
 }
 describe('assembly presentation leaves canonical geometry authoritative', () => {
-  it('preserves three cut adjacencies and six explicit connector pairs through four-piece decomposition', () => {
+  it('preserves three cut adjacencies through four-piece decomposition', () => {
     const p1 = part('first', 20, 40),
       p2 = part('second', 0, 20),
       p3 = part('third', -20, 0),
@@ -110,13 +114,8 @@ describe('assembly presentation leaves canonical geometry authoritative', () => 
       ['second', 'third'],
       ['third', 'fourth'],
     ]);
-    expect(assembly.connectorPairs).toHaveLength(6);
-    expect(new Set(assembly.connectorPairs.map((p) => p.id)).size).toBe(6);
-    for (const pair of assembly.connectorPairs)
-      expect(assembly.interfaces.find((e) => e.id === pair.interfaceId)).toMatchObject({
-        a: pair.a,
-        b: pair.b,
-      });
+    // The presentation keeps no record of connectors: which exist is the worker's to say (`joint-presentation.test.ts`).
+    expect('connectorPairs' in assembly).toBe(false);
     expect(assembly.offsets).toHaveLength(4);
     expect(explosionOffsets(parts, assembly.interfaces, Math.hypot(80, 30, 30))).toEqual(
       assembly.offsets,
@@ -151,7 +150,7 @@ describe('assembly presentation leaves canonical geometry authoritative', () => 
     expect(assembly.offsets[1]?.offset[0]).toBeLessThan(0);
     expect(assembly.offsets.every((p) => p.offset[1] === 0 && p.offset[2] === 0)).toBe(true);
   });
-  it('selects an explicit pin pair on either side and refuses cuts that would break its geometry', () => {
+  it("selects a pin on either side from the worker's list and refuses cuts that would break its geometry", () => {
     const a = part('a', 0, 40),
       b = part('b', -40, 0),
       assembly = assemblyAfterSplit(
@@ -162,17 +161,43 @@ describe('assembly presentation leaves canonical geometry authoritative', () => 
           plane: { origin: [0, 0, 0], normal: [1, 0, 0] },
         },
         undefined,
-      ),
-      pair = assembly.connectorPairs[0];
-    expect(connectorAtAssemblyPoint(assembly, a, [-3, -3.2, 0])).toBe(pair?.id);
-    expect(connectorAtAssemblyPoint(assembly, b, [-3, -3, 0])).toBe(pair?.id);
-    expect(connectorAtAssemblyPoint(assembly, a, [20, -5, 0])).toBeUndefined();
+      );
+    // two 3.6 mm pins with 0.2 clearance and 5.4 mm depth on the cut at x = 0, as the worker lists them, in a model read in millimetres
+    const listed: JointDescriptor = {
+      jointId: 'assembly-test/joint/1',
+      aPartId: 'a',
+      bPartId: 'b',
+      status: 'ATTACHED',
+      pinCount: 2,
+      retainedBytes: 0,
+      specDigest: 'digest',
+      connector: {
+        maleSide: 'A',
+        axis: [-1, 0, 0],
+        mmPerSceneUnit: 1,
+        pins: [-5, 5].map((y, index) => ({
+          pinId: `pin-${String(index + 1)}`,
+          u: y,
+          v: 0,
+          center: [0, y, 0] as const,
+          diameterMm: 3.6,
+          depthMm: 5.4,
+          clearanceMm: 0.2,
+        })),
+      },
+    };
+    const pairs = connectorPairsOf([listed]),
+      pair = pairs[0];
+    expect(connectorAtPoint(pairs, a, [-3, -3.2, 0])).toBe(pair?.id);
+    expect(connectorAtPoint(pairs, b, [-3, -3, 0])).toBe(pair?.id);
+    expect(connectorAtPoint(pairs, a, [20, -5, 0])).toBeUndefined();
     expect(
       preservesAssemblyInterfaces(
         assembly,
         'a',
         { origin: [2, 0, 0], normal: [1, 0, 0] },
         IDENTITY_PART_TRANSFORM,
+        pairs,
       ),
     ).toBe(false);
     expect(
@@ -181,6 +206,17 @@ describe('assembly presentation leaves canonical geometry authoritative', () => 
         'a',
         { origin: [20, 0, 0], normal: [1, 0, 0] },
         IDENTITY_PART_TRANSFORM,
+        pairs,
+      ),
+    ).toBe(true);
+    // what guards that plane is the worker's connectors alone: with none listed, the same cut beside the same interface is allowed
+    expect(
+      preservesAssemblyInterfaces(
+        assembly,
+        'a',
+        { origin: [2, 0, 0], normal: [1, 0, 0] },
+        IDENTITY_PART_TRANSFORM,
+        [],
       ),
     ).toBe(true);
   });
@@ -192,7 +228,6 @@ describe('assembly presentation leaves canonical geometry authoritative', () => 
         undefined,
       );
     expect(assembly.interfaces).toEqual([]);
-    expect(assembly.connectorPairs).toEqual([]);
     expect(assembly.labels.a).toBe('Wheel group');
   });
 });
@@ -228,9 +263,6 @@ describe('the assembly of a split PREVIEW', () => {
     );
     expect(shown.offsets).toEqual(applied.offsets);
     expect(shown.connectorMode).toBe(applied.connectorMode);
-    expect(shown.connectorPairs.map((p) => p.center)).toEqual(
-      applied.connectorPairs.map((p) => p.center),
-    );
     expect(shown.interfaces.map((e) => e.normal)).toEqual(applied.interfaces.map((e) => e.normal));
   });
 
@@ -240,9 +272,6 @@ describe('the assembly of a split PREVIEW', () => {
     expect(shown.documentId).toBe('assembly-test');
     expect(shown.revision).toBe(5);
     expect(shown.interfaces[0]?.id).toBe('rt:split-candidate-9#preview');
-    expect(
-      shown.connectorPairs.every((p) => p.id.startsWith('rt:split-candidate-9#preview/')),
-    ).toBe(true);
   });
 
   it('separates the two pieces along the cut normal only: A (the +N side) one way, B the other', () => {

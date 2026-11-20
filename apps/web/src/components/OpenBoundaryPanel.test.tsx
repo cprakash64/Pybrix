@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
 import { BoundaryLoopRefusal } from '@cadfixer/geometry-runtime';
 import type {
+  JointDescriptor,
   DocumentHandle,
   DocumentRenderSnapshot,
   HoleFillCandidateHandle,
@@ -18,6 +19,10 @@ import {
   describeBoundaryRefusal,
 } from '../state/hole-fill-presentation';
 import type { LoadedModel } from '../state/model';
+import {
+  RETIRE_DISCLOSURE,
+  RETIRE_DISCLOSURE_PLAIN_CUT,
+} from '../state/connector-edit-presentation';
 
 /**
  * HA01–HA10: THE PANEL, AND WHAT A KEYBOARD OR SCREEN-READER USER GETS.
@@ -338,6 +343,43 @@ describe('HA04, HA06: what the panel offers, and when', () => {
     );
     // And Preview is gone: there is one candidate at a time.
     expect(screen.queryByTestId('preview-fill')).toBeNull();
+  });
+
+  it('says, before Apply, what the fill does to the connectors recorded on this piece', () => {
+    const cut = (pins: number, part = PART): JointDescriptor => ({
+      jointId: 'model-1/joint/1',
+      aPartId: part,
+      bPartId: 'other-piece',
+      status: 'ATTACHED',
+      pinCount: pins,
+      retainedBytes: 0,
+      specDigest: 'digest',
+    });
+    const handle = { documentId: 'model-1', revision: 1 } as DocumentHandle;
+    const open = (joints: readonly JointDescriptor[]): WorkspaceStore => {
+      const store = renderPanel((configured) => {
+        const loaded = loadModel(configured);
+        listOpenings(configured, loaded);
+        configured.setJoints({ status: 'READY', documentId: 'model-1', revision: 1, joints });
+      });
+      update(() => {
+        installCandidate(store, handle);
+      });
+      return store;
+    };
+    open([cut(2)]);
+    expect(screen.getByTestId('hole-fill-connector-note')).toHaveTextContent(RETIRE_DISCLOSURE);
+    cleanup();
+    open([cut(0)]);
+    expect(screen.getByTestId('hole-fill-connector-note')).toHaveTextContent(
+      RETIRE_DISCLOSURE_PLAIN_CUT,
+    );
+    cleanup();
+    open([cut(2, 'some-other-piece')]);
+    expect(screen.queryByTestId('hole-fill-connector-note')).toBeNull();
+    cleanup();
+    open([]);
+    expect(screen.queryByTestId('hole-fill-connector-note')).toBeNull();
   });
 
   it('says the openings were not looked for, and shows no list, above the ceiling', () => {

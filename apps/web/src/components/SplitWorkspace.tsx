@@ -21,6 +21,7 @@ import {
   type SplitPieceView,
 } from '../state/split-presentation';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
+import { ConnectorList } from './ConnectorList';
 import { useAutoSplitControls, useSplitControls } from '../state/workflow-controllers';
 import {
   SplitExportState,
@@ -181,31 +182,7 @@ export function SplitWorkspace(): ReactNode {
                 {assembly.labels[piece.partId] ?? `Piece ${String(index + 1)}`}
               </button>
             ))}
-            <h3>Connectors</h3>
-            <p>
-              {assembly.connectorPairs.length
-                ? assembly.connectorMode === 'manual'
-                  ? 'Paired'
-                  : 'Automatic'
-                : !assembly.interfaces.length
-                  ? 'No new cut interface'
-                  : assembly.connectorMode === 'unavailable'
-                    ? 'Unavailable for this split'
-                    : 'Not added'}
-            </p>
-            {assembly.connectorPairs.map((pair, index) => (
-              <button
-                key={pair.id}
-                type="button"
-                className="secondary-action"
-                aria-pressed={assembly.selectedPairId === pair.id}
-                onClick={() => {
-                  store.selectConnectorPair(
-                    assembly.selectedPairId === pair.id ? undefined : pair.id,
-                  );
-                }}
-              >{`Connection ${String(index + 1)}: ${assembly.labels[pair.a] ?? 'Piece'} and ${assembly.labels[pair.b] ?? 'Piece'}`}</button>
-            ))}
+            <ConnectorList assembly={assembly} model={model} />
           </section>
         ) : null}
         <div

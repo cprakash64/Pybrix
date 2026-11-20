@@ -427,6 +427,7 @@ export function recordJointFromSplit(input: {
       frame,
       authority: jointAuthorityOf(cut),
       connector,
+      cutNormal: Object.freeze([...clip.interface.frame.N] as [number, number, number]),
       nextPinOrdinal: pinCount + 1,
     }),
   };

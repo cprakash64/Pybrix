@@ -70,11 +70,20 @@ describe('a document is installed in one place, and a joint is retired there', (
 
   it('builds a joint list in the model, its fixtures and the two modules that create or replace a joint', () => {
     // a `joints:` field that carries DESCRIPTORS to the page is not a record list, and is the only other one there is
-    const building = everything.filter((file) =>
-      read(file)
-        .split('\n')
-        .some((line) => /\bjoints\??:/.test(line) && !/JointDescriptor|describeJoints/.test(line)),
-    );
+    // the page's own `joints` slice holds descriptors, and the record names are kept out of it by the test below
+    const building = everything
+      .filter(
+        (file) =>
+          !relative(ROOT, file).startsWith(`apps${sep}web${sep}src${sep}`) ||
+          relative(ROOT, file).includes(`${sep}workers${sep}`),
+      )
+      .filter((file) =>
+        read(file)
+          .split('\n')
+          .some(
+            (line) => /\bjoints\??:/.test(line) && !/JointDescriptor|describeJoints/.test(line),
+          ),
+      );
     expect(rel(building)).toEqual(
       [
         'packages/geometry-runtime/src/joint-edits.ts',
@@ -92,10 +101,16 @@ describe('whether a joint is usable is decided in one function', () => {
     const comparing = everything.filter((file) => /(===|!==)\s*[\w.]*builtMesh/.test(read(file)));
     expect(rel(comparing)).toEqual(['packages/mesh-core/src/joint.ts']);
   });
-  it('reads the placement a joint was built under in the model alone', () => {
+  it('reads the placement a joint was built under in the model, and to tell the page where a pin is', () => {
     const reading = everything.filter((file) => read(file).includes('.builtTransform'));
+    // the document gate checks it is usable, the attachment compares it, and the descriptor applies it to report a pin's place in the
+    // scene: a projection that decides nothing
     expect(rel(reading)).toEqual(
-      ['packages/mesh-core/src/document-validation.ts', 'packages/mesh-core/src/joint.ts'].sort(),
+      [
+        'packages/geometry-runtime/src/joint-descriptors.ts',
+        'packages/mesh-core/src/document-validation.ts',
+        'packages/mesh-core/src/joint.ts',
+      ].sort(),
     );
   });
 });
@@ -177,5 +192,41 @@ describe('a rebuild goes through the pin stage a split uses, and builds nothing 
       .filter((l) => l.startsWith('import') || l.startsWith('} from'))) {
       expect(line).not.toMatch(/react|three|apps\/|file-formats/);
     }
+  });
+});
+
+describe('the page keeps no record of a connector (Stage EC-4)', () => {
+  const page = under('apps/web/src/').filter(
+    (file) => !relative(ROOT, file).startsWith(`apps${sep}web${sep}src${sep}workers${sep}`),
+  );
+
+  it('has no connector-pair field, type or migration of its own', () => {
+    for (const file of page) {
+      const text = read(file);
+      expect(text, rel([file])[0]).not.toMatch(
+        /\.connectorPairs\b|\bconnectorPairs:|connectorPairIds|AssemblyConnectorPair/,
+      );
+    }
+  });
+
+  it('asks the worker for the list in one place, once for each revision it holds', () => {
+    const asking = page.filter((file) => read(file).includes('.listJoints('));
+    expect(rel(asking)).toEqual(['apps/web/src/state/use-joint-sync.ts']);
+  });
+
+  it('reads the connectors only through the projection, which holds the staleness rule', () => {
+    const reading = page.filter((file) => /\bconnectorPairsOf\(/.test(read(file)));
+    expect(rel(reading)).toEqual(
+      [
+        'apps/web/src/components/ConnectorList.tsx',
+        'apps/web/src/components/ViewportPanel.tsx',
+        'apps/web/src/state/joint-presentation.ts',
+        'apps/web/src/state/use-split-workflow.ts',
+        'apps/web/src/state/workspace-store.ts',
+      ].sort(),
+    );
+    for (const file of reading)
+      if (!relative(ROOT, file).endsWith('joint-presentation.ts'))
+        expect(read(file), rel([file])[0]).toContain('currentJoints(');
   });
 });

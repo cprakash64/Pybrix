@@ -118,6 +118,11 @@ export interface ConnectorJoint {
   /** `undefined` is a plain joint. */
   readonly connector: JointConnectorSpec | undefined;
   /**
+   * The cut's normal in the pieces' own coordinates, as the engine's interface frame states it. A connector's insertion axis is this
+   * or its opposite, by male side; recorded so the page can be told which way a pin points without holding the interface.
+   */
+  readonly cutNormal: readonly [number, number, number];
+  /**
    * The ordinal the next NEW pin is named with (`pin-<n>`). It only ever grows, so a pin id is never reused within a joint, not even
    * after its pin was removed: an editor that selected a pin cannot find a different one wearing its name.
    */

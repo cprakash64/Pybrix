@@ -5,6 +5,7 @@ import {
 } from './assembly-presentation';
 import { isLengthUnit, type LengthUnit } from '@cadfixer/shared';
 import type { UnitInterpretation } from './unit-interpretation';
+import { connectorPairsOf, currentJoints, jointsFor, type JointsSlice } from './joint-presentation';
 import type {
   BoundaryFillOutcome,
   BoundaryFillPlan,
@@ -963,6 +964,11 @@ const EMPTY_REPAIR: RepairSnapshot = {
 
 export interface WorkspaceState {
   readonly assembly: AssemblyPresentation | undefined;
+  /**
+   * What the worker last said about this document's connector joints (Stage EC-4). A PROJECTION: the worker owns every joint, this holds
+   * the descriptors it listed for one revision, and a slice whose handle is not the loaded model's is read as nothing (`jointsFor`).
+   */
+  readonly joints: JointsSlice | undefined;
   /** `undefined` means no workflow is open. No workflow can be opened yet. */
   readonly selectedWorkflow: WorkflowId | undefined;
   /**
@@ -1149,6 +1155,7 @@ const MAX_STATUS_ENTRIES = 50;
 
 const INITIAL_STATE: WorkspaceState = {
   assembly: undefined,
+  joints: undefined,
   selectedWorkflow: undefined,
   model: undefined,
   importedHandle: undefined,
@@ -1275,9 +1282,20 @@ export class WorkspaceStore {
   }
   public selectConnectorPair(id: string | undefined): void {
     const assembly = this.state.assembly;
-    if (!assembly || (id !== undefined && !assembly.connectorPairs.some((p) => p.id === id)))
-      return;
+    const pairs = connectorPairsOf(currentJoints(this.state.joints, this.state.model?.handle));
+    if (!assembly || (id !== undefined && !pairs.some((p) => p.id === id))) return;
     this.update({ assembly: { ...assembly, selectedPairId: id } });
+  }
+
+  /**
+   * Records what the worker listed for one revision. Refused when the handle is not the loaded model's: a list that arrives after the
+   * model moved on describes a document the user is no longer looking at, and showing it would show a connector that may not exist.
+   */
+  public setJoints(slice: JointsSlice): boolean {
+    const current = jointsFor(slice, this.state.model?.handle);
+    if (current === undefined) return false;
+    this.update({ joints: slice });
+    return true;
   }
 
   private state: WorkspaceState = INITIAL_STATE;
@@ -1671,6 +1689,7 @@ export class WorkspaceStore {
        * choice must not make the next preview open exploded because the last one was left so.
        */
       assembly: undefined,
+      joints: undefined,
       previewExploded: false,
       texturePreview: undefined,
       textureSelection: undefined,

@@ -1,6 +1,6 @@
 # ADR 0033 — Editable connector model
 
-Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine) and Stage EC-3 (transactions). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
+Status: accepted for Stage EC-1 (model, lifecycle, accounting), Stage EC-2 (rebuild engine), Stage EC-3 (transactions) and Stage EC-4 (page projection). Later stages are proposed, not accepted. Supplements ADR 0014 (multi-part document), ADR 0011 (undo) and ADR 0032 (export placement).
 
 ## Context
 
@@ -45,6 +45,15 @@ A committed split is two plain parts. Pins and sockets are Boolean results baked
 - **Defect found and closed: handlers reported `residentBytes` from the successor before the swap**, counting the bases of a joint the install was about to retire. Handlers now retire first.
 - **Unit-less models.** A joint on an STL records the unit the user asserted for the split in its frame; the document never gains one, and an edit sizes from the frame.
 - **A new test project** (`apps/web/src/workers/node-integration-tests`, Node types plus the DOM lib) drives the worker's own handlers on the real kernel. The worker handler modules name `Worker` and `Transferable`, so they compile only with a lib that declares them; the kernel-only project and the WebWorker project are unchanged.
+
+## Stage EC-4 addendum — the page is a projection
+
+- **The page's own record of a connector is gone.** It lived inside the assembly layout, was built from the size a split asked for and a transform-norm bound, and was carried across later cuts by a sign test at `1e-8` that dropped what it could not place. The page now holds the descriptors `joint/list` returned for the revision it holds, and nothing for any other.
+- **One read per revision** (`useJointSync`, mounted once). No list of operations that "affect joints" to keep in agreement with the operations that do. A failed read is `UNAVAILABLE`, said in words, and never "no connectors".
+- **The worker describes a pin in the scene**: centre, axis and `mmPerSceneUnit`. This needed one more field on the joint, `cutNormal`, recorded from the interface frame, because the descriptor must say which way a pin points without the page holding the interface.
+- **What stayed.** The assembly layout's interfaces (explode offsets, labels, the footprints a later cut is tested against) are presentation and do not hold a connector. They keep their own sign test, which is about layout and not about whether a connector exists. This is a narrower change than "delete the sign test", and it is stated here so that the sign test's survival is not mistaken for the old connector record's.
+- **A repair or a fill discloses, before Apply**, that the connectors recorded with the piece's cut end as a record and remain as plain geometry, and that Undo brings the record back (true since EC-3).
+- **Not done.** No control edits a connector; the client has the methods and nothing calls them. A cut that crosses an attached pin is still refused by the page's guard, now sourced from the worker's list.
 
 ## Not decided here
 

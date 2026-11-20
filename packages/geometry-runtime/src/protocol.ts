@@ -1095,11 +1095,20 @@ export interface JointDescriptor {
   /** The connectors, in the page's own terms: names, positions on the cut and sizes. Present for an attached joint with connectors. */
   readonly connector?: {
     readonly maleSide: 'A' | 'B';
+    /** Which way a pin points from the cut, in the scene's own coordinates (the placement applied). Unit length. */
+    readonly axis: readonly [number, number, number];
+    /**
+     * A length in the scene is millimetres divided by this: the unit the connectors were sized in, the placement scale cancelling
+     * out. It is what turns the sizes below into distances the page can lay against what it draws.
+     */
+    readonly mmPerSceneUnit: number;
     readonly pins: readonly {
       readonly pinId: string;
       /** The pin's centre in the cut's own two axes. Never a point of the model. */
       readonly u: number;
       readonly v: number;
+      /** The same centre in the scene's own coordinates: where to draw a marker and what a pick is measured against. */
+      readonly center: readonly [number, number, number];
       readonly diameterMm: number;
       readonly depthMm: number;
       readonly clearanceMm: number;

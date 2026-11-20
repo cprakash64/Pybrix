@@ -15,6 +15,7 @@ import {
 import { jointedDocument, tetrahedronMesh, translation } from '@cadfixer/mesh-core/fixtures';
 import { describeJoints } from './joint-descriptors';
 import { jointSpecDigest } from './connector-rebuild';
+import type { ConnectorJoint } from '@cadfixer/mesh-core';
 import { documentByteLength, isDocument, ResidentDocumentStore } from './resident-documents';
 
 /*
@@ -196,12 +197,55 @@ describe('the page is told what a joint is, never what it holds', () => {
       specDigest: jointSpecDigest(joint),
       connector: {
         maleSide: 'A',
-        pins: [{ pinId: 'pin-1', u: 0, v: 0, diameterMm: 4, depthMm: 6, clearanceMm: 0.2 }],
+        // male side A points against the cut's normal (the fixture's is +x); the identity placement leaves it alone
+        axis: [-1, 0, 0],
+        mmPerSceneUnit: 1,
+        pins: [
+          {
+            pinId: 'pin-1',
+            u: 0,
+            v: 0,
+            center: [0, 0, 0],
+            diameterMm: 4,
+            depthMm: 6,
+            clearanceMm: 0.2,
+          },
+        ],
       },
     });
     // nothing in it is a mesh, a base piece or a point of the model
     expect(JSON.parse(JSON.stringify(described))).toEqual(described);
     expect(JSON.stringify(described)).not.toMatch(/local|baseMesh|builtMesh|positions|indices/);
+  });
+
+  it('states a pin in the scene: its centre, its axis and the length of a millimetre, under a placement that rotates, scales and moves', () => {
+    const { document, joint } = jointedDocument();
+    // a quarter turn about z, a uniform scale of 2, and a translation: x -> y, y -> -x
+    const placement = [0, 2, 0, -2, 0, 0, 0, 0, 2, 10, 20, 30] as const;
+    const site = { u: 1, v: 2, local: [3, 4, 5] as const };
+    const placed: ConnectorJoint = {
+      ...joint,
+      a: { ...joint.a, builtTransform: placement },
+      b: { ...joint.b, builtTransform: placement },
+      frame: {
+        ...joint.frame,
+        unit: 'inch',
+        mmPerUnit: 25.4,
+        placementScale: 2,
+        mmPerCoordinate: 50.8,
+      },
+      connector: joint.connector && {
+        ...joint.connector,
+        elements: joint.connector.elements.map((pin) => ({ ...pin, site })),
+      },
+    };
+    const parts = document.parts.map((part) => ({ ...part, transform: placement }));
+    const [described] = describeJoints({ unit: 'inch', parts, joints: [placed] });
+    // world = v . P + t, with the row-vector layout: x' = -2*y + 10, y' = 2*x + 20, z' = 2*z + 30
+    expect(described?.connector?.pins[0]?.center).toEqual([-2 * 4 + 10, 2 * 3 + 20, 2 * 5 + 30]);
+    // male side A points against the normal (+x), which the placement turns to +y scaled, then normalised
+    expect(described?.connector?.axis).toEqual([0, -1, 0]);
+    expect(described?.connector?.mmPerSceneUnit).toBe(25.4);
   });
 
   it('describes a plain joint as zero pins', () => {

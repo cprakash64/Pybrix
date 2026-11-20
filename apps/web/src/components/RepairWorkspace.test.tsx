@@ -14,6 +14,7 @@ import {
   type LocalRepairPlan,
   type DocumentHandle,
   type DocumentRenderSnapshot,
+  type JointDescriptor,
   type PartDescriptor,
   type RepairCandidateHandle,
   type RepairOperationDecision,
@@ -28,6 +29,10 @@ import { WorkspaceProvider } from '../state/store-context';
 import { WorkflowControllersProvider } from '../state/workflow-controllers';
 import { NO_SAFE_CHANGE_CODE } from '../state/repair-preview-summary';
 import { WorkspaceStore } from '../state/workspace-store';
+import {
+  RETIRE_DISCLOSURE,
+  RETIRE_DISCLOSURE_PLAIN_CUT,
+} from '../state/connector-edit-presentation';
 import {
   REPAIR_EXCLUSIONS,
   REPAIR_ISOLATION_HEADLINE,
@@ -1283,5 +1288,78 @@ describe('the 06B repair experience', () => {
     expect(screen.getByTestId('repair-summary-after')).toBeInTheDocument();
     // The Health line still describes the committed model, not the candidate.
     expect(screen.getByTestId('health-summary')).not.toHaveTextContent(/remaining/);
+  });
+});
+
+/* ------------------------------------------------------------ EC-4 -------- */
+
+function recordedCut(pins: number, partId = PART): JointDescriptor {
+  return {
+    jointId: 'model-1/joint/1',
+    aPartId: partId,
+    bPartId: 'other-piece',
+    status: 'ATTACHED',
+    pinCount: pins,
+    retainedBytes: 0,
+    specDigest: 'digest',
+  };
+}
+
+describe('what Apply does to the connectors recorded on this piece', () => {
+  const APPLY_LINE = 'Apply replaces the model with the validated preview. You can undo it.';
+  function previewWith(
+    slice: Parameters<WorkspaceStore['setJoints']>[0] | undefined,
+  ): WorkspaceStore {
+    const store = renderWorkspace((s) => {
+      loadModel(s);
+      if (slice !== undefined) s.setJoints(slice);
+    });
+    analyse(store, { zeroAreaFaceCount: 2 });
+    commitPlan(store, DEGENERATE_PLAN);
+    commitPreview(store);
+    return store;
+  }
+  const ready = (
+    joints: readonly JointDescriptor[],
+  ): Parameters<WorkspaceStore['setJoints']>[0] => ({
+    status: 'READY',
+    documentId: HANDLE.documentId,
+    revision: HANDLE.revision,
+    joints,
+  });
+
+  it('says it in the sentence that already says what Apply does, and draws no extra line', () => {
+    previewWith(ready([recordedCut(2)]));
+    const apply = screen.getByTestId('apply-repair');
+    expect(apply).toHaveAccessibleDescription(`${APPLY_LINE} ${RETIRE_DISCLOSURE}`);
+    expect(screen.getByTestId('repair-connector-note')).toBeInTheDocument();
+    expect(drawnLines(screen.getByTestId('repair-footer'))).toBe(1);
+  });
+
+  it('says the gentler thing for a piece of a recorded cut with no connectors', () => {
+    previewWith(ready([recordedCut(0)]));
+    expect(screen.getByTestId('apply-repair')).toHaveAccessibleDescription(
+      `${APPLY_LINE} ${RETIRE_DISCLOSURE_PLAIN_CUT}`,
+    );
+  });
+
+  it('is silent for a piece no cut was recorded for, a record that has ended, a stale list and an unreadable one', () => {
+    const ended: JointDescriptor = {
+      ...recordedCut(2),
+      status: 'RETIRED',
+      reason: 'GEOMETRY_CHANGED',
+    };
+    for (const slice of [
+      ready([recordedCut(2, 'some-other-part')]),
+      ready([ended]),
+      { ...ready([recordedCut(2)]), revision: HANDLE.revision + 1 },
+      { status: 'UNAVAILABLE' as const, documentId: HANDLE.documentId, revision: HANDLE.revision },
+      undefined,
+    ]) {
+      cleanup();
+      previewWith(slice);
+      expect(screen.getByTestId('apply-repair')).toHaveAccessibleDescription(APPLY_LINE);
+      expect(screen.queryByTestId('repair-connector-note')).toBeNull();
+    }
   });
 });

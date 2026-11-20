@@ -13,6 +13,7 @@ import { useHoleFillWorkflow, type HoleFillControls } from './use-hole-fill-work
 import { useAutoSplit, type AutoSplitControls, type AutoSplitOptions } from './use-auto-split';
 import { useSplitWorkflow, type SplitControls } from './use-split-workflow';
 import { useTextureWorkflow, type TextureControls } from './use-texture-workflow';
+import { useJointSync } from './use-joint-sync';
 import { useTopologyAnalysis, type TopologyAnalysisControls } from './use-topology-analysis';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { RepairPlanState } from './workspace-store';
@@ -152,6 +153,15 @@ export function TextureControlsProvider({ children }: { readonly children: React
 }
 
 /** All of them, in the order their automatic work depends on. */
+/**
+ * Keeps the page's list of connector joints in step with the worker, once for the whole application. It renders nothing: a hook that
+ * starts a read on every revision belongs in exactly one place, for the reason each controller above does.
+ */
+function JointSync(): ReactNode {
+  useJointSync();
+  return null;
+}
+
 export function WorkflowControllersProvider({
   children,
 }: {
@@ -159,6 +169,7 @@ export function WorkflowControllersProvider({
 }): ReactNode {
   return (
     <AnalysisControlsProvider>
+      <JointSync />
       <RepairControlsProvider>
         <HoleFillControlsProvider>
           <SplitControlsProvider>

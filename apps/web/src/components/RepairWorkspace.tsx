@@ -40,6 +40,8 @@ import {
   describeLimitLikely,
 } from '../state/repair-preview-summary';
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
+import { currentJoints } from '../state/joint-presentation';
+import { disclosureFor } from '../state/connector-edit-presentation';
 import { totalDefectCount } from '../state/topology-presentation';
 import { useRepairWorkspace, type RepairWorkspaceView } from '../state/use-repair-workspace';
 import { useAnalysisControls, useRepairControls } from '../state/workflow-controllers';
@@ -472,7 +474,12 @@ function RepairFooter({
   readonly view: RepairWorkspaceView;
   readonly reasonInfo: InfoDisclosure;
 }): ReactNode {
-  const { analysis, repair, model, activePartId } = useWorkspaceState();
+  const { analysis, repair, model, activePartId, joints } = useWorkspaceState();
+  // Said before Apply, in the sentence that already says what Apply does: what this repair does to the connectors of this piece.
+  const connectorNote =
+    activePartId === undefined
+      ? undefined
+      : disclosureFor(currentJoints(joints, model?.handle), activePartId);
   const analysisControls = useAnalysisControls();
   const controls = useRepairControls();
   const hintId = useId();
@@ -707,6 +714,7 @@ function RepairFooter({
         hintId={hintId}
         describeScope={describeRepairScope(scope)}
         reasonInfo={reasonInfo}
+        connectorNote={connectorNote}
         exhausted={applied !== undefined}
         // ONE LINE AT A TIME: with another line on screen the reason still
         // describes the action, to assistive technology.
@@ -802,6 +810,7 @@ function FooterHint({
   hintId,
   describeScope,
   reasonInfo,
+  connectorNote,
   exhausted,
   spoken,
 }: {
@@ -809,6 +818,8 @@ function FooterHint({
   readonly hintId: string;
   readonly describeScope: string;
   readonly reasonInfo: InfoDisclosure;
+  /** What Apply does to the connectors recorded on this piece, when it touches any. */
+  readonly connectorNote: string | undefined;
   /** A repair was just applied to this revision: what is left has no safe fix. */
   readonly exhausted: boolean;
   readonly spoken: boolean;
@@ -829,7 +840,10 @@ function FooterHint({
       case RepairActionKind.Analyze:
         return { text: 'Pybrix checks the mesh before it can repair it.' };
       case RepairActionKind.Preview:
-        return { text: 'Apply replaces the model with the validated preview. You can undo it.' };
+        return {
+          text: `Apply replaces the model with the validated preview. You can undo it.${connectorNote === undefined ? '' : ` ${connectorNote}`}`,
+          ...(connectorNote === undefined ? {} : { testId: 'repair-connector-note' }),
+        };
       case RepairActionKind.NoModel:
       case RepairActionKind.Analyzing:
       case RepairActionKind.Planning:
