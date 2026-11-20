@@ -1106,6 +1106,11 @@ export interface JointDescriptor {
      * page proposes is judged by the worker against the real cut, never against this.
      */
     readonly outline: JointOutline | undefined;
+    /**
+     * Where the cut's own axes point in the scene, whose axes are the model's own: `u` (across, to the right in the picture), `v` (along,
+     * up) and the normal, each a unit vector. LABELS ONLY: it moves nothing and decides nothing.
+     */
+    readonly axes: JointCutAxes | undefined;
   };
   /** The connectors, in the page's own terms: names, positions on the cut and sizes. Present for an attached joint with connectors. */
   readonly connector?: {
@@ -1129,6 +1134,13 @@ export interface JointDescriptor {
       readonly clearanceMm: number;
     }[];
   };
+}
+
+/** The directions of a cut's own axes in the scene, as unit vectors. */
+export interface JointCutAxes {
+  readonly u: readonly [number, number, number];
+  readonly v: readonly [number, number, number];
+  readonly normal: readonly [number, number, number];
 }
 
 /** The outline of a cut in its own axes: closed loops, each a flat `[u0, v0, u1, v1, …]`, material inside an OUTER loop and not inside a HOLE. */

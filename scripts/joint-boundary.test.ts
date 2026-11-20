@@ -104,9 +104,11 @@ describe('whether a joint is usable is decided in one function', () => {
   it('reads the placement a joint was built under in the model, and to tell the page where a pin is', () => {
     const reading = everything.filter((file) => read(file).includes('.builtTransform'));
     // the document gate checks it is usable, the attachment compares it, and the descriptor applies it to report a pin's place in the
-    // scene: a projection that decides nothing
+    // scene: a projection that decides nothing. So does the one module that reads a cut, to say where the cut's axes point in the scene
+    // (Stage EC-8): labels only.
     expect(rel(reading)).toEqual(
       [
+        'packages/geometry-runtime/src/connector-rebuild.ts',
         'packages/geometry-runtime/src/joint-descriptors.ts',
         'packages/mesh-core/src/document-validation.ts',
         'packages/mesh-core/src/joint.ts',
@@ -297,7 +299,10 @@ describe('a connector is placed by looking at the cut, and the picture judges no
   });
 
   it('describes the outline in the one module that reads the cut, and nowhere else', () => {
-    const describing = everything.filter((file) => read(file).includes('describeCutOutline('));
+    const describing = everything.filter(
+      (file) =>
+        read(file).includes('describeCutOutline(') || read(file).includes('describeCutAxes('),
+    );
     expect(rel(describing)).toEqual(
       [
         'packages/geometry-runtime/src/connector-rebuild.ts',
@@ -343,5 +348,25 @@ describe('the connector editor is one controller drawn in one workspace at a tim
         !relative(ROOT, file).endsWith('ConnectorEditor.tsx'),
     );
     expect(rel(direct)).toEqual([]);
+  });
+});
+
+describe('the axes of a cut are named in one place and only read by the editor (Stage EC-8)', () => {
+  const page = under('apps/web/src/').filter(
+    (file) => !relative(ROOT, file).startsWith(`apps${sep}web${sep}src${sep}workers${sep}`),
+  );
+  it('reads the axes of a cut in the editor alone, and names them in one presentation module', () => {
+    const reading = page.filter((file) => /\.cutFace\??\.axes\b/.test(read(file)));
+    expect(rel(reading)).toEqual(['apps/web/src/components/ConnectorEditor.tsx']);
+    const naming = page.filter((file) => /\bnameDirection\(/.test(read(file)));
+    expect(rel(naming)).toEqual(['apps/web/src/state/cut-axes-presentation.ts']);
+  });
+  it('lets the labels decide nothing: the presentation imports no runtime value and the picture only draws what it is given', () => {
+    const presentation = read(join(ROOT, 'apps/web/src/state/cut-axes-presentation.ts'));
+    for (const line of presentation.split('\n').filter((l) => l.startsWith('import ')))
+      expect(line.startsWith('import type ')).toBe(true);
+    expect(read(join(ROOT, 'apps/web/src/components/CutFace.tsx'))).not.toMatch(
+      /cut-axes-presentation/,
+    );
   });
 });

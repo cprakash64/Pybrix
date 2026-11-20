@@ -4943,3 +4943,9 @@
   color: var(--cad-text);
   font-size: var(--fs-meta);
 }
+
+.cut-face__axis {
+  fill: var(--cad-text-muted);
+  font-family: var(--font-mono, monospace);
+  pointer-events: none;
+}

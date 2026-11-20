@@ -46,7 +46,12 @@ const OUTLINE = {
   bounds: { minU: -10, maxU: 10, minV: -10, maxV: 10 },
   loops: [{ role: 'OUTER' as const, points: [-10, -10, 10, -10, 10, 10, -10, 10] }],
 };
-const CUT_FACE = { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE };
+const AXES = {
+  u: [0, 1, 0] as [number, number, number],
+  v: [0, 0, 1] as [number, number, number],
+  normal: [1, 0, 0] as [number, number, number],
+};
+const CUT_FACE = { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE, axes: AXES };
 const joint = (diameterMm = 4, maleSide: 'A' | 'B' = 'A'): JointDescriptor => ({
   jointId: 'doc-1/joint/1',
   aPartId: 'a',
@@ -178,7 +183,12 @@ describe('the editor shows the connectors as they are', () => {
 
   it('says so, and still offers the sizes and the removal, for a cut it cannot draw', () => {
     mount({
-      joints: [{ ...joint(), cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: undefined } }],
+      joints: [
+        {
+          ...joint(),
+          cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: undefined, axes: undefined },
+        },
+      ],
     });
     expect(screen.getByTestId('connector-edit-no-face')).toHaveTextContent(
       CONNECTOR_EDIT_COPY.noFace,
@@ -314,6 +324,48 @@ describe('checking and applying', () => {
       CONNECTOR_EDIT_COPY.removeReady,
     );
     expect(propose.mock.calls[0]?.[3]).toEqual({ kind: 'REMOVE_CONNECTORS' });
+  });
+});
+
+describe('the axes of the cut, named against the model', () => {
+  it('writes the model axis each direction of the picture points to, on the picture, beside the fields and in a sentence', () => {
+    mount();
+    expect(screen.getByTestId('cut-face-axis-across')).toHaveTextContent('→+Y');
+    expect(screen.getByTestId('cut-face-axis-along')).toHaveTextContent('↑+Z');
+    expect(screen.getByTestId('connector-position-0')).toHaveTextContent('Across (+Y)');
+    expect(screen.getByTestId('connector-position-0')).toHaveTextContent('Along (+Z)');
+    expect(screen.getByTestId('cut-face-axes')).toHaveTextContent(
+      'Across runs toward +Y on the model, and along toward +Z. It is seen from the +X side.',
+    );
+  });
+
+  it('says a direction is turned from the axis it is nearest, and does not call it the axis', () => {
+    const t = (7 * Math.PI) / 180;
+    mount({
+      joints: [
+        {
+          ...joint(),
+          cutFace: {
+            ...CUT_FACE,
+            axes: {
+              u: [Math.sin(t), Math.cos(t), 0],
+              v: [0, 0, 1],
+              normal: [Math.cos(t), -Math.sin(t), 0],
+            },
+          },
+        },
+      ],
+    });
+    expect(screen.getByTestId('cut-face-axis-across')).toHaveTextContent('→≈+Y');
+    expect(screen.getByTestId('cut-face-axes')).toHaveTextContent('+Y, turned 7° from the Y axis');
+  });
+
+  it('draws no axis names when the worker did not say, and the fields keep their plain labels', () => {
+    mount({ joints: [{ ...joint(), cutFace: { ...CUT_FACE, axes: undefined } }] });
+    expect(screen.queryByTestId('cut-face-axis-across')).toBeNull();
+    expect(screen.queryByTestId('cut-face-axes')).toBeNull();
+    expect(screen.getByTestId('connector-position-0')).toHaveTextContent('Across');
+    expect(screen.getByTestId('connector-position-0')).not.toHaveTextContent('(');
   });
 });
 

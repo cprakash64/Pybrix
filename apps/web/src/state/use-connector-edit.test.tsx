@@ -87,7 +87,7 @@ function plainCut(): JointDescriptor {
     pinCount: 0,
     retainedBytes: 0,
     specDigest: 'digest-plain',
-    cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE },
+    cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE, axes: undefined },
   };
 }
 function joint(overrides: Partial<JointDescriptor> = {}, diameterMm = 4): JointDescriptor {
@@ -99,7 +99,7 @@ function joint(overrides: Partial<JointDescriptor> = {}, diameterMm = 4): JointD
     pinCount: 1,
     retainedBytes: 0,
     specDigest: `digest-${String(diameterMm)}`,
-    cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE },
+    cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: OUTLINE, axes: undefined },
     connector: {
       maleSide: 'A',
       axis: [-1, 0, 0],
@@ -260,7 +260,10 @@ describe('the connectors an edit starts from', () => {
     list(store, [joint({ aPartId: 'x', bPartId: 'y' })]);
     expect(result.current.joint).toBeUndefined();
     list(store, [
-      { ...plainCut(), cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: undefined } },
+      {
+        ...plainCut(),
+        cutFace: { mmPerCoordinate: 1, maxPins: 4, outline: undefined, axes: undefined },
+      },
     ]);
     expect(result.current.joint).toBeUndefined();
   });

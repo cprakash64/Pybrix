@@ -1,4 +1,5 @@
 import {
+  applyPartTransform,
   classifyPlacement,
   jointId as brandJointId,
   type CanonicalMesh,
@@ -23,7 +24,7 @@ import type { BooleanBackend } from './boolean-adapter';
 import { connectorSupportMargin } from './connector-policy';
 import type { ClosedPlaneClip } from './closed-plane-kernel';
 import { resolveMillimetresPerCoordinate } from './connector-dimensions';
-import type { JointOutline } from './protocol';
+import type { JointCutAxes, JointOutline } from './protocol';
 import {
   ConnectorRefusal,
   connectorManifestOf,
@@ -138,6 +139,34 @@ export function pinCutOfJoint(joint: ConnectorJoint): PinCut {
       refusal: ConnectorRefusal.INVALID_PLAN,
     });
   return cut;
+}
+
+/**
+ * Where the cut's own axes point in the scene: `u` (across), `v` (along) and the normal, as unit vectors. The interface frame is in the
+ * first piece's own coordinates; the LINEAR part of that piece's placement (translation dropped) carries each direction into the scene,
+ * as it does a pin's axis. The scene's axes are the model's own: nothing but the placement turns a model. `undefined` for a joint this
+ * module did not make or a placement that collapses a direction, which no joint is made on.
+ */
+export function describeCutAxes(joint: ConnectorJoint): JointCutAxes | undefined {
+  const { detail } = joint.authority;
+  if (!MINTED.has(detail)) return undefined;
+  const { cut } = detail as JointCutDetail;
+  const t = joint.a.builtTransform;
+  const linear: PartTransform = [t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], 0, 0, 0];
+  const inScene = (
+    local: readonly [number, number, number],
+  ): readonly [number, number, number] | undefined => {
+    const [x, y, z] = applyPartTransform(linear, local[0], local[1], local[2]);
+    const length = Math.hypot(x, y, z);
+    return length === 0 || !Number.isFinite(length)
+      ? undefined
+      : [x / length, y / length, z / length];
+  };
+  const u = inScene(cut.interface.frame.U);
+  const v = inScene(cut.interface.frame.V);
+  const normal = inScene(cut.interface.frame.N);
+  if (u === undefined || v === undefined || normal === undefined) return undefined;
+  return Object.freeze({ u, v, normal });
 }
 
 /**

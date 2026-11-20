@@ -1078,7 +1078,7 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   parsers and applies placements with its own arithmetic. A test that exports
   through our writer and reads back with our reader proves only that they agree.
 
-## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, EC-7 every workspace, ADR 0033)
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, EC-7 every workspace, EC-8 axis labels, ADR 0033)
 
 EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
 EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
@@ -1184,6 +1184,16 @@ two numbers to type, and add and remove for one connector.
 - **AFTER AN APPLY THE SENTENCE IS "Connectors changed and checked" PLUS WHAT THE CHECK WAS NOT** (`CONNECTOR_EDIT_COPY.qualifier`): a
   geometric check of the material around each connector, not a claim about strength, and not about how the pieces go together. It is shown
   beside the control as well as in the status log, because a status log is not where a person looks after pressing a button.
+- **THE CUT'S AXES ARE NAMED AGAINST THE MODEL'S, FROM THE WORKER'S FRAME (EC-8).** `JointDescriptor.cutFace.axes` carries `u`, `v` and the
+  normal as unit vectors in the scene (`describeCutAxes`, `connector-rebuild.ts`: the retained interface frame, carried by the LINEAR part of
+  the first piece's placement). The scene's axes are the model's own: only a placement turns a model, and it is already in the vectors.
+  `cut-axes-presentation.ts` names a direction `+X` within 1° of an axis, `≈+X` with `turned n° from the X axis` up to 20°, and gives
+  components beyond that rather than the nearest axis. The picture writes `→+X` and `↑+Z` in its margin, the fields read `Across (+X)`,
+  and a sentence says which side it is seen from, computed from the handedness of the three vectors (u × v against the normal), never
+  assumed. It says nothing is top, front or left: those depend on a viewer the model does not state. LABELS ONLY: nothing moves and
+  nothing is decided by them. The e2e reads each claim against the exported files: a pin moved across by 5 mm and along by 4 mm moves
+  that far toward the labelled directions, and the viewer side matches the sign of the two moves' cross product. Reversing the across
+  label fails it.
 - **THE EDITOR IS ONE CONTROLLER DRAWN IN ONE WORKSPACE AT A TIME (EC-7).** `useConnectorEdit` runs once, in `ConnectorEditControlsProvider`
   (`workflow-controllers.tsx`), so the draft, the candidate and the undo belong to the application. Repair, Convert, Split & Connect
   and Surface Texture each mount `ConnectorEditorSlot`, which draws the editor only while its workspace is the one shown: the workspaces

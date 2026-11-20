@@ -1085,6 +1085,39 @@ describe('the face of a cut is described to the page, for a view it draws', () =
     expect(Math.abs(pin?.v ?? 99)).toBeLessThan(10);
   });
 
+  it("says where the cut's own axes point in the scene: unit, at right angles, and carried by the placement", async () => {
+    const dot = (a: readonly number[], b: readonly number[]): number =>
+      a.reduce((sum, value, i) => sum + value * (b[i] ?? 0), 0);
+    const split = await splitCube({ connector: PIN, unit: 'millimeter' });
+    const plain = onlyJoint(split.handle).cutFace?.axes;
+    if (plain === undefined) throw new Error('expected the axes');
+    for (const axis of [plain.u, plain.v, plain.normal])
+      expect(Math.hypot(...axis)).toBeCloseTo(1, 12);
+    expect(dot(plain.u, plain.v)).toBeCloseTo(0, 12);
+    expect(dot(plain.u, plain.normal)).toBeCloseTo(0, 12);
+    expect(dot(plain.v, plain.normal)).toBeCloseTo(0, 12);
+    // the cut of the x = 0 plane faces along x
+    expect(Math.abs(plain.normal[0])).toBeCloseTo(1, 12);
+
+    // the same cube placed turned a quarter about z and scaled by two. The row-vector convention makes this array (x, y, z) -> (2y, -2x, 2z). Every direction turns with it and
+    // stays a unit vector, whatever the scale
+    residentDocuments.releaseAll();
+    const placed = await splitCube({
+      connector: PIN,
+      unit: 'millimeter',
+      transform: [0, -2, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0],
+    });
+    const turned = onlyJoint(placed.handle).cutFace?.axes;
+    if (turned === undefined) throw new Error('expected the axes');
+    const turn = (v: readonly [number, number, number]): number[] => [v[1], -v[0], v[2]];
+    for (const key of ['u', 'v', 'normal'] as const) {
+      expect(Math.hypot(...turned[key])).toBeCloseTo(1, 12);
+      turn(plain[key]).forEach((value, i) => {
+        expect(turned[key][i]).toBeCloseTo(value, 12);
+      });
+    }
+  });
+
   it("describes a plain cut's face too, since connectors can be added to it", async () => {
     const split = await splitCube({ connector: { kind: 'none' }, unit: 'millimeter' });
     const joint = onlyJoint(split.handle);

@@ -9,7 +9,7 @@ import {
   type GeometryDocument,
   type PartTransform,
 } from '@cadfixer/mesh-core';
-import { describeCutOutline, jointSpecDigest } from './connector-rebuild';
+import { describeCutAxes, describeCutOutline, jointSpecDigest } from './connector-rebuild';
 import type { JointDescriptor } from './protocol';
 
 /**
@@ -54,6 +54,7 @@ export function describeJoints(document: GeometryDocument): readonly JointDescri
                 mmPerCoordinate: record.frame.mmPerCoordinate,
                 maxPins: MAX_PINS_PER_JOINT,
                 outline: describeCutOutline(record),
+                axes: describeCutAxes(record),
               },
             }
           : {}),

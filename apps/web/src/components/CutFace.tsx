@@ -35,6 +35,7 @@ export function CutFace({
   diameterMm,
   clearanceMm,
   selected,
+  axisLabels,
   disabled,
   onSelect,
   onMove,
@@ -46,6 +47,8 @@ export function CutFace({
   readonly diameterMm: number;
   readonly clearanceMm: number;
   readonly selected: number | undefined;
+  /** What to write against each direction of the picture, from the model's own axes (`+X`), or nothing when the worker did not say. */
+  readonly axisLabels?: { readonly across: string; readonly along: string };
   readonly disabled: boolean;
   readonly onSelect: (index: number | undefined) => void;
   readonly onMove: (index: number, u: number, v: number) => void;
@@ -146,6 +149,34 @@ export function CutFace({
       data-dragging={dragging === undefined ? 'false' : 'true'}
     >
       <path className="cut-face__outline" d={outlinePath(outline)} fillRule="evenodd" />
+      {axisLabels === undefined ? null : (
+        <>
+          {/* Written in the empty band beside the direction each names: across to the right, along above. */}
+          <text
+            className="cut-face__axis"
+            x={outline.bounds.maxU + view.margin * 0.12}
+            y={toViewY((outline.bounds.minV + outline.bounds.maxV) / 2)}
+            fontSize={view.margin * 0.42}
+            dominantBaseline="central"
+            aria-hidden="true"
+            data-testid="cut-face-axis-across"
+          >
+            {`→${axisLabels.across}`}
+          </text>
+          <text
+            className="cut-face__axis"
+            x={(outline.bounds.minU + outline.bounds.maxU) / 2}
+            y={toViewY(outline.bounds.maxV) - view.margin * 0.5}
+            fontSize={view.margin * 0.42}
+            textAnchor="middle"
+            dominantBaseline="central"
+            aria-hidden="true"
+            data-testid="cut-face-axis-along"
+          >
+            {`↑${axisLabels.along}`}
+          </text>
+        </>
+      )}
       {pins.map((pin, index) => {
         const isSelected = selected === index;
         const y = toViewY(pin.v);

@@ -483,3 +483,66 @@ test('the editor is in every workspace, an edit made in Convert reaches the piec
   if (back === undefined) throw new Error('undo left no connector');
   expect(distance(back, first)).toBeLessThan(0.005);
 });
+
+/*
+ * RELEASE 2, STAGE EC-8 — THE NAMES ON THE CUT'S AXES, JUDGED AGAINST THE FILES. The picture says which model axis its right and its top
+ * point along, and which side it is seen from. Each claim is checked against where the exported pieces actually put a pin that was moved
+ * along that direction: nothing here trusts a number the product reports about itself, only the label it prints and the file it writes.
+ */
+async function applyMove(page: Page, uBy: number, vBy: number): Promise<void> {
+  const u0 = Number(await page.getByTestId('connector-position-u-0').inputValue());
+  const v0 = Number(await page.getByTestId('connector-position-v-0').inputValue());
+  await page.getByTestId('connector-position-u-0').fill(String(u0 + uBy));
+  await page.getByTestId('connector-position-v-0').fill(String(v0 + vBy));
+  await page.getByTestId('connector-edit-check').click();
+  await expect(page.getByTestId('connector-edit-preview-label')).toHaveText(
+    'Preview — not applied',
+    { timeout: 60_000 },
+  );
+  await page.getByTestId('connector-edit-apply').click();
+  await expect(page.getByTestId('connector-edit-applied')).toBeVisible({ timeout: 60_000 });
+}
+/** `→+X` or `↑−Z`: the sign and the model axis a label names, as a unit vector in the model's x, y, z. */
+function labelledDirection(text: string | null): readonly [number, number, number] {
+  const match = /([+−])([XYZ])/.exec(text ?? '');
+  if (match === null) throw new Error(`no axis in "${text ?? ''}"`);
+  const sign = match[1] === '+' ? 1 : -1;
+  return [match[2] === 'X' ? sign : 0, match[2] === 'Y' ? sign : 0, match[2] === 'Z' ? sign : 0];
+}
+
+test('the axis names on the cut are the directions the pieces move a pin in, and the viewer side is the right one', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await open(page);
+  await splitWithDefaultPin(page);
+  const across = labelledDirection(await page.getByTestId('cut-face-axis-across').textContent());
+  const along = labelledDirection(await page.getByTestId('cut-face-axis-along').textContent());
+  // both are the exact axes the default cut produces, not "≈"
+  await expect(page.getByTestId('cut-face-axis-across')).not.toContainText('≈');
+  const [first] = await allConnectorCentres(page);
+  if (first === undefined) throw new Error('the split wrote no connector');
+
+  await applyMove(page, 5, 0);
+  const [second] = await allConnectorCentres(page);
+  if (second === undefined) throw new Error('the first move wrote no connector');
+  await applyMove(page, 0, 4);
+  const [third] = await allConnectorCentres(page);
+  if (third === undefined) throw new Error('the second move wrote no connector');
+
+  // the file moved the pin 5 mm toward the labelled direction for "across", and 4 mm toward the labelled one for "along"
+  expect(second[0] - first[0]).toBeCloseTo(5 * across[0], 1);
+  expect(second[1] - first[1]).toBeCloseTo(5 * across[1], 1);
+  expect(third[0] - second[0]).toBeCloseTo(4 * along[0], 1);
+  expect(third[1] - second[1]).toBeCloseTo(4 * along[1], 1);
+
+  // the side it is seen from: across x along points toward the viewer, which the cut's normal (along z here) names. The two moves
+  // are in the plane of the cut, so the z of their cross product is the sign of the side, read from the files.
+  const crossZ =
+    (second[0] - first[0]) * (third[1] - second[1]) -
+    (second[1] - first[1]) * (third[0] - second[0]);
+  const sentence = (await page.getByTestId('cut-face-axes').textContent()) ?? '';
+  const side = /seen from the ([+−])Z side/.exec(sentence);
+  if (side === null) throw new Error(`no side named in "${sentence}"`);
+  expect(side[1] === '+' ? 1 : -1).toBe(Math.sign(crossZ));
+});

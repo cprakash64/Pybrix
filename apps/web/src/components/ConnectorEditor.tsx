@@ -11,6 +11,7 @@ import { DEFAULT_WORKSPACE } from './shell/workspaces';
 import { WorkflowId } from '../state/workflows';
 import { CutFace } from './CutFace';
 import { MillimetreField } from './MillimetreField';
+import { cutAxesSentence, labelCutAxes } from '../state/cut-axes-presentation';
 import { NumberField } from './shell/number-field';
 import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/primitives';
 
@@ -64,6 +65,7 @@ export function ConnectorEditor({
   if (joint === undefined || draft === undefined) return undo;
 
   const outline = joint.cutFace?.outline;
+  const axes = joint.cutFace?.axes === undefined ? undefined : labelCutAxes(joint.cutFace.axes);
   const mmPerCoordinate = joint.cutFace?.mmPerCoordinate ?? 1;
   const maxPins = joint.cutFace?.maxPins ?? 4;
   const sideLabel = (side: 'A' | 'B'): string =>
@@ -95,6 +97,9 @@ export function ConnectorEditor({
               diameterMm={draft.diameterMm}
               clearanceMm={draft.clearanceMm}
               selected={selected}
+              {...(axes === undefined
+                ? {}
+                : { axisLabels: { across: axes.across.short, along: axes.along.short } })}
               disabled={busy}
               onSelect={setSelected}
               onMove={edit.movePin}
@@ -104,6 +109,11 @@ export function ConnectorEditor({
               }}
             />
             <p className="panel__note">{CONNECTOR_EDIT_COPY.facePicture}</p>
+            {axes === undefined ? null : (
+              <p className="panel__note" data-testid="cut-face-axes">
+                {cutAxesSentence(axes)}
+              </p>
+            )}
             {draft.pins.length === 0 ? (
               <p className="panel__note" data-testid="connector-edit-none-yet">
                 {CONNECTOR_EDIT_COPY.noConnectorsYet}
@@ -119,6 +129,7 @@ export function ConnectorEditor({
                     <span className="connector-positions__name">{`Connector ${String(index + 1)}`}</span>
                     <PositionField
                       label={CONNECTOR_EDIT_COPY.across}
+                      direction={axes?.across.short}
                       index={index}
                       axis="u"
                       value={pin.u * mmPerCoordinate}
@@ -129,6 +140,7 @@ export function ConnectorEditor({
                     />
                     <PositionField
                       label={CONNECTOR_EDIT_COPY.along}
+                      direction={axes?.along.short}
                       index={index}
                       axis="v"
                       value={pin.v * mmPerCoordinate}
@@ -321,6 +333,7 @@ export function ConnectorEditor({
 /** One signed position, in millimetres from the cut's own origin, typed. Committing moves the connector in the draft, like a drag. */
 function PositionField({
   label,
+  direction,
   index,
   axis,
   value,
@@ -328,6 +341,8 @@ function PositionField({
   onCommit,
 }: {
   readonly label: string;
+  /** Where this direction points on the model (`+X`), shown beside the label, or `undefined` when it is not known. */
+  readonly direction: string | undefined;
   readonly index: number;
   readonly axis: 'u' | 'v';
   readonly value: number;
@@ -336,7 +351,9 @@ function PositionField({
 }): ReactNode {
   return (
     <div className="split-params__field">
-      <span className="split-params__label">{label}</span>
+      <span className="split-params__label">
+        {direction === undefined ? label : `${label} (${direction})`}
+      </span>
       <NumberField
         label={`Connector ${String(index + 1)}, ${label.toLowerCase()}, millimetres`}
         value={value}

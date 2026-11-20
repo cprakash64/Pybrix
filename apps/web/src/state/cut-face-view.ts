@@ -9,6 +9,8 @@ import type { JointOutline } from '@cadfixer/geometry-runtime';
  */
 
 export interface CutView {
+  /** The empty band left around the cut on every side, in the cut's own units: where the axis labels are drawn. */
+  readonly margin: number;
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -32,6 +34,7 @@ export function cutView(bounds: JointOutline['bounds']): CutView {
   const larger = Math.max(spanU, spanV, Number.EPSILON);
   const margin = larger * VIEW_MARGIN;
   return {
+    margin,
     x: bounds.minU - margin,
     y: -(bounds.maxV + margin),
     width: spanU + 2 * margin,
