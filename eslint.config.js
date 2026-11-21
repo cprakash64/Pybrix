@@ -51,6 +51,9 @@ export default tseslint.config(
       // errors against generated output nobody authored. The PACKAGER itself,
       // under scripts/, is linted.
       'artifacts/release/**',
+      // Private qualification output and bundled reference snapshots are generated, not product source.
+      'artifacts/open-mesh-split-01/**',
+      'artifacts/split-ux-simplification-01/**',
       // The end-to-end harness's own build output. Its SOURCE, under
       // apps/web/e2e-harness/, IS linted; only the emitted bundle is not.
       '**/dist-e2e-harness/**',
@@ -157,6 +160,7 @@ export default tseslint.config(
       '*.config.ts',
       'e2e/**/*.ts',
       'e2e-browser/**/*.ts',
+      'playwright.*.config.ts',
       'experiments/**/*.spec.ts',
       'eslint.config.js',
     ],

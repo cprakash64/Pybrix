@@ -40,7 +40,7 @@ describe('application shell', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: 'Pybrix' })).toBeInTheDocument();
     expect(screen.getByTestId('privacy-badge')).toHaveTextContent(
-      'Models are processed locally in your browser',
+      'Your 3D file stays on this device',
     );
   });
 
@@ -50,7 +50,7 @@ describe('application shell', () => {
 
     // BRAND-01: the header carries the status, the status bar the version.
     expect(screen.getByTestId('release-stage')).toHaveTextContent(/^Technical Preview$/);
-    expect(screen.getByTestId('release-version')).toHaveTextContent(/^v0\.6\.1$/);
+    expect(screen.getByTestId('release-version')).toHaveTextContent(/^v0\.7\.1$/);
     expect(document.body.textContent).not.toMatch(/Stage \d|foundation/i);
   });
 
@@ -61,7 +61,7 @@ describe('application shell', () => {
     expect(zone).toMatch(/geometry only/i);
     expect(zone).toMatch(/faces must be triangles/i);
     expect(zone).toMatch(/requires any other extension is refused/i);
-    expect(zone).toMatch(/never uploaded/i);
+    expect(zone).toMatch(/original 3D file is read on this device and is not uploaded/i);
     // Nothing that implies the whole of 3MF, or material fidelity, is supported.
     expect(zone).not.toMatch(/all 3MF|every 3MF|full 3MF|materials are preserved/i);
   });
@@ -141,9 +141,15 @@ describe('brand identity', () => {
     expect(lockup).toHaveAttribute('width', '188');
     expect(lockup).toHaveAttribute('height', '63');
     expect(within(about).getByTestId('about-status')).toHaveTextContent(
-      'Technical Preview · v0.6.1',
+      'Technical Preview · v0.7.1',
     );
-    expect(about).toHaveTextContent('Models are processed locally in your browser.');
+    expect(about).toHaveTextContent('Your original 3D file stays on your device.');
+    expect(about).toHaveTextContent(
+      'Repair, Convert and Manual Split run locally in your browser.',
+    );
+    expect(about).not.toHaveTextContent(
+      /never uploaded|nothing is uploaded|processed locally in your browser\./i,
+    );
     expect(screen.getByTestId('third-party-notices')).toHaveAttribute(
       'href',
       'third-party-notices.txt',
@@ -358,13 +364,12 @@ describe('workflow navigation', () => {
   it('describes Repair as safe automatic repair rather than as repairing everything', () => {
     renderApp();
 
-    const summary = screen.getByText(/Safe automatic repair: remove duplicate/);
+    const summary = screen.getByText('Check and fix common model issues.');
     expect(summary).toBeInTheDocument();
     // REPAIR-CORE-06B: Repair now separates pinched vertices and fills simple openings, so the
     // summary names them. It must still never promise more than that: no claim of a complete,
     // printable or guaranteed result, and the qualifier says each step is checked.
-    expect(summary.textContent).toMatch(/pinched vertices/);
-    expect(summary.textContent).toMatch(/only where each can be checked/);
+    expect(summary.textContent).toMatch(/common model issues/);
     expect(summary.textContent).not.toMatch(/everything|all issues|printable|watertight|perfect/i);
   });
 });
@@ -491,16 +496,15 @@ describe('status log', () => {
 
     fireEvent.click(screen.getByTestId('clear-status'));
 
-    expect(screen.getByTestId('status-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('status-list')).not.toBeInTheDocument();
   });
 
-  it('disables the clear control once the log is empty', () => {
+  it('omits an empty Activity log', () => {
     renderApp();
-
+    // jsdom cannot initialize WebGL; clearing that real diagnostic leaves an empty log.
     fireEvent.click(screen.getByTestId('clear-status'));
-
-    expect(screen.getByTestId('status-empty')).toBeInTheDocument();
-    expect(screen.getByTestId('clear-status')).toBeDisabled();
+    expect(screen.queryByTestId('status-list')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('clear-status')).not.toBeInTheDocument();
   });
 });
 

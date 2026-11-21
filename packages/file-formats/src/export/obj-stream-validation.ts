@@ -1,4 +1,9 @@
-import { applyPartTransform, IDENTITY_PART_TRANSFORM, type MeshGroup } from '@cadfixer/mesh-core';
+import {
+  applyPartTransform,
+  IDENTITY_PART_TRANSFORM,
+  placementReversesOrientation,
+  type MeshGroup,
+} from '@cadfixer/mesh-core';
 import type { FormatReadContext } from '../context';
 import { DEFAULT_OBJ_LIMITS } from '../obj/limits';
 import { readObjRecordStream } from '../obj/obj-records';
@@ -36,6 +41,7 @@ export async function validateObjRecordStream(
         part: ExportDocumentSnapshot['parts'][number];
         mesh: ExportDocumentSnapshot['meshes'][number];
         identity: boolean;
+        reversed: boolean;
       }
     | undefined;
   const current = (): {
@@ -67,6 +73,7 @@ export async function validateObjRecordStream(
         part,
         mesh,
         identity: part.transform.every((value, index) => value === IDENTITY_PART_TRANSFORM[index]),
+        reversed: placementReversesOrientation(part.transform),
       };
       const sourceName = part.name === undefined ? '' : objRoundTripName(part.name);
       if (name !== (sourceName || `part-${String(partIndex + 1)}`) || firstFace !== faceBase)
@@ -94,12 +101,15 @@ export async function validateObjRecordStream(
     face(a, b, c): void {
       const { mesh } = current();
       const at = face * 3;
+      // A mirroring placement exchanges the second and third corner of every face (Stage C03-D2).
+      const second = active?.reversed === true ? 2 : 1;
+      const third = active?.reversed === true ? 1 : 2;
       if (
         vertex * 3 !== mesh.positions.length ||
         at >= mesh.indices.length ||
         a !== vertexBase + (mesh.indices[at] ?? -1) ||
-        b !== vertexBase + (mesh.indices[at + 1] ?? -1) ||
-        c !== vertexBase + (mesh.indices[at + 2] ?? -1)
+        b !== vertexBase + (mesh.indices[at + second] ?? -1) ||
+        c !== vertexBase + (mesh.indices[at + third] ?? -1)
       )
         fail();
       let candidate = groups[groupIndex];

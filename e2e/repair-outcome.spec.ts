@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { gridForTriangles, holedCubeStl } from '../scripts/boundary-fill-fixture.mjs';
 import { boxWithOneOpeningStl } from './hole-fill-fixtures';
@@ -41,6 +42,7 @@ async function open(page: Page, name: string, bytes: Uint8Array | Buffer): Promi
   await page.goto('/');
   await pick(page, name, 'model/stl', Buffer.from(bytes));
   await enter(page, 'repair');
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId('repair-op-status-fill-openings')).not.toHaveText(/Checking/, {
     timeout: 120_000,
@@ -48,7 +50,8 @@ async function open(page: Page, name: string, bytes: Uint8Array | Buffer): Promi
 }
 
 async function repair(page: Page): Promise<void> {
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
   await page.getByTestId('apply-repair').click();
   await expect(page.getByTestId('repair-applied')).not.toHaveAttribute('data-outcome', 'checking', {
@@ -115,7 +118,9 @@ test('A: a repair that leaves nothing detected is "Repair completed"', async ({ 
         own: target !== null && (element === target || element.contains(target)),
         hit: target?.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
         bottom: rect.bottom,
-        footerTop: footer.getBoundingClientRect().top,
+        footerTop: footer.hasAttribute('hidden')
+          ? (document.querySelector('.tool-panel__body')?.getBoundingClientRect().bottom ?? 0)
+          : footer.getBoundingClientRect().top,
       };
     });
     expect(probe.own, `a click at the centre of ${id} lands on ${String(probe.hit)}`).toBe(true);
@@ -176,29 +181,17 @@ test('B: a repair that leaves detected issues is "Partial repair completed"', as
   await expect(health).toHaveText(/^\d+ errors? · \d+ warnings? remaining$/);
   expect(await health.getAttribute('class')).not.toContain('health-summary--ok');
   // The status bar keeps the plain authoritative counts.
-  await expect(page.getByTestId('status-bar')).toContainText(
-    (await health.innerText()).replace(' remaining', ''),
-  );
+  await expect(page.getByTestId('status-bar')).toContainText('Model details');
+  await expect(page.getByTestId('status-bar')).not.toContainText('errors');
 
   // The disabled action says why repairing again would not help.
   await expect(page.getByTestId('preview-repair')).toBeDisabled();
   await expect(page.getByTestId('repair-no-repairs')).toHaveText(
     'Everything Pybrix can safely repair automatically has been fixed.',
   );
-  // The reason is drawn in full: no line of it is cut off by the action region.
-  const reason = await page.getByTestId('repair-no-repairs').evaluate((element) => {
-    const footer = element.closest('[data-testid="repair-footer"]');
-    if (footer === null) throw new Error('No footer');
-    const style = getComputedStyle(footer);
-    return {
-      bottom: element.getBoundingClientRect().bottom,
-      limit: footer.getBoundingClientRect().bottom - Number.parseFloat(style.paddingBottom),
-      clipped: element.scrollHeight > element.clientHeight + 1,
-    };
-  });
-  expect(reason.bottom).toBeLessThanOrEqual(reason.limit + 1);
-  expect(reason.clipped).toBe(false);
-  await page.getByTestId('repair-no-repairs-info').click();
+  await expect(page.getByTestId('repair-continue')).toBeVisible();
+  await revealControl(page, page.getByTestId('repair-details-reason'));
+  await page.getByTestId('repair-details-reason').click();
   await expect(page.getByTestId('repair-no-repairs-detail')).toContainText(
     'Still detected: 2 separate components',
   );
@@ -324,10 +317,11 @@ for (const viewport of [
       'repair-applied-changes',
       'repair-remaining-components',
       'undo-repair',
-      'repair-no-repairs',
-      'repair-no-repairs-info',
+      'repair-continue',
+      'repair-details-reason',
     ]) {
       const control = page.getByTestId(id).first();
+      await revealControl(page, control);
       await control.scrollIntoViewIfNeeded();
       const probe = await control.evaluate((element) => {
         const rect = element.getBoundingClientRect();
@@ -339,7 +333,13 @@ for (const viewport of [
         const scroller = document.querySelector('.tool-panel__body');
         const activity = document.querySelector('.tool-panel__footer');
         if (footer === null || scroller === null || activity === null) throw new Error('No layout');
-        const region = footer.getBoundingClientRect();
+        const region = footer.hasAttribute('hidden')
+          ? {
+              top: scroller.getBoundingClientRect().bottom,
+              bottom: scroller.getBoundingClientRect().bottom,
+              height: 0,
+            }
+          : footer.getBoundingClientRect();
         return {
           own: target !== null && (element === target || element.contains(target)),
           hit: target?.closest('[data-testid]')?.getAttribute('data-testid') ?? null,

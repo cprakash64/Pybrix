@@ -1,4 +1,8 @@
-import { IDENTITY_PART_TRANSFORM, type PartTransform } from '@cadfixer/mesh-core';
+import {
+  IDENTITY_PART_TRANSFORM,
+  placementReversesOrientation,
+  type PartTransform,
+} from '@cadfixer/mesh-core';
 import { throwIfCancelled } from '@cadfixer/shared';
 import { MeshFormatId } from '../formats';
 import { escapeXml } from '../threemf/xml-scan';
@@ -6,6 +10,7 @@ import { THREE_MF_UNITS } from '../threemf/threemf-reader';
 import { createByteSink } from './byte-sink';
 import {
   ExportObservation,
+  mirroredObjectPlacement,
   planThreeMfObjects,
   snapshotTriangleCount,
   type ExportDocumentSnapshot,
@@ -173,9 +178,14 @@ async function writeModelXml(
     sink.write('   <mesh>\n    <vertices>\n');
 
     const { positions, indices } = mesh;
+    /*
+     * A MIRRORED OBJECT holds the mesh mirrored in its own x with its triangles turned (`mirroredObjectPlacement` says why and
+     * what the placement becomes). Negating a Float32 is exact, so no coordinate is rounded that was not rounded before.
+     */
+    const flip = plan.mirrored;
     for (let at = 0; at < positions.length; at += 3) {
       sink.write(
-        `     <vertex x="${writeFloat32Text(positions[at] ?? 0)}"` +
+        `     <vertex x="${writeFloat32Text(flip ? -(positions[at] ?? 0) : (positions[at] ?? 0))}"` +
           ` y="${writeFloat32Text(positions[at + 1] ?? 0)}"` +
           ` z="${writeFloat32Text(positions[at + 2] ?? 0)}"/>\n`,
       );
@@ -185,8 +195,8 @@ async function writeModelXml(
     for (let at = 0; at < indices.length; at += 3) {
       sink.write(
         `     <triangle v1="${String(indices[at] ?? 0)}"` +
-          ` v2="${String(indices[at + 1] ?? 0)}"` +
-          ` v3="${String(indices[at + 2] ?? 0)}"/>\n`,
+          ` v2="${String(indices[at + (flip ? 2 : 1)] ?? 0)}"` +
+          ` v3="${String(indices[at + (flip ? 1 : 2)] ?? 0)}"/>\n`,
       );
       written += 1;
       if (written % TRIANGLES_PER_BATCH === 0) {
@@ -219,9 +229,13 @@ async function writeModelXml(
 
   for (const [index, part] of snapshot.parts.entries()) {
     const objectId = objectIdOfPart.get(index) ?? 1;
-    const transform = isIdentity(part.transform)
+    // The placement a build item carries never reflects: a mirroring placement is composed with the object's own mirror.
+    const placement = placementReversesOrientation(part.transform)
+      ? mirroredObjectPlacement(part.transform)
+      : part.transform;
+    const transform = isIdentity(placement)
       ? ''
-      : ` transform="${part.transform.map(writeFloat64Text).join(' ')}"`;
+      : ` transform="${placement.map(writeFloat64Text).join(' ')}"`;
     sink.write(`  <item objectid="${String(objectId)}"${transform}/>\n`);
   }
 
@@ -314,10 +328,18 @@ export async function write3mfDocument(
   if (objectPlans.length < snapshot.parts.length) {
     observations.push(ExportObservation.SharingPreserved);
   }
-  if (objectPlans.length > snapshot.meshes.length) {
+  // A mirrored placement of a mesh and a plain one are different OBJECTS by construction, not by metadata: only objects beyond one
+  // per distinct (mesh, mirror) were split because the parts disagreed about a name.
+  const distinctShapes = new Set(
+    objectPlans.map((plan) => `${String(plan.meshResourceIndex)}:${String(plan.mirrored)}`),
+  ).size;
+  if (objectPlans.length > distinctShapes) {
     // Parts shared a mesh and disagreed about its name or material reference,
     // so the geometry was written more than once to keep both names.
     observations.push(ExportObservation.SharingSplitByMetadata);
+  }
+  if (objectPlans.some((plan) => plan.mirrored)) {
+    observations.push(ExportObservation.MirroredPlacementReoriented);
   }
   if (snapshot.parts.some((part) => part.name !== undefined && part.name !== '')) {
     observations.push(ExportObservation.NamesPreserved);

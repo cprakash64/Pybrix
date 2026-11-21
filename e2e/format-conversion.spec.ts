@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Download, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
 import { isAppOrigin } from './app-origin';
@@ -17,6 +18,7 @@ import {
   tetrahedronMesh,
 } from './format-fixtures';
 import { readObjArtifact, readStlArtifact, readThreeMfArtifact } from './artifact-oracles';
+import { openInspector } from './inspector';
 
 /**
  * STAGE 4A-2B3 — THE FORMAT CONVERSION WORKFLOW, END TO END.
@@ -47,10 +49,11 @@ async function importFile(page: Page, fixture: Fixture): Promise<void> {
   const chooser = page.waitForEvent('filechooser');
   await page.getByTestId('browse-button').click();
   await (await chooser).setFiles(fixture);
-  await expect(page.getByTestId('fact-triangles')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('fact-triangles')).toBeAttached({ timeout: 30_000 });
 }
 
 async function openConvert(page: Page): Promise<void> {
+  await openInspector(page);
   await page.getByTestId('open-convert').click();
   await expect(page.getByTestId('convert-workspace')).toBeVisible();
 }
@@ -177,6 +180,7 @@ test('the two export actions are named apart', async ({ page }) => {
    */
   // UI-06 moved the exports out of the Model facts into the inspector's own
   // Export section, whose region is "Model export".
+  await openInspector(page);
   const panel = page.getByRole('region', { name: 'Model export' });
   await expect(panel.getByTestId('open-convert')).toHaveText('Export / Convert…');
   await expect(panel.getByTestId('export-binary')).toHaveText('Export active part as binary STL');
@@ -225,9 +229,10 @@ test('STL → 3MF: blocked until the user states a unit, then written and re-ope
   expect(artifact.modelXml).not.toContain('<!DOCTYPE');
   expect(artifact.modelXml).not.toContain('<!ENTITY');
 
-  // 14/15. THE MODEL IS UNCHANGED: it still states no unit, and the export did
+  // 14/15. THE MODEL IS UNCHANGED: the file still states no unit — the panel
+  // shows only the user's own reading, labelled as theirs — and the export did
   // not consume a revision.
-  await expect(page.getByTestId('fact-units')).toHaveText('Unspecified by STL');
+  await expect(page.getByTestId('fact-units')).toHaveText('Millimetres (your choice)');
 
   // And the artifact really does re-open, through the production import path.
   await reimport(page, 'roundtrip.3mf', bytes);
@@ -547,9 +552,10 @@ test('a unit assertion changes the file and never the model', async ({ page }) =
   /*
    * THE AUTHORITATIVE DOCUMENT IS UNTOUCHED. Its unit is still unknown, its
    * measurements are still the same numbers, and exporting consumed no
-   * revision — a download is a read.
+   * revision — a download is a read. The panel shows the user's reading, which is
+   * labelled as theirs; the coordinates and size are what the file said.
    */
-  await expect(page.getByTestId('fact-units')).toHaveText('Unspecified by STL');
+  await expect(page.getByTestId('fact-units')).toHaveText('Feet (your choice)');
   expect(await page.getByTestId('fact-size').textContent()).toBe(before);
 
   // And the FILE states feet, with the same coordinates.
@@ -741,6 +747,7 @@ test('changing the active part does not change what the document export writes',
   const withFirst = await facts();
 
   // Select the second part, which is workspace state and not geometry identity.
+  await openInspector(page);
   await page.getByTestId('part-option-part-2').click();
 
   const withSecond = await facts();
@@ -884,7 +891,8 @@ test('repair then export writes the repaired revision, and undo then export writ
   await importFile(page, { name: 'defect.3mf', mimeType: 'model/3mf', buffer: duplicated });
   await expect(page.getByTestId('fact-triangles')).toHaveText('5');
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
   await expect(page.getByTestId('fact-triangles')).toHaveText('4', { timeout: 60_000 });

@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 import { describeUnit } from '../state/model';
-import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
+import { useWorkspaceState } from '../state/store-context';
 import { useIssueNavigation } from '../state/use-issue-navigation';
-import { WorkflowId } from '../state/workflows';
 import { AnalysisState, ImportState } from '../state/workspace-store';
 import { describePhase } from './ImportDropZone';
 import { Icon, type IconName } from './shell/Icon';
 import { PRODUCT_VERSION } from './shell/brand';
+import { useShellLayout } from './shell/shell-layout';
 
 /**
  * The status bar: what the application is doing, and the loaded model's size.
@@ -27,7 +27,7 @@ import { PRODUCT_VERSION } from './shell/brand';
  */
 export function StatusBar(): ReactNode {
   const { model, importProgress, analysis } = useWorkspaceState();
-  const store = useWorkspaceStore();
+  const layout = useShellLayout();
 
   const importing =
     importProgress.state === ImportState.Screening ||
@@ -42,16 +42,16 @@ export function StatusBar(): ReactNode {
       ? undefined
       : summary.tone === 'neutral'
         ? {
-            text: analysing ? 'Checking topology' : 'Not analysed',
+            text: 'Model details',
             tooltip: summary.qualifier,
             tone: 'neutral',
             icon: 'info',
           }
         : {
-            text: summary.text,
+            text: 'Model details',
             tooltip: summary.qualifier,
-            tone: summary.tone,
-            icon: summary.tone === 'ok' ? 'ok' : summary.tone === 'error' ? 'error' : 'alert',
+            tone: 'neutral',
+            icon: 'info',
           };
 
   return (
@@ -70,7 +70,7 @@ export function StatusBar(): ReactNode {
             <span className="statusbar__spinner" aria-hidden="true">
               <Icon name="loader" size={13} />
             </span>
-            <span className="statusbar__job-label">Analyzing topology</span>
+            <span className="statusbar__job-label">Checking model…</span>
           </>
         ) : (
           <>
@@ -82,7 +82,7 @@ export function StatusBar(): ReactNode {
 
       <p className="statusbar__privacy" data-testid="privacy-badge">
         <Icon name="lock" size={12} />
-        <span>Models are processed locally in your browser</span>
+        <span>Your 3D file stays on this device</span>
       </p>
 
       <span className="statusbar__spacer" />
@@ -114,9 +114,9 @@ export function StatusBar(): ReactNode {
               className={`statusbar__health statusbar__health--${health.tone}`}
               data-tooltip={health.tooltip}
               data-tooltip-side="above"
-              aria-label={`${health.text}. ${health.tooltip} Open the Repair workspace.`}
+              aria-label={`${health.text}. ${health.tooltip} Open the Inspector.`}
               onClick={() => {
-                store.selectWorkflow(WorkflowId.Repair);
+                layout.showInspector();
               }}
               data-testid="status-health"
             >

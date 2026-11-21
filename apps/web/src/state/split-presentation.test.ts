@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { dovetailFemaleDimensions, roundSocketRadius } from '@cadfixer/geometry-runtime';
+import { roundSocketRadius } from '@cadfixer/geometry-runtime';
 import { deriveSplitPartExportName } from '../runtime/download';
 import {
+  CONNECTOR_INPUT_REFUSAL_CODES,
   CONNECTOR_OPTIONS,
   MAX_SPLIT_TILT_DEGREES,
   SPLIT_COPY,
+  describeSplitChecks,
   clampOffset,
+  clampRoll,
   clampTilt,
   connectorsAvailable,
   describeCut,
@@ -13,17 +16,24 @@ import {
   describeOutlines,
   describePlaneName,
   describeSection,
-  dovetailSlot,
   formatArea,
   formatLength,
   isValidDimension,
   offsetAfterNormalDrag,
+  resetPlaneSettings,
+  rollAxisOf,
   socketDiameter,
   splitPlaneFor,
   splitRange,
   tiltAxisOf,
 } from './split-presentation';
-import { connectorProblemOf, DEFAULT_CONNECTOR } from './use-split-workflow';
+import { LengthUnit } from '@cadfixer/shared';
+import {
+  connectorProblemOf,
+  connectorRequest,
+  DEFAULT_CONNECTOR,
+  type ConnectorSettings,
+} from './use-split-workflow';
 
 /**
  * UI-04: the Split & Connect workspace's arithmetic and wording.
@@ -52,21 +62,101 @@ describe('the plane', () => {
   });
 
   it('starts at the centre, and places the origin on the axis at the offset', () => {
-    const centred = splitPlaneFor({ axis: 'Z', offset: undefined, tilt: 0 }, BOUNDS);
+    const centred = splitPlaneFor(
+      { axis: 'Z', offset: undefined, tilt: 0, roll: 0, flipped: false },
+      BOUNDS,
+    );
     expect(centred.origin).toEqual([10, 0, 52]);
     expect(centred.normal).toEqual([0, 0, 1]);
-    const moved = splitPlaneFor({ axis: 'Z', offset: 54, tilt: 0 }, BOUNDS);
+    const moved = splitPlaneFor(
+      { axis: 'Z', offset: 54, tilt: 0, roll: 0, flipped: false },
+      BOUNDS,
+    );
     expect(moved.origin).toEqual([10, 0, 54]);
   });
 
   it('tilts about the axis the Stage 7B plane tilts about, keeping a unit normal', () => {
     for (const axis of ['X', 'Y', 'Z'] as const) {
-      const { normal } = splitPlaneFor({ axis, offset: undefined, tilt: 30 }, BOUNDS);
+      const { normal } = splitPlaneFor(
+        { axis, offset: undefined, tilt: 30, roll: 0, flipped: false },
+        BOUNDS,
+      );
       expect(Math.hypot(...normal)).toBeCloseTo(1, 12);
       // The tilt axis itself is untouched by the rotation.
       const tiltIndex = { X: 0, Y: 1, Z: 2 }[tiltAxisOf(axis)];
       expect(normal[tiltIndex]).toBeCloseTo(0, 12);
     }
+  });
+
+  it('with no roll and no flip the plane is exactly the single-tilt plane', () => {
+    for (const axis of ['X', 'Y', 'Z'] as const) {
+      const plain = splitPlaneFor(
+        { axis, offset: undefined, tilt: 20, roll: 0, flipped: false },
+        BOUNDS,
+      );
+      const radians = (20 * Math.PI) / 180;
+      const expected =
+        axis === 'X'
+          ? [Math.cos(radians), Math.sin(radians), 0]
+          : axis === 'Y'
+            ? [0, Math.cos(radians), Math.sin(radians)]
+            : [Math.sin(radians), 0, Math.cos(radians)];
+      expect([...plain.normal]).toEqual(expected);
+    }
+  });
+
+  it('rolls about the remaining axis, keeping a unit normal and the roll axis component', () => {
+    for (const axis of ['X', 'Y', 'Z'] as const) {
+      const base = splitPlaneFor(
+        { axis, offset: undefined, tilt: 0, roll: 0, flipped: false },
+        BOUNDS,
+      );
+      const rolled = splitPlaneFor(
+        { axis, offset: undefined, tilt: 0, roll: 30, flipped: false },
+        BOUNDS,
+      );
+      expect(Math.hypot(...rolled.normal)).toBeCloseTo(1, 12);
+      // Rolling a level plane about the roll axis leaves that axis's component alone.
+      const rollIndex = { X: 0, Y: 1, Z: 2 }[rollAxisOf(axis)];
+      expect(rolled.normal[rollIndex]).toBeCloseTo(base.normal[rollIndex] ?? 0, 12);
+      expect(rolled.normal).not.toEqual(base.normal);
+    }
+  });
+
+  it('tilt and roll together still give a unit normal for every combination', () => {
+    for (const axis of ['X', 'Y', 'Z'] as const)
+      for (const tilt of [-80, -30, 0, 45, 89])
+        for (const roll of [-89, -10, 0, 60]) {
+          const { normal } = splitPlaneFor(
+            { axis, offset: undefined, tilt, roll, flipped: false },
+            BOUNDS,
+          );
+          expect(Math.hypot(...normal)).toBeCloseTo(1, 12);
+        }
+  });
+
+  it('flipping reverses the normal and nothing else — the plane in space is the same', () => {
+    const plane = { axis: 'Y', offset: 3, tilt: 25, roll: -15, flipped: false } as const;
+    const a = splitPlaneFor(plane, BOUNDS);
+    const b = splitPlaneFor({ ...plane, flipped: true }, BOUNDS);
+    expect(b.origin).toEqual(a.origin);
+    expect([...b.normal]).toEqual(a.normal.map((component) => -component));
+  });
+
+  it('holds the roll to the same bound as the tilt and ignores a non-number', () => {
+    expect(clampRoll(200, 0)).toBe(MAX_SPLIT_TILT_DEGREES);
+    expect(clampRoll(-200, 0)).toBe(-MAX_SPLIT_TILT_DEGREES);
+    expect(clampRoll(Number.NaN, 7)).toBe(7);
+  });
+
+  it('a reset restores a level, unflipped plane at the centre', () => {
+    expect(resetPlaneSettings('X')).toEqual({
+      axis: 'X',
+      offset: undefined,
+      tilt: 0,
+      roll: 0,
+      flipped: false,
+    });
   });
 
   it('holds a typed position inside the part and ignores a non-number', () => {
@@ -80,23 +170,26 @@ describe('the plane', () => {
 
   it('turns a drag along the normal into the same position the slider would set', () => {
     const range = splitRange('Z', BOUNDS);
-    const flat = splitPlaneFor({ axis: 'Z', offset: 52, tilt: 0 }, BOUNDS);
+    const flat = splitPlaneFor({ axis: 'Z', offset: 52, tilt: 0, roll: 0, flipped: false }, BOUNDS);
     expect(offsetAfterNormalDrag(52, 10, flat, 'Z', range)).toBeCloseTo(62, 12);
     // Tilted by 60°, moving the plane 10 along its normal moves its crossing
     // with the Z axis by 10 / cos 60° = 20.
-    const tilted = splitPlaneFor({ axis: 'Z', offset: 52, tilt: 60 }, BOUNDS);
+    const tilted = splitPlaneFor(
+      { axis: 'Z', offset: 52, tilt: 60, roll: 0, flipped: false },
+      BOUNDS,
+    );
     expect(offsetAfterNormalDrag(52, 10, tilted, 'Z', range)).toBeCloseTo(72, 9);
     // And it is held inside the part like a typed value.
     expect(offsetAfterNormalDrag(52, 1000, flat, 'Z', range)).toBe(104);
   });
 
   it('describes the cut in the document’s own unit, and invents none', () => {
-    expect(describeCut({ axis: 'Z', offset: 54, tilt: 0 }, 54, 'millimeter')).toBe(
-      'XY · Z = 54.0 mm',
-    );
-    expect(describeCut({ axis: 'Z', offset: 54, tilt: 15 }, 54, undefined)).toBe(
-      'XY · Z = 54.0 · tilted 15.0°',
-    );
+    expect(
+      describeCut({ axis: 'Z', offset: 54, tilt: 0, roll: 0, flipped: false }, 54, 'millimeter'),
+    ).toBe('XY · Z = 54.0 mm');
+    expect(
+      describeCut({ axis: 'Z', offset: 54, tilt: 15, roll: 0, flipped: false }, 54, undefined),
+    ).toBe('XY · Z = 54.0 · tilted 15.0°');
     expect(formatLength(3.25, undefined)).toBe('3.3');
     expect(formatArea(1559.4, 'millimeter')).toBe('1,559 mm²');
     expect(formatArea(12, undefined)).toBe('12 sq. units');
@@ -115,8 +208,11 @@ describe('the plane', () => {
 });
 
 describe('connectors', () => {
-  it('offers exactly the connector kinds the engine builds', () => {
-    expect(CONNECTOR_OPTIONS.map((option) => option.kind)).toEqual(['none', 'pin', 'dovetail']);
+  it('offers exactly the connector kinds the product stands behind: no dovetail', () => {
+    // Measured on the released engine (connector audit N1): the dovetail's tip is wider than
+    // its socket's mouth and the socket is closed along its length, so it cannot be assembled.
+    expect(CONNECTOR_OPTIONS.map((option) => option.kind)).toEqual(['none', 'pin']);
+    expect(JSON.stringify(CONNECTOR_OPTIONS).toLowerCase()).not.toContain('dovetail');
     const names = CONNECTOR_OPTIONS.map((option) => option.name.toLowerCase()).join(' ');
     for (const absent of ['snap', 'thread', 'magnet', 'puzzle', 'screw', 'keyed', 'taper'])
       expect(names).not.toContain(absent);
@@ -128,11 +224,6 @@ describe('connectors', () => {
     for (const clearance of [0, 0.05, 0.2, 1]) {
       expect(socketDiameter(4, clearance)).toBeCloseTo(roundSocketRadius(4, clearance) * 2, 12);
     }
-  });
-
-  it('applies dovetail clearance per side — width and length each grow by twice it', () => {
-    expect(dovetailSlot(8, 12, 0.2)).toEqual(dovetailFemaleDimensions(8, 12, 0.2));
-    expect(dovetailSlot(8, 12, 0.2).width).toBeCloseTo(8.4, 12);
   });
 
   it('accepts exactly the dimensions the engine accepts', () => {
@@ -151,15 +242,16 @@ describe('connectors', () => {
     expect(connectorProblemOf({ ...DEFAULT_CONNECTOR, kind: 'pin', diameter: 0 })).toMatch(
       /Pin diameter/,
     );
-    expect(connectorProblemOf({ ...DEFAULT_CONNECTOR, kind: 'dovetail', clearance: -1 })).toMatch(
+    expect(connectorProblemOf({ ...DEFAULT_CONNECTOR, kind: 'pin', clearance: -1 })).toMatch(
       /Clearance/,
     );
   });
 
-  it('allows connectors only for a document that states millimetres', () => {
+  it('allows connectors for any known physical unit, and never for an unknown one', () => {
     expect(connectorsAvailable('millimeter')).toBe(true);
+    expect(connectorsAvailable('inch')).toBe(true);
     expect(connectorsAvailable(undefined)).toBe(false);
-    expect(connectorsAvailable('inch')).toBe(false);
+    expect(connectorsAvailable('furlong')).toBe(false);
   });
 });
 
@@ -176,9 +268,107 @@ describe('export and wording', () => {
     expect(describeExportParts(1)).toBe('Export 1 part');
   });
 
+  it('states the checks truthfully for a closed solid and for a surface cut', () => {
+    expect(describeSplitChecks(true)).toBe('Both pieces closed; cut faces capped');
+    expect(describeSplitChecks(undefined)).toBe('Both pieces closed; cut faces capped');
+    const surface = describeSplitChecks(false).toLowerCase();
+    expect(surface).toContain('surface cut');
+    expect(surface).toContain('no cut face was capped');
+    expect(surface).not.toContain('both pieces closed');
+  });
+
+  it('says what is checked about a connector and claims no strength, measured thickness or printability', () => {
+    const note = SPLIT_COPY.placementNote.toLowerCase();
+    expect(note).not.toContain('inside its material');
+    // Slice 2D: the socket's depth and the material around it ARE checked, and the note says so in the same words the refusals use
+    expect(SPLIT_COPY.placementNote).toContain('its socket stays inside the receiving piece');
+    expect(SPLIT_COPY.placementNote).toContain('no thinner than the edge margin');
+    expect(SPLIT_COPY.placementNote).toContain('not a claim about strength');
+    for (const banned of ['does not measure the wall', 'strong', 'durable', 'safe', 'printable'])
+      expect(note.replace('not a claim about strength', '')).not.toContain(banned);
+  });
+
   it('claims no printability, fit or capability CAD Fixer lacks', () => {
     const text = Object.values(SPLIT_COPY).join(' ').toLowerCase();
     for (const banned of ['printable', 'watertight', 'guaranteed fit', 'fits bed', 'add cut'])
       expect(text).not.toContain(banned);
+  });
+});
+
+describe('connector sizes are physical, whatever the model’s unit', () => {
+  const pin: ConnectorSettings = {
+    kind: 'pin',
+    count: 1,
+    diameter: 5.08,
+    depth: 10.16,
+    clearance: 0.254,
+    maleSide: 'A',
+  };
+
+  it('sends the sizes as millimetres, with the unit the coordinates are read in, for a millimetre model', () => {
+    expect(connectorRequest(pin, LengthUnit.Millimeter)).toEqual({
+      kind: 'physical-pin',
+      unit: LengthUnit.Millimeter,
+      count: 1,
+      diameterMm: 5.08,
+      depthMm: 10.16,
+      clearanceMm: 0.254,
+      maleSide: 'A',
+    });
+  });
+
+  it('sends the SAME millimetres for a model read as inches: the page converts nothing, the engine does', () => {
+    const request = connectorRequest(pin, LengthUnit.Inch);
+    if (request.kind !== 'physical-pin') throw new Error('expected a physical pin');
+    expect(request.unit).toBe(LengthUnit.Inch);
+    expect(request.diameterMm).toBe(5.08);
+    expect(request.depthMm).toBe(10.16);
+    expect(request.clearanceMm).toBe(0.254);
+  });
+
+  it('carries no unit when none is known, so the engine refuses rather than the page guessing', () => {
+    const request = connectorRequest(pin, undefined);
+    if (request.kind !== 'physical-pin') throw new Error('expected a physical pin');
+    expect(request.unit).toBeUndefined();
+  });
+
+  it('passes None through untouched', () => {
+    expect(connectorRequest({ ...pin, kind: 'none' }, LengthUnit.Inch)).toEqual({ kind: 'none' });
+  });
+
+  it('judges a size in millimetres only: the same physical size is in range in every unit the model may be read in', () => {
+    // 0.1 mm is 0.0039 in and 1e-4 m: the engine used to refuse it in the model's coordinates; it is a physical 0.1 mm either way
+    const small: ConnectorSettings = { ...pin, diameter: 0.1 };
+    expect(connectorProblemOf(small)).toBeUndefined();
+    expect(connectorProblemOf({ ...pin, diameter: 0.005 })).toMatch(/between 0.01 and 1000 mm/);
+    expect(connectorProblemOf({ ...pin, depth: 1001 })).toMatch(/between 0.01 and 1000 mm/);
+    // the function has no unit to read: a physical hint cannot depend on one
+    expect(connectorProblemOf.length).toBe(1);
+  });
+});
+
+describe('the refusals about what a connector was asked to be (Stage C03-C2)', () => {
+  it('are named by the legacy codes the engine throws, and a cut refusal is not among them', () => {
+    expect([...CONNECTOR_INPUT_REFUSAL_CODES].sort()).toEqual(
+      [
+        'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+        'CONNECTOR_REQUEST_NOT_PHYSICAL',
+        'CONNECTOR_UNSUPPORTED_TRANSFORM',
+        'UNKNOWN_UNITS',
+      ].sort(),
+    );
+    for (const cutCode of [
+      'CUT_NOT_SAFE',
+      'CONNECTOR_TOO_CLOSE_TO_EDGE',
+      'CONNECTOR_DOES_NOT_FIT',
+      'CONNECTOR_SOCKET_BREAKTHROUGH',
+      'CONNECTOR_SOCKET_SUPPORT_INSUFFICIENT',
+      'OPEN_SPLIT_CONNECTOR_UNSUPPORTED',
+    ])
+      expect(CONNECTOR_INPUT_REFUSAL_CODES).not.toContain(cutCode);
+  });
+  it('are followed by what is still true and nothing about the cut', () => {
+    expect(SPLIT_COPY.connectorInputUnchanged).toBe('Your model is unchanged.');
+    expect(SPLIT_COPY.connectorInputUnchanged).not.toMatch(/cut|move|plane|safely/i);
   });
 });

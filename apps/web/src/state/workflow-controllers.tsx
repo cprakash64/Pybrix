@@ -12,6 +12,8 @@ import { useConservativeRepair, type ConservativeRepairControls } from './use-co
 import { useHoleFillWorkflow, type HoleFillControls } from './use-hole-fill-workflow';
 import { useSplitWorkflow, type SplitControls } from './use-split-workflow';
 import { useTextureWorkflow, type TextureControls } from './use-texture-workflow';
+import { useJointSync } from './use-joint-sync';
+import { useConnectorEdit, type ConnectorEditControls } from './use-connector-edit';
 import { useTopologyAnalysis, type TopologyAnalysisControls } from './use-topology-analysis';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
 import { RepairPlanState } from './workspace-store';
@@ -37,6 +39,7 @@ const RepairContext = createContext<RepairControls | undefined>(undefined);
 const HoleFillContext = createContext<HoleFillControls | undefined>(undefined);
 const SplitContext = createContext<SplitControls | undefined>(undefined);
 const TextureContext = createContext<TextureControls | undefined>(undefined);
+const ConnectorEditContext = createContext<ConnectorEditControls | undefined>(undefined);
 
 export function AnalysisControlsProvider({
   children,
@@ -115,7 +118,29 @@ export function TextureControlsProvider({ children }: { readonly children: React
   return <TextureContext.Provider value={controls}>{children}</TextureContext.Provider>;
 }
 
+/**
+ * The connector editor's controller: ONE draft, ONE candidate and ONE undo for the whole application, so the editor can be shown in any
+ * workspace without each copy holding its own. It starts no work by itself; it holds a draft and releases the candidate it made.
+ */
+export function ConnectorEditControlsProvider({
+  children,
+}: {
+  readonly children: ReactNode;
+}): ReactNode {
+  const controls = useConnectorEdit();
+  return <ConnectorEditContext.Provider value={controls}>{children}</ConnectorEditContext.Provider>;
+}
+
 /** All of them, in the order their automatic work depends on. */
+/**
+ * Keeps the page's list of connector joints in step with the worker, once for the whole application. It renders nothing: a hook that
+ * starts a read on every revision belongs in exactly one place, for the reason each controller above does.
+ */
+function JointSync(): ReactNode {
+  useJointSync();
+  return null;
+}
+
 export function WorkflowControllersProvider({
   children,
 }: {
@@ -123,10 +148,13 @@ export function WorkflowControllersProvider({
 }): ReactNode {
   return (
     <AnalysisControlsProvider>
+      <JointSync />
       <RepairControlsProvider>
         <HoleFillControlsProvider>
           <SplitControlsProvider>
-            <TextureControlsProvider>{children}</TextureControlsProvider>
+            <TextureControlsProvider>
+              <ConnectorEditControlsProvider>{children}</ConnectorEditControlsProvider>
+            </TextureControlsProvider>
           </SplitControlsProvider>
         </HoleFillControlsProvider>
       </RepairControlsProvider>
@@ -153,6 +181,10 @@ export function useHoleFillControls(): HoleFillControls {
 
 export function useSplitControls(): SplitControls {
   return required(useContext(SplitContext), 'useSplitControls');
+}
+
+export function useConnectorEditControls(): ConnectorEditControls {
+  return required(useContext(ConnectorEditContext), 'useConnectorEditControls');
 }
 
 export function useTextureControls(): TextureControls {

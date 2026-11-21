@@ -194,6 +194,21 @@ export class RepairHistoryStore {
   /** Insertion order, so the oldest descriptors can be evicted first. */
   private readonly order: string[] = [];
 
+  /** Bounded metadata checkpoint for split ACK publication. Geometry and inverse
+   * objects are retained by reference; no mesh buffers are cloned. */
+  public checkpoint(): () => void {
+    const records = new Map([...this.records].map(([id, r]) => [id, { ...r }])),
+      undoable = new Map(this.undoableByDocument),
+      order = [...this.order];
+    return (): void => {
+      this.records.clear();
+      for (const [id, r] of records) this.records.set(id, r);
+      this.undoableByDocument.clear();
+      for (const [id, value] of undoable) this.undoableByDocument.set(id, value);
+      this.order.splice(0, this.order.length, ...order);
+    };
+  }
+
   /**
    * Registers a committed repair and its inverse patch.
    *

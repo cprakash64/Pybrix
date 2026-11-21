@@ -57,6 +57,11 @@ test('desktop shell: 48 px top bar, 300 px tool panel, 280 px inspector, 30 px s
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await openModel(page);
+  // PYBRIX-08A: the Inspector starts collapsed, so the model gets its width...
+  expect((await box(page, '.inspector-rail')).width).toBe(36);
+  expect((await box(page, '.viewport')).width).toBe(1440 - 300 - 36);
+  // ...and these are the dimensions once the user opens it.
+  await page.getByTestId('expand-inspector').click();
 
   expect((await box(page, '.topbar')).height).toBe(48);
   expect((await box(page, '.statusbar')).height).toBe(30);
@@ -94,13 +99,16 @@ test('no size in the qualified range scrolls the page horizontally or vertically
   }
 });
 
-test('collapsing the inspector widens the viewport and keeps the same renderer drawing', async ({
+test('opening the inspector narrows the viewport and keeps the same renderer drawing', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await openModel(page);
-  const before = await canvasWidth(page);
+  // Collapsed by default: the rail is all the inspector takes.
+  await expect(page.getByTestId('inspector-rail')).toBeVisible();
+  expect((await box(page, '.inspector-rail')).width).toBe(36);
+  const collapsed = await canvasWidth(page);
   await page
     .getByTestId('viewport-canvas')
     .locator('canvas')
@@ -108,18 +116,17 @@ test('collapsing the inspector widens the viewport and keeps the same renderer d
       canvas.dataset.shellProbe = 'original';
     });
 
-  await page.getByTestId('collapse-inspector').click();
-  await expect(page.getByTestId('inspector-rail')).toBeVisible();
-  expect((await box(page, '.inspector-rail')).width).toBe(36);
-  await expect.poll(() => canvasWidth(page)).toBe(before + 280 - 36);
+  await page.getByTestId('expand-inspector').click();
+  await expect(page.getByTestId('inspector')).toBeVisible();
+  await expect.poll(() => canvasWidth(page)).toBe(collapsed - 280 + 36);
 
   // The same canvas element — resized, not recreated — and still drawing.
   const canvas = page.getByTestId('viewport-canvas').locator('canvas');
   await expect(canvas).toHaveAttribute('data-shell-probe', 'original');
   await expect(canvas).toHaveAttribute('data-rendered-triangles', '400');
 
-  await page.getByTestId('expand-inspector').click();
-  await expect.poll(() => canvasWidth(page)).toBe(before);
+  await page.getByTestId('collapse-inspector').click();
+  await expect.poll(() => canvasWidth(page)).toBe(collapsed);
 });
 
 test('below 1200 px the inspector is a drawer over the viewport, closed by Esc', async ({

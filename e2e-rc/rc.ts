@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { expect, type Locator, type Page } from '@playwright/test';
+import { revealControl } from '../e2e/progressive-disclosure';
 
 /**
  * Shared steps for the release-candidate qualification — REPAIR-CORE-07.
@@ -210,6 +211,16 @@ export async function settled(page: Page, timeout = 300_000): Promise<'ready' | 
   return last === 'ready' ? 'ready' : 'nothing';
 }
 
+/**
+ * Starts the PREVIEW-then-Apply path: the primary "Repair model" action previews and applies in one
+ * step (REPAIR-UX-01), so this suite's separate Preview step uses "Preview repairs" in Advanced
+ * repair options — the same control the maintained specs use.
+ */
+export async function previewRepair(page: Page): Promise<void> {
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+}
+
 export async function waitForResult(
   page: Page,
   timeout = 600_000,
@@ -217,7 +228,11 @@ export async function waitForResult(
   const candidate = page.getByTestId('repair-candidate');
   const note = page.getByTestId('repair-no-safe-change');
   const cancelled = page.getByTestId('repair-cancelled');
-  await expect(candidate.or(note).or(cancelled)).toBeVisible({ timeout });
+  const any = candidate.or(note).or(cancelled).first();
+  await expect(any).toBeAttached({ timeout });
+  // The result lives in a disclosure the person opens, exactly as in the maintained specs.
+  await revealControl(page, any);
+  await expect(any).toBeVisible({ timeout });
   if (await candidate.isVisible()) return 'candidate';
   return (await note.isVisible()) ? 'note' : 'cancelled';
 }
@@ -246,6 +261,7 @@ export async function readSummary(page: Page): Promise<{
 
 export async function applyAndSettle(page: Page, timeout = 600_000): Promise<void> {
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout });
   await expect(page.getByTestId('repair-applied')).not.toHaveAttribute('data-outcome', 'checking', {
     timeout,

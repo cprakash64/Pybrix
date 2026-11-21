@@ -967,3 +967,66 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Presentation transforms only; this is an interactive control, not a preview warning. */
+.assembly-view {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--cad-border);
+  border-radius: 999px;
+  background: var(--cad-overlay-strong);
+  box-shadow: var(--shadow-floating);
+  color: var(--cad-text);
+  font-size: var(--fs-secondary);
+  pointer-events: auto;
+}
+.assembly-view > span {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assembly-view > button {
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.assembly-view > button[aria-pressed='true'] {
+  border-color: var(--cad-border);
+  background: var(--cad-panel);
+}
+.assembly-view > button:focus-visible {
+  outline: 2px solid var(--cad-accent);
+  outline-offset: 2px;
+}
+
+.assembly-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+.assembly-result > h3 {
+  margin: 8px 0 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.assembly-result > p {
+  margin: 0;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+}
+.assembly-result > button {
+  width: 100%;
+  text-align: left;
+}
+.assembly-result > button[aria-pressed='true'] {
+  border-color: var(--cad-accent);
+}

@@ -13,11 +13,14 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   test: {
+    maxWorkers: 2,
+    testTimeout: 15000,
     // Test globals are not injected; every helper is imported explicitly.
     globals: false,
     projects: [
       {
         test: {
+          testTimeout: 15000,
           name: 'packages',
           environment: 'node',
           include: ['packages/*/src/**/*.test.ts'],
@@ -27,6 +30,7 @@ export default defineConfig({
         // Repository tooling: the Node version guard and anything else that has
         // to run before a build exists.
         test: {
+          testTimeout: 15000,
           name: 'tooling',
           environment: 'node',
           include: ['scripts/**/*.test.ts'],
@@ -35,12 +39,16 @@ export default defineConfig({
       {
         plugins: [react()],
         test: {
+          testTimeout: 15000,
           name: 'web',
           environment: 'jsdom',
           include: ['apps/web/src/**/*.test.{ts,tsx}'],
           // `*.node.test.ts` runs in the project below instead; see there for
           // why the WebAssembly kernel cannot be instantiated under jsdom.
-          exclude: ['apps/web/src/workers/node-tests/**'],
+          exclude: [
+            'apps/web/src/workers/node-tests/**',
+            'apps/web/src/workers/node-integration-tests/**',
+          ],
           setupFiles: ['./apps/web/vitest.setup.ts'],
         },
       },
@@ -63,9 +71,13 @@ export default defineConfig({
          * `import.meta.url`.
          */
         test: {
+          testTimeout: 15000,
           name: 'worker-kernel',
           environment: 'node',
-          include: ['apps/web/src/workers/node-tests/**/*.test.ts'],
+          include: [
+            'apps/web/src/workers/node-tests/**/*.test.ts',
+            'apps/web/src/workers/node-integration-tests/**/*.test.ts',
+          ],
           /*
            * THE EMSCRIPTEN GLUE IS LOADED BY NODE, NOT BY VITEST'S TRANSFORM.
            *

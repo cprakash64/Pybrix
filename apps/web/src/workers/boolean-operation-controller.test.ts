@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { createIndexArray, createPositionArray, type CanonicalMesh } from '@cadfixer/mesh-core';
+import {
+  createIndexArray,
+  createPositionArray,
+  MAX_SUPPORTED_SPLIT_TRIANGLES,
+  type CanonicalMesh,
+} from '@cadfixer/mesh-core';
+import { MAX_BOOLEAN_TOOL_TRIANGLES } from '@cadfixer/geometry-runtime';
 import { AppErrorCode, CancellationSource, uncancellable } from '@cadfixer/shared';
 import {
   BooleanOperationController,
+  MAX_BOOLEAN_KNOWN_WORK_BYTES,
+  MAX_BOOLEAN_OPERAND_TRIANGLES,
+  MAX_BOOLEAN_OPERATION_COPY_BYTES,
+  MAX_BOOLEAN_OPERATION_INPUT_TRIANGLES,
+  measureBooleanOperation,
   type BooleanWorkerFactory,
 } from './boolean-operation-controller';
 import type { BooleanOperationReply, BooleanOperationRequest } from './boolean-operation-protocol';
@@ -79,8 +90,11 @@ describe('disposable Boolean operation controller', () => {
     const second = controller.run('difference', tetra(), tetra(0.2), uncancellable);
     await expect(first).rejects.toMatchObject({ code: AppErrorCode.OperationCancelled });
     expect(workers[0]?.terminated).toBe(true);
-    const huge = { ...tetra(), indices: new Uint32Array(6_000_003) };
-    expect(() => controller.run('union', huge, tetra(), uncancellable)).toThrow(/input triangles/);
+    // An operand one triangle over the shared ceiling is refused on its own, before a worker is spawned.
+    const huge = { ...tetra(), indices: new Uint32Array((MAX_SUPPORTED_SPLIT_TRIANGLES + 1) * 3) };
+    expect(() => controller.run('union', huge, tetra(), uncancellable)).toThrow(
+      /left operand triangles are 2000001; limit is 2000000/,
+    );
     expect(workers).toHaveLength(2);
     controller.dispose();
     await expect(second).rejects.toMatchObject({ code: AppErrorCode.OperationCancelled });
@@ -109,5 +123,71 @@ describe('disposable Boolean operation controller', () => {
     await expect(result).rejects.toMatchObject({ code: AppErrorCode.Internal });
     expect(controller.stats.active).toBe(0);
     expect(workers[0]?.terminated).toBe(true);
+  });
+
+  describe('the triangle ceilings are the shared split ceiling, and agree with the adapter', () => {
+    const triangles = (n: number): CanonicalMesh => ({
+      positions: createPositionArray(9),
+      indices: new Uint32Array(n * 3),
+      metadata: {},
+    });
+
+    it('derives its limits from the shared ceiling and the largest tool', () => {
+      expect(MAX_BOOLEAN_OPERAND_TRIANGLES).toBe(2_000_000);
+      expect(MAX_BOOLEAN_OPERATION_INPUT_TRIANGLES).toBe(
+        MAX_SUPPORTED_SPLIT_TRIANGLES + MAX_BOOLEAN_TOOL_TRIANGLES,
+      );
+    });
+
+    it('leaves the two byte guards room at the ceiling, so the triangle count is what decides', () => {
+      // An unshared (STL soup) part at the ceiling beside the half-space: the worst shape for bytes.
+      const part: CanonicalMesh = {
+        positions: createPositionArray(MAX_SUPPORTED_SPLIT_TRIANGLES * 9),
+        indices: createIndexArray(MAX_SUPPORTED_SPLIT_TRIANGLES * 3),
+        metadata: {},
+      };
+      const accounting = measureBooleanOperation(part, triangles(12));
+      expect(accounting.inputCopyBytes).toBeLessThan(MAX_BOOLEAN_OPERATION_COPY_BYTES);
+      expect(accounting.knownOperationBytes).toBeLessThan(MAX_BOOLEAN_KNOWN_WORK_BYTES);
+      // Comfortably: the binding limit at the ceiling is the triangle count, not these.
+      expect(accounting.knownOperationBytes / MAX_BOOLEAN_KNOWN_WORK_BYTES).toBeLessThan(0.6);
+    });
+
+    it('lets a part of exactly 2,000,000 triangles through beside a 12-triangle half-space', () => {
+      // The regression: 2,000,000 + 12 was refused here as "input triangles are 2000012; limit is
+      // 2000000" while 1,992,704 + 12 was not, so the exact split refused the very part the ceiling admits.
+      const { controller, workers } = setup();
+      const operation = controller.run(
+        'intersection',
+        triangles(MAX_SUPPORTED_SPLIT_TRIANGLES),
+        triangles(12),
+        uncancellable,
+      );
+      // It got past every guard and spawned its worker.
+      expect(workers).toHaveLength(1);
+      controller.dispose();
+      return expect(operation).rejects.toMatchObject({ code: AppErrorCode.OperationCancelled });
+    });
+
+    it('refuses 2,000,001 as the part, and the largest tool plus one beside a full part', () => {
+      const { controller, workers } = setup();
+      expect(() =>
+        controller.run(
+          'intersection',
+          triangles(MAX_SUPPORTED_SPLIT_TRIANGLES + 1),
+          triangles(12),
+          uncancellable,
+        ),
+      ).toThrow(/left operand triangles are 2000001/);
+      expect(() =>
+        controller.run(
+          'intersection',
+          triangles(MAX_SUPPORTED_SPLIT_TRIANGLES),
+          triangles(MAX_BOOLEAN_TOOL_TRIANGLES + 1),
+          uncancellable,
+        ),
+      ).toThrow(/input triangles are 2064001; limit is 2064000/);
+      expect(workers).toHaveLength(0);
+    });
   });
 });

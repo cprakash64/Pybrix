@@ -1,5 +1,7 @@
+import type { SplitTransactionStatus } from './split-candidates';
+import type { JointEditCandidateHandle, JointEditRequest, JointEditSummary } from './joint-edits';
 import type { Diagnostic, OperationId, SerializedAppError } from '@cadfixer/shared';
-import type { MeshBounds, PartTransform } from '@cadfixer/mesh-core';
+import type { JointRetirement, MeshBounds, PartTransform } from '@cadfixer/mesh-core';
 // Type-only, so no topology code is pulled into the main-thread bundle. The
 // analysis contract is described here rather than left as `unknown`: this is a
 // module boundary, and an unchecked one would let the worker and its consumer
@@ -17,7 +19,7 @@ import type { RepairCandidateHandle } from './repair-candidates';
 import type { HoleFillCandidateHandle } from './hole-fill-candidates';
 import type { GeometryEditCandidateHandle, GeometryEditResourceAccounting } from './geometry-edit';
 import type { SplitCandidateHandle, SplitCandidateSummary } from './split-candidates';
-import type { SplitRequest } from './split-connectors';
+import type { ProductSplitRequest } from './split-connectors';
 import type {
   SurfaceTextureRequest,
   SurfaceTextureResult,
@@ -224,11 +226,41 @@ export interface OperationMap {
     payload: HoleFillCommitPayload;
     result: HoleFillCommitResult;
   };
+  /**
+   * Lists the connector joints of a document: ids, status, and the connectors in the page's own terms. READ-ONLY and geometry-free.
+   * The only source of a joint id, and of the `specDigest` an edit states.
+   */
+  'joint/list': { payload: JointListPayload; result: JointListResult };
+  /**
+   * Builds a CANDIDATE edit of one joint's connectors by rebuilding them from the pieces the cut left before any, through the same
+   * checks a split runs, and returns a disposable preview. Applies nothing.
+   */
+  'joint/propose': { payload: JointProposePayload; result: JointProposeResult };
+  /** Applies one stored, validated candidate. THE ONLY JOINT MUTATION. Identifiers cross, never geometry. */
+  'joint/commit': { payload: JointCommitPayload; result: JointCommitResult };
+  /** Releases a joint-edit candidate. */
+  'joint/discard': { payload: JointDiscardPayload; result: JointDiscardResult };
   'edit/preview': { payload: EditPreviewPayload; result: EditPreviewResult };
   'edit/commit': { payload: EditCommitPayload; result: EditCommitResult };
   'edit/discard': { payload: EditDiscardPayload; result: EditDiscardResult };
   'split/create': { payload: SplitCreatePayload; result: SplitCreateResult };
   'split/commit': { payload: SplitCommitPayload; result: SplitCommitResult };
+  'split/commit-release': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
+  'split/commit-status': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
+  'split/commit-ack': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
+  'split/commit-abort': {
+    payload: { readonly transactionId: string };
+    result: SplitTransactionStatus;
+  };
   'split/discard': { payload: SplitDiscardPayload; result: SplitDiscardResult };
   'texture/select': { payload: TextureSelectPayload; result: TextureSelectResult };
   'texture/layout': { payload: TextureCreatePayload; result: TextureLayoutResult };
@@ -273,13 +305,15 @@ export interface EditDiscardResult {
 export interface SplitCreatePayload {
   readonly source: DocumentHandle;
   readonly partId: string;
-  readonly request: SplitRequest;
+  /** Stated PHYSICALLY: what the page may ask for (Stage C03-C2). A coordinate pin is not on this type, and the worker refuses one. */
+  readonly request: ProductSplitRequest;
 }
 export interface SplitCreateResult extends SplitCandidateSummary {
   readonly render: DocumentRenderSnapshot;
   readonly parts: readonly PartDescriptor[];
 }
 export interface SplitCommitPayload {
+  readonly transactionId: string;
   readonly candidate: SplitCandidateHandle;
   readonly expectedSource: DocumentHandle;
   readonly expectedPart: string;
@@ -898,6 +932,145 @@ export interface PartDescriptor {
   readonly hasNormals: boolean;
   /** True when this part's mesh stores per-vertex texture coordinates. */
   readonly hasUvs: boolean;
+}
+
+/**
+ * WHAT THE MAIN THREAD IS ALLOWED TO KNOW ABOUT AN EDITABLE CONNECTOR JOINT (Stage EC-1).
+ *
+ * Identifiers, a status, a reason and counts. NEVER a mesh, a base piece, a site or the interface authority: the page gets a
+ * description to show and an id to name in a later request, and the geometry the joint rebuilds from stays in the worker.
+ * Not carried by any operation yet; the first operation that returns it is the listing in the transaction stage.
+ */
+export interface JointDescriptor {
+  readonly jointId: string;
+  /** The joint's two parts, in the order the joint states them (A, then B). */
+  readonly aPartId: string;
+  readonly bPartId: string;
+  /** `ATTACHED` joints can be edited. `RETIRED` ones cannot, and say why. */
+  readonly status: 'ATTACHED' | 'RETIRED';
+  readonly reason?: JointRetirement;
+  /** Revision a retired joint stopped being usable at. Absent for a record not yet installed. */
+  readonly retiredAtRevision?: number;
+  readonly pinCount: number;
+  /** Bytes retained for this joint beyond its parts' own geometry. Zero once retired. */
+  readonly retainedBytes: number;
+  /**
+   * Identifies what the joint's connectors ARE. An edit states the digest it was made from, and the store compares it with its own
+   * reading. Present for an attached joint only.
+   */
+  readonly specDigest?: string;
+  /**
+   * The face of the cut, for a view the page draws and a pin is placed on: the outline in the cut's own two axes, and the factor that
+   * turns a length in those axes into millimetres. Present for an attached joint, with or without connectors.
+   */
+  readonly cutFace?: {
+    /** Millimetres in one unit of the cut's own axes (`u`, `v`): the unit the pins' positions are stated in. */
+    readonly mmPerCoordinate: number;
+    /** The most connectors one cut holds. */
+    readonly maxPins: number;
+    /**
+     * The cut's outline, or `undefined` when it has too many points to describe. DISPLAY ONLY: it decides nothing, and a position the
+     * page proposes is judged by the worker against the real cut, never against this.
+     */
+    readonly outline: JointOutline | undefined;
+    /**
+     * Where the cut's own axes point in the scene, whose axes are the model's own: `u` (across, to the right in the picture), `v` (along,
+     * up) and the normal, each a unit vector. LABELS ONLY: it moves nothing and decides nothing.
+     */
+    readonly axes: JointCutAxes | undefined;
+  };
+  /** The connectors, in the page's own terms: names, positions on the cut and sizes. Present for an attached joint with connectors. */
+  readonly connector?: {
+    readonly maleSide: 'A' | 'B';
+    /** Which way a pin points from the cut, in the scene's own coordinates (the placement applied). Unit length. */
+    readonly axis: readonly [number, number, number];
+    /**
+     * A length in the scene is millimetres divided by this: the unit the connectors were sized in, the placement scale cancelling
+     * out. It is what turns the sizes below into distances the page can lay against what it draws.
+     */
+    readonly mmPerSceneUnit: number;
+    readonly pins: readonly {
+      readonly pinId: string;
+      /** The pin's centre in the cut's own two axes. Never a point of the model. */
+      readonly u: number;
+      readonly v: number;
+      /** The same centre in the scene's own coordinates: where to draw a marker and what a pick is measured against. */
+      readonly center: readonly [number, number, number];
+      readonly diameterMm: number;
+      readonly depthMm: number;
+      readonly clearanceMm: number;
+    }[];
+  };
+}
+
+/** The directions of a cut's own axes in the scene, as unit vectors. */
+export interface JointCutAxes {
+  readonly u: readonly [number, number, number];
+  readonly v: readonly [number, number, number];
+  readonly normal: readonly [number, number, number];
+  /** Where the cut's own origin (`u = v = 0`) is in the scene. */
+  readonly origin: readonly [number, number, number];
+  /** Scene lengths in one unit of the cut's own axes, so a point `(u, v)` of the cut is `origin + scenePerCoordinate × (u·U + v·V)`. */
+  readonly scenePerCoordinate: number;
+}
+
+/** The outline of a cut in its own axes: closed loops, each a flat `[u0, v0, u1, v1, …]`, material inside an OUTER loop and not inside a HOLE. */
+export interface JointOutline {
+  readonly bounds: {
+    readonly minU: number;
+    readonly maxU: number;
+    readonly minV: number;
+    readonly maxV: number;
+  };
+  readonly loops: readonly {
+    readonly role: 'OUTER' | 'HOLE';
+    readonly points: readonly number[];
+  }[];
+}
+
+export interface JointListPayload {
+  readonly source: DocumentHandle;
+}
+export interface JointListResult {
+  readonly joints: readonly JointDescriptor[];
+}
+export interface JointProposePayload {
+  readonly source: DocumentHandle;
+  readonly jointId: string;
+  /** The `specDigest` of the descriptor the caller is looking at. */
+  readonly expectedSpecDigest: string;
+  readonly edit: JointEditRequest;
+}
+export interface JointProposeResult extends JointEditSummary {
+  readonly render: DocumentRenderSnapshot;
+  readonly parts: readonly PartDescriptor[];
+  /** The joint as the candidate would leave it. */
+  readonly after: JointDescriptor;
+}
+export interface JointCommitPayload {
+  readonly candidate: JointEditCandidateHandle;
+  readonly expectedSource: DocumentHandle;
+  readonly expectedJointId: string;
+  readonly expectedSpecDigest: string;
+}
+export interface JointCommitResult {
+  readonly handle: DocumentHandle;
+  readonly parentRevision: number;
+  readonly recordId: string;
+  readonly render: DocumentRenderSnapshot;
+  readonly parts: readonly PartDescriptor[];
+  readonly joints: readonly JointDescriptor[];
+  readonly residentBytes: number;
+  readonly triangleCount: number;
+  readonly vertexCount: number;
+  readonly bounds: MeshBounds | undefined;
+  readonly summary: JointEditSummary;
+}
+export interface JointDiscardPayload {
+  readonly candidate: JointEditCandidateHandle;
+}
+export interface JointDiscardResult {
+  readonly released: boolean;
 }
 
 /**

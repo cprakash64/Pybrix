@@ -5,5 +5,5 @@
     "lib": ["ES2023", "WebWorker"]
   },
   "include": ["**/*.ts"],
-  "exclude": ["node-tests/**"]
+  "exclude": ["node-tests/**", "node-integration-tests/**"]
 }

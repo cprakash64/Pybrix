@@ -1,6 +1,9 @@
+import { revealControl } from './progressive-disclosure';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
+import { openInspector } from './inspector';
+import { waitUntilListening } from './wait-until-listening';
 
 /**
  * BQ25, BQ57 — WHAT HAPPENS WHEN A HOST FORGETS THE ISOLATION HEADERS.
@@ -23,8 +26,14 @@ import { binaryStl } from './stl-fixtures';
  * than tidiness. `beforeAll` runs once per worker process, so a single fixed port
  * meant four workers racing to bind it: one won and the other three tested
  * against a server that had failed to start. Deriving the port from the worker
- * index gives each its own, so the file is safe under the suite's default
- * parallelism.
+ * gives each its own, so the file is safe under the suite's default parallelism.
+ *
+ * `parallelIndex`, NOT `workerIndex`. `workerIndex` is unique per worker PROCESS
+ * and keeps growing every time Playwright replaces a worker, so after a restart
+ * the port walked off the end of the range this suite owns and onto 4190 and
+ * 4191 — the packaged suite's own header-ful server, which then answered a test
+ * that expected no isolation headers. `parallelIndex` is 0 to workers − 1 for
+ * the whole run, so the ports stay 4186 to 4189.
  */
 const BASE_PORT = 4186;
 let server: ChildProcess | undefined;
@@ -33,13 +42,12 @@ let port = BASE_PORT;
 test.beforeAll(async () => {
   // `test.info()` rather than a destructured hook argument: the fixtures object
   // is not needed here, and an empty destructuring pattern is a lint error.
-  port = BASE_PORT + test.info().workerIndex;
+  port = BASE_PORT + test.info().parallelIndex;
   server = spawn('node', ['scripts/release-server.mjs', '--port', String(port), '--no-isolation'], {
     stdio: 'ignore',
   });
-  // The server binds immediately; give it a moment rather than racing the first
-  // navigation, which would report a connection error instead of a header result.
-  await new Promise((resolve) => setTimeout(resolve, 1200));
+  // Readiness, not a guess: see `wait-until-listening.ts`. A fixed 1.2 s sleep here once let the first navigation be refused.
+  await waitUntilListening(server, port);
 });
 
 test.afterAll(() => {
@@ -73,6 +81,7 @@ test('BQ25: repair refuses rather than becoming uninterruptible', async ({ page 
   test.setTimeout(120_000);
   await page.goto(`http://localhost:${String(port)}/`);
   await openFile(page, 'small.stl', binaryStl(600).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
   /*
@@ -81,6 +90,7 @@ test('BQ25: repair refuses rather than becoming uninterruptible', async ({ page 
    * The primary action keeps its place (REPAIR-UX-01) but is disabled.
    */
   const refusal = page.getByTestId('repair-isolation-unavailable');
+  await revealControl(page, refusal);
   await expect(refusal).toBeVisible();
   await expect(page.getByTestId('preview-repair')).toBeDisabled();
   await expect(page.getByTestId('apply-repair')).toHaveCount(0);
@@ -105,10 +115,12 @@ test('BQ25, BQ58: the rest of the product still works without isolation', async 
    * them down with it — that is the difference between a safe refusal and a
    * self-inflicted outage.
    */
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('health-triangles')).toHaveText((500).toLocaleString());
 
   const pending = page.waitForEvent('download', { timeout: 60_000 });
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   const download = await pending;
   const stream = await download.createReadStream();

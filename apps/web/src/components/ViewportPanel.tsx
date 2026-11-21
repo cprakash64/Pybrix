@@ -1,3 +1,6 @@
+import { type AssemblyPresentation } from '../state/assembly-presentation';
+import { buildCutMark } from '../state/cut-mark-presentation';
+import { connectorAtPoint, connectorPairsOf, currentJoints } from '../state/joint-presentation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   createViewport,
@@ -14,9 +17,13 @@ import {
 } from '../state/workspace-store';
 import { overlayForIssue } from '../state/repair-issues';
 import { useIssueNavigation } from '../state/use-issue-navigation';
-import { useSplitControls, useTextureControls } from '../state/workflow-controllers';
+import {
+  useConnectorEditControls,
+  useSplitControls,
+  useTextureControls,
+} from '../state/workflow-controllers';
 import { WorkflowId } from '../state/workflows';
-import { analysisKey } from '../state/workspace-store';
+import { analysisKey, type WorkspaceState } from '../state/workspace-store';
 import { IssueHud } from './IssueHud';
 import { SplitHud } from './SplitHud';
 import { TextureHud } from './TextureHud';
@@ -31,6 +38,21 @@ import { IconButton, SegmentedControl, type SegmentedOption } from './shell/prim
  * pushed into it imperatively rather than by recreating it, so switching models
  * does not tear down and rebuild the WebGL context.
  */
+/**
+ * The assembly stored with a split preview, only while that preview describes THIS document
+ * revision. One function for the render and the effect, so they cannot disagree.
+ */
+function previewAssemblyOf(
+  splitPreview: WorkspaceState['splitPreview'],
+  model: WorkspaceState['model'],
+): AssemblyPresentation | undefined {
+  if (splitPreview?.assembly === undefined || model === undefined) return undefined;
+  return splitPreview.source.documentId === model.handle.documentId &&
+    splitPreview.source.revision === model.handle.revision
+    ? splitPreview.assembly
+    : undefined;
+}
+
 export function ViewportPanel(): ReactNode {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<ViewportHandle | undefined>(undefined);
@@ -45,6 +67,8 @@ export function ViewportPanel(): ReactNode {
   const store = useWorkspaceStore();
   const {
     viewportFailure,
+    assembly,
+    joints,
     model,
     activePartId,
     analysis,
@@ -52,11 +76,13 @@ export function ViewportPanel(): ReactNode {
     repair,
     holeFill,
     splitPreview,
+    previewExploded,
     splitPlane,
     texturePreview,
     textureSelection,
     selectedWorkflow,
     frameRequest,
+    cutMarkShown,
   } = useWorkspaceState();
   const navigation = useIssueNavigation();
   const split = useSplitControls();
@@ -119,6 +145,32 @@ export function ViewportPanel(): ReactNode {
       const viewport = createViewport(container, {
         onPick: (hit) => {
           store.selectPart(hit.partId);
+          const state = store.getSnapshot(),
+            presentation = state.assembly,
+            selected = state.model?.parts.find((p) => p.partId === hit.partId);
+          if (
+            presentation &&
+            selected &&
+            presentation.revision === state.model?.handle.revision &&
+            !state.splitPreview
+          ) {
+            const offset = presentation.exploded
+                ? presentation.offsets.find((p) => p.partId === hit.partId)?.offset
+                : undefined,
+              center = state.model.bounds?.center ?? [0, 0, 0],
+              point = hit.point.map((v, k) => v + (center[k] ?? 0) - (offset?.[k] ?? 0)) as [
+                number,
+                number,
+                number,
+              ];
+            store.selectConnectorPair(
+              connectorAtPoint(
+                connectorPairsOf(currentJoints(state.joints, state.model.handle)),
+                selected,
+                point,
+              ),
+            );
+          }
           // Surface Texture's one selection tool: the worker grows the flat
           // region from this face. Nothing else listens for the click.
           if (store.getSnapshot().selectedWorkflow === WorkflowId.Texture)
@@ -174,14 +226,26 @@ export function ViewportPanel(): ReactNode {
   // store replaces it only on a successful import — unrelated updates such as a
   // status message keep the same reference, so this does not rebuild GPU
   // buffers every time something else in the workspace changes.
+  /*
+   * THE DOCUMENT THE CAMERA WAS LAST FITTED TO. A camera is framed once per DOCUMENT, so the
+   * question "may the view be kept?" is answered by identity, never by which workspace is open:
+   * a split preview or an applied split is the same document seen differently and keeps the view
+   * the cut was chosen from, but a different document is a different model with its own bounds.
+   * Keying the decision on the workspace alone kept model A's framing for model B whenever the
+   * Split workspace was open, and B appeared tiny or out of view (owner acceptance, v0.7.0).
+   */
+  const framedDocumentRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (viewport === undefined) return;
 
     if (model === undefined) {
+      framedDocumentRef.current = undefined;
       viewport.setModel(undefined);
       return;
     }
+    const sameDocument = framedDocumentRef.current === model.handle.documentId;
+    framedDocumentRef.current = model.handle.documentId;
 
     /*
      * The render snapshot and the part descriptors are joined here rather than
@@ -216,10 +280,101 @@ export function ViewportPanel(): ReactNode {
       {
         // In Split & Connect, a preview or an applied split is the same document
         // seen differently: the camera the cut was chosen from stays put.
-        preserveView: splitWorkspaceRef.current,
+        preserveView: splitWorkspaceRef.current && sameDocument,
       },
     );
   }, [model, splitPreview]);
+
+  const assemblyCurrent =
+    assembly?.documentId === model?.handle.documentId &&
+    assembly?.revision === model?.handle.revision &&
+    splitPreview === undefined;
+  /*
+   * THE PREVIEW'S OWN ASSEMBLY (display only). It exists while a split preview of THIS document
+   * revision is on screen; `previewExploded` is the one visual choice and lives apart from
+   * `splitPreview`, so flipping it never rebuilds the scene. An applied split's assembly takes over
+   * after Apply, exactly as before.
+   */
+  const storedPreviewAssembly = previewAssemblyOf(splitPreview, model);
+  const previewAssembly =
+    storedPreviewAssembly === undefined
+      ? undefined
+      : { ...storedPreviewAssembly, exploded: previewExploded };
+  const shownAssembly = previewAssembly ?? (assemblyCurrent ? assembly : undefined);
+  /*
+   * Whether this effect has put offsets on screen. An ASSEMBLED preview must not call
+   * `setAssemblyOffsets` at all: it hides the axes and refits the camera, so publishing a preview
+   * would redraw twice and reframe a view the user had set. Only a preview that is or was exploded
+   * reaches the viewport.
+   */
+  const offsetsShownRef = useRef(false);
+  useEffect(() => {
+    const stored = previewAssemblyOf(splitPreview, model);
+    const shown = stored ?? (assemblyCurrent ? assembly : undefined);
+    if (shown === undefined) {
+      offsetsShownRef.current = false;
+      return;
+    }
+    const exploded = stored === undefined ? shown.exploded : previewExploded;
+    if (stored !== undefined && !exploded && !offsetsShownRef.current) return;
+    viewportRef.current?.setAssemblyOffsets(
+      exploded ? new Map(shown.offsets.map((p) => [p.partId, p.offset])) : undefined,
+    );
+    offsetsShownRef.current = exploded;
+  }, [splitPreview, previewExploded, assembly, assemblyCurrent, model]);
+
+  useEffect(() => {
+    const pair = assemblyCurrent
+      ? connectorPairsOf(currentJoints(joints, model?.handle)).find(
+          (p) => p.id === assembly?.selectedPairId,
+        )
+      : undefined;
+    const points = pair
+      ? [pair.a, pair.b].map(
+          (id) =>
+            pair.center.map(
+              (v, k) =>
+                v +
+                (assembly?.exploded
+                  ? (assembly.offsets.find((p) => p.partId === id)?.offset[k] ?? 0)
+                  : 0),
+            ) as [number, number, number],
+        )
+      : undefined;
+    viewportRef.current?.setConnectorGuide(points);
+  }, [assembly, assemblyCurrent, joints, model]);
+
+  /*
+   * THE CUT OF THE CONNECTOR EDITOR, MARKED ON THE MODEL (Stage EC-9) while the editor is open: its outline on each face, the connectors
+   * of the draft as rings (so a drag in the picture moves one here as it is dragged) and an arrow along each of its two directions. Built
+   * from what the worker said about where the cut is and nothing else; it decides nothing and never moves the camera.
+   */
+  const connectorEdit = useConnectorEditControls();
+  const { joint: editedJoint, draft: editedDraft } = connectorEdit;
+  useEffect(() => {
+    const offsetOf = (id: string): [number, number, number] => {
+      const offset =
+        assemblyCurrent && assembly?.exploded
+          ? assembly.offsets.find((p) => p.partId === id)?.offset
+          : undefined;
+      return [offset?.[0] ?? 0, offset?.[1] ?? 0, offset?.[2] ?? 0];
+    };
+    const mark =
+      cutMarkShown && editedJoint !== undefined
+        ? buildCutMark(
+            editedJoint,
+            editedDraft === undefined
+              ? undefined
+              : {
+                  pins: editedDraft.pins,
+                  diameterMm: editedDraft.diameterMm,
+                  clearanceMm: editedDraft.clearanceMm,
+                },
+            { a: offsetOf(editedJoint.aPartId), b: offsetOf(editedJoint.bPartId) },
+          )
+        : undefined;
+    viewportRef.current?.setCutMark(mark);
+  }, [assembly, assemblyCurrent, cutMarkShown, editedDraft, editedJoint, model]);
 
   /**
    * Points the overlay, preview and change-overlay frame at the active part.
@@ -240,9 +395,11 @@ export function ViewportPanel(): ReactNode {
   }, [activePartId, model, splitPreview]);
 
   useEffect(() => {
-    viewportRef.current?.setEditPlane(splitPlane);
+    viewportRef.current?.setEditPlane(
+      split.applied === undefined || split.assemblyEditing ? splitPlane : undefined,
+    );
     // Re-pushed after a preview is installed or removed: `setModel` hides it.
-  }, [splitPlane, model, splitPreview]);
+  }, [split.applied, split.assemblyEditing, splitPlane, model, splitPreview]);
 
   /*
    * The engine's cross-section outline and the Piece A / Piece B colours, in
@@ -260,18 +417,41 @@ export function ViewportPanel(): ReactNode {
     );
   }, [model, splitOutline, splitPreview]);
 
-  const tintA = splitWorkspace ? (split.preview?.pieceAId ?? split.applied?.pieceA) : undefined;
-  const tintB = splitWorkspace ? (split.preview?.pieceBId ?? split.applied?.pieceB) : undefined;
+  const tintA = assemblyCurrent
+    ? activePartId
+    : splitWorkspace
+      ? (split.preview?.pieceAId ?? split.applied?.pieceA)
+      : undefined;
+  const tintB = assemblyCurrent
+    ? undefined
+    : splitWorkspace
+      ? (split.preview?.pieceBId ?? split.applied?.pieceB)
+      : undefined;
   useEffect(() => {
     viewportRef.current?.setPartTints(
-      tintA === undefined || tintB === undefined
+      tintA === undefined
         ? undefined
-        : new Map([
-            [tintA, 'a'],
-            [tintB, 'b'],
-          ]),
+        : new Map([[tintA, 'a'], ...(tintB ? [[tintB, 'b'] as const] : [])]),
     );
   }, [model, splitPreview, tintA, tintB]);
+
+  /*
+   * Which piece of a split PREVIEW is drawn. Only a preview hides a piece, and
+   * only inside the Split workspace; applied pieces are ordinary parts. The
+   * other piece is hidden, not removed, so nothing is re-uploaded.
+   */
+  const pieceView = splitWorkspace && split.preview !== undefined ? split.pieceView : 'both';
+  const hiddenPieceId =
+    pieceView === 'a'
+      ? split.preview?.pieceBId
+      : pieceView === 'b'
+        ? split.preview?.pieceAId
+        : undefined;
+  useEffect(() => {
+    viewportRef.current?.setHiddenParts(
+      hiddenPieceId === undefined ? undefined : new Set([hiddenPieceId]),
+    );
+  }, [model, splitPreview, hiddenPieceId]);
 
   useEffect(() => {
     viewportRef.current?.setNavigationMode(navigationMode);
@@ -618,10 +798,44 @@ export function ViewportPanel(): ReactNode {
           operation, is where "not applied" is said. The workspace HUDs above it
           describe what is selected or measured and do not repeat it. */}
       <div className="viewport__hud">
+        {shownAssembly ? (
+          <div
+            role="group"
+            aria-label="Assembly view"
+            className="assembly-view"
+            data-testid="assembly-view"
+          >
+            <span role="status">{shownAssembly.labels[activePartId ?? ''] ?? 'Assembly'}</span>
+            <button
+              type="button"
+              aria-pressed={shownAssembly.exploded}
+              onClick={() => {
+                if (previewAssembly) store.setPreviewExploded(true);
+                else store.setAssemblyExploded(true);
+              }}
+              data-testid="assembly-exploded"
+            >
+              Exploded
+            </button>
+            <button
+              type="button"
+              aria-pressed={!shownAssembly.exploded}
+              onClick={() => {
+                if (previewAssembly) store.setPreviewExploded(false);
+                else store.setAssemblyExploded(false);
+              }}
+              data-testid="assembly-assembled"
+            >
+              Assembled
+            </button>
+          </div>
+        ) : null}
         {repairWorkspace && issueSelection !== undefined && modelShown ? (
           <IssueHud navigation={navigation} />
         ) : null}
-        {splitWorkspace && modelShown ? <SplitHud /> : null}
+        {splitWorkspace && modelShown && (split.applied === undefined || split.assemblyEditing) ? (
+          <SplitHud />
+        ) : null}
         {textureWorkspace && modelShown ? <TextureHud /> : null}
         {showingPreview ? (
           <p className="viewport__preview-banner" role="status" data-testid="preview-banner">

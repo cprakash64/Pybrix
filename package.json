@@ -61,7 +61,8 @@
     "qualify:threemf-corpus": "vitest run --config vitest.bench.config.ts scripts/threemf-corpus.suite.ts",
     "qualify:interop-corpus": "vitest run --config vitest.bench.config.ts scripts/interop-corpus.suite.ts",
     "qualify:streaming-corpus": "vitest run --config vitest.bench.config.ts scripts/streaming-corpus.suite.ts",
-    "qualify:repair-core-06a": "vitest run --config vitest.bench.config.ts scripts/repair-core-06a-qualify.bench-suite.ts"
+    "qualify:repair-core-06a": "vitest run --config vitest.bench.config.ts scripts/repair-core-06a-qualify.bench-suite.ts",
+    "bench:joint-retention": "vitest run --config vitest.bench.config.ts scripts/joint-retention.bench-suite.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -67,7 +67,9 @@ before it is offered; there is no way to skip that.
   on a part of up to 250,000 triangles. Large-mesh Repair model uses its own
   resource policy; this tool limit is not a general Repair model ceiling.
 - **Split** — one selected part and one plane at a time, on an eligible closed
-  manifold solid. Connector choices are None, round Pin/Socket, and Dovetail.
+  manifold solid. Connector choices are None and round Pin/Socket (one to
+  four); the dovetail is not offered since v0.7.0. Split Preview can be shown
+  assembled or exploded; the exploded layout is display-only.
   Connector dimensions require an explicit-millimetre document. Preview,
   Apply, Cancel, individual STL piece export, and one-step Undo are supported.
 - **Surface Texture** — one planar connected region on one part at a time.

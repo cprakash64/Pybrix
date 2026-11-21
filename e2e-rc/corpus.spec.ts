@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import { revealControl } from '../e2e/progressive-disclosure';
 import { pinchedPairsStl } from '../e2e/local-repair-fixtures';
 import {
   applyAndSettle,
@@ -11,6 +12,7 @@ import {
   importModel,
   jsHeapMiB,
   liveWorkers,
+  previewRepair,
   readSummary,
   record,
   settled,
@@ -98,6 +100,7 @@ async function importTimed(page: Page, file: string): Promise<number> {
   await importModel(page, file);
   await expect(page.getByTestId('status-triangles')).not.toHaveText(/^\s*$/, { timeout: 600_000 });
   await enterRepair(page);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 600_000 });
   return Date.now() - t0;
 }
@@ -139,7 +142,7 @@ for (const id of SMOKE) {
       }
 
       const t1 = Date.now();
-      await page.getByTestId('preview-repair').click();
+      await previewRepair(page);
       const result = await waitForResult(page, 1_200_000);
       row.candidateMs = Date.now() - t1;
       row.result = result;
@@ -188,6 +191,7 @@ for (const id of SMOKE) {
       await page.goto('/');
       await importModel(page, { name: `${id}-repaired.stl`, mime: 'model/stl', buffer: stl });
       await enterRepair(page);
+      await revealControl(page, page.getByTestId('issue-list'));
       await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 1_200_000 });
       await settled(page, 1_200_000).catch(() => 'nothing');
       row.reimportMs = Date.now() - t5;
@@ -244,7 +248,7 @@ test('X11 COMPLEXITY LIMIT: bounded, responsive, valid, usable afterwards', asyn
   );
   const started = Date.now();
   const peak = await withPeak(async () => {
-    await page.getByTestId('preview-repair').click();
+    await previewRepair(page);
     // Visible activity at once, and Cancel stays within reach for the whole run.
     await expect(page.getByTestId('cancel-repair')).toBeVisible({ timeout: 30_000 });
     expect(await waitForResult(page, 1_200_000)).toBe('candidate');
@@ -287,7 +291,7 @@ test('X11 COMPLEXITY LIMIT: bounded, responsive, valid, usable afterwards', asyn
   // The application is usable: another model repairs normally.
   await importModel(page, { name: 'p.stl', mime: 'model/stl', buffer: pinchedPairsStl(3) });
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   row.workersAtEnd = await liveWorkers(page);
   record(row);

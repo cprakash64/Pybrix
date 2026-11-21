@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import { revealControl } from '../e2e/progressive-disclosure';
 import { pinchedPairsStl, refusedPinchStl } from '../e2e/local-repair-fixtures';
 import { tetrahedronStl } from '../e2e/stl-fixtures';
 import {
@@ -8,6 +9,7 @@ import {
   auditConsole,
   enterRepair,
   importModel,
+  previewRepair,
   record,
   settled,
   waitForResult,
@@ -57,7 +59,7 @@ test('HOSTING: headers, isolation, worker and WASM assets under the deployment p
   await importModel(page, { name: 'p.stl', mime: 'model/stl', buffer: pinchedPairsStl(3) });
   await enterRepair(page);
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   await applyAndSettle(page);
 
@@ -110,10 +112,25 @@ test('KEYBOARD: the whole repair flow with no pointer', async ({ page }) => {
     return { outline: style.outlineStyle, shadow: style.boxShadow };
   });
   expect(ring.outline !== 'none' || ring.shadow !== 'none').toBe(true);
+  // The primary "Repair model" action previews and applies in one activation (REPAIR-UX-01).
+  await page.keyboard.press('Enter');
+  await revealControl(page, page.getByTestId('repair-applied'));
+  await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId('repair-applied')).not.toHaveAttribute('data-outcome', 'checking', {
+    timeout: 120_000,
+  });
+  await tabTo('undo-repair');
+  await page.keyboard.press('Space');
+  await expect(page.getByTestId('repair-applied')).toHaveCount(0, { timeout: 120_000 });
+  // The separate Preview -> Apply path, also with no pointer: Preview repairs is focused and
+  // activated from the keyboard, then Apply is reached by Tab.
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').focus();
   await page.keyboard.press('Enter');
   expect(await waitForResult(page)).toBe('candidate');
   await tabTo('apply-repair');
   await page.keyboard.press('Enter');
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).not.toHaveAttribute('data-outcome', 'checking', {
     timeout: 120_000,
   });
@@ -131,7 +148,7 @@ test('SEMANTICS: names, live regions, alert vs status, and no meaning carried by
   await importModel(page, { name: 'r.stl', mime: 'model/stl', buffer: refusedPinchStl() });
   await enterRepair(page);
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
 
   // Every button and checkbox in the repair workspace has an accessible name.
@@ -178,7 +195,7 @@ test('REFLOW: at 200% zoom the preview and its actions remain reachable without 
   await importModel(page, { name: 'r.stl', mime: 'model/stl', buffer: refusedPinchStl() });
   await enterRepair(page);
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   await expect(page.getByTestId('apply-repair')).toBeInViewport();
   await expect(page.getByTestId('discard-preview')).toBeInViewport();
@@ -213,7 +230,7 @@ for (const size of SIZES) {
     await noOverflow(page, 'before');
     await page.screenshot({ path: `${SHOTS}/${tag}-1-before.png` });
 
-    await page.getByTestId('preview-repair').click();
+    await previewRepair(page);
     await expect(page.getByTestId('cancel-repair')).toBeInViewport();
     await page.screenshot({ path: `${SHOTS}/${tag}-2-running.png` });
     await noOverflow(page, 'running');
@@ -222,7 +239,7 @@ for (const size of SIZES) {
 
     await importModel(page, { name: 'p3.stl', mime: 'model/stl', buffer: pinchedPairsStl(3) });
     expect(await settled(page)).toBe('ready');
-    await page.getByTestId('preview-repair').click();
+    await previewRepair(page);
     expect(await waitForResult(page)).toBe('candidate');
     await expect(page.getByTestId('apply-repair')).toBeInViewport();
     await expect(page.getByTestId('discard-preview')).toBeInViewport();
@@ -237,14 +254,18 @@ for (const size of SIZES) {
 
     await importModel(page, { name: 'r.stl', mime: 'model/stl', buffer: refusedPinchStl() });
     expect(await settled(page)).toBe('ready');
-    await page.getByTestId('preview-repair').click();
+    await previewRepair(page);
     expect(await waitForResult(page)).toBe('candidate');
     await expect(page.getByTestId('apply-repair')).toBeInViewport();
     await noOverflow(page, 'partial preview');
     await page.screenshot({ path: `${SHOTS}/${tag}-5-partial.png` });
 
     await importModel(page, { name: 'clean.stl', mime: 'model/stl', buffer: tetrahedronStl() });
-    await expect(page.getByTestId('repair-no-repairs')).toBeVisible({ timeout: 60_000 });
+    // A clean model shows its outcome heading; the footer is withdrawn and its line stays attached.
+    await expect(page.getByRole('heading', { name: 'Your model looks good.' })).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId('repair-no-repairs')).toHaveText('No repairable problems found.');
     await page.screenshot({ path: `${SHOTS}/${tag}-0-clean.png` });
   });
 }

@@ -34,6 +34,7 @@ import {
   type OverlaySamples,
   type OverlayVisibility,
 } from './create-overlays';
+import { createCutMark, type CutMarkData, type CutMarkHandle } from './create-cut-mark';
 import {
   createChangeOverlays,
   type ChangeOverlayHandle,
@@ -41,6 +42,7 @@ import {
   type ChangeOverlayView,
   type ChangeOverlayVisibility,
 } from './create-change-overlays';
+import { createFaceHighlight, type FaceHighlightHandle } from './create-face-highlight';
 import {
   createHoleFillOverlays,
   type HoleFillOverlayData,
@@ -212,6 +214,9 @@ export interface ViewportHandle {
    * unusable.
    */
   setActivePart(partId: string | undefined): void;
+  setAssemblyOffsets(
+    offsets: ReadonlyMap<string, readonly [number, number, number]> | undefined,
+  ): void;
   /** Raycast disposable render geometry and return stable part identity. */
   pick(clientX: number, clientY: number): PartPick | undefined;
   /** Internal split/texture plane control; part-local and never canonical. */
@@ -233,7 +238,19 @@ export interface ViewportHandle {
     data: { readonly segments: Float32Array; readonly revision: number } | undefined,
   ): void;
   /** Colours the pieces of a split as Piece A and Piece B. `undefined` restores one colour. */
+  setConnectorGuide(points: readonly (readonly [number, number, number])[] | undefined): void;
+  /**
+   * Marks a cut where it is: its outline on each face, a ring for each connector being placed and an arrow along each of its two
+   * directions, all in SCENE coordinates. Display only; `undefined` clears it. It never moves the camera.
+   */
+  setCutMark(data: CutMarkData | undefined): void;
   setPartTints(tints: ReadonlyMap<string, ViewportPartTint> | undefined): void;
+  /**
+   * Hides the named parts (the other piece of a split preview). Presentation
+   * only: no geometry is touched, uploaded or disposed, and the camera does not
+   * move. `undefined` or an empty set shows every part again.
+   */
+  setHiddenParts(ids: ReadonlySet<string> | undefined): void;
   /** Replaces the diagnostic overlays. `undefined` clears them. */
   setOverlays(data: ViewportOverlayData | undefined): void;
   /**
@@ -255,6 +272,14 @@ export interface ViewportHandle {
    * the user can see how the two meet.
    */
   setHoleFillOverlays(data: ViewportHoleFillData | undefined): void;
+  /**
+   * Highlights some of the active part's faces, by index into the part's render buffer. `revision` must
+   * be the model on screen: a highlight computed for another revision is dropped, not drawn. Cleared
+   * by a model change and by a change of active part. Display only.
+   */
+  setFaceHighlight(
+    data: { readonly faces: Uint32Array; readonly revision: number } | undefined,
+  ): void;
   /** Frames the current model. No-op when the workspace is empty. */
   fitView(): void;
   /**
@@ -300,6 +325,8 @@ export interface ViewportHandle {
   readonly changeOverlayObjectCount: number;
   /** Rim and patch objects currently in the scene. For leak tests. */
   readonly holeFillOverlayObjectCount: number;
+  /** Auto Split's face highlight: 0 or 1. For leak tests. */
+  readonly faceHighlightObjectCount: number;
   /** Cumulative rim/patch uploads and disposals. For double-dispose tests. */
   readonly holeFillOverlayLifecycle: { readonly created: number; readonly disposed: number };
   /** Distinct GPU geometries currently uploaded. For sharing and leak tests. */
@@ -447,7 +474,52 @@ export function createViewport(
   controls.enableDamping = false;
 
   /** Holds the model and carries the display-only centring offset. */
+  const guideGeometry = new BufferGeometry(),
+    guidePositions = new Float32Array(6),
+    guideAttribute = new BufferAttribute(guidePositions, 3);
+  guideGeometry.setAttribute('position', guideAttribute);
+  const guideMaterial = new LineBasicMaterial({
+    color: 0x8ba2ba,
+    transparent: true,
+    opacity: 0.7,
+    depthTest: false,
+  });
+  const connectorGuide = new LineSegments(guideGeometry, guideMaterial);
+  connectorGuide.visible = false;
   const modelGroup = new Group();
+  modelGroup.add(connectorGuide);
+  const setConnectorGuide = (
+    points: readonly (readonly [number, number, number])[] | undefined,
+  ): void => {
+    connectorGuide.visible = points?.length === 2;
+    if (points?.length === 2) {
+      guidePositions.set(points.flat());
+      guideAttribute.needsUpdate = true;
+      guideGeometry.computeBoundingSphere();
+    }
+    for (const [index, marker] of pairMarkers.entries()) {
+      const p = points?.[index];
+      marker.visible = p !== undefined;
+      if (p) marker.position.set(...p);
+      marker.scale.setScalar((currentModel?.radius ?? 1) * 0.035);
+    }
+    canvas.dataset.connectorGuide = points?.length === 2 ? 'paired' : 'none';
+    render();
+  };
+  const cutMark: CutMarkHandle = createCutMark();
+  modelGroup.add(cutMark.group);
+  const setCutMark = (data: CutMarkData | undefined): void => {
+    // The page asks on every render of the panel, so clearing nothing must cost nothing: a frame is drawn only when what is shown changes.
+    if (!cutMark.setMark(data, currentModel?.radius ?? 1)) return;
+    canvas.dataset.cutMark = data === undefined ? 'none' : 'shown';
+    canvas.dataset.cutMarkOutlineSegments = String(cutMark.counts.outline);
+    canvas.dataset.cutMarkPinSegments = String(cutMark.counts.pins);
+    canvas.dataset.cutMarkArrowSegments = String(cutMark.counts.arrows);
+    canvas.dataset.cutMarkLabels = String(cutMark.counts.labels);
+    canvas.dataset.cutMarkFirstPin =
+      cutMark.firstRingCentre?.map((value) => value.toFixed(3)).join(',') ?? '';
+    scheduleRender();
+  };
   scene.add(modelGroup);
 
   // Overlays are added to the SAME group as the model, so the display-only
@@ -481,6 +553,19 @@ export function createViewport(
     depthWrite: false,
     transparent: true,
   });
+  const pairMarkerMaterial = new SpriteMaterial({
+    map: markerMaterial.map,
+    color: 0x8ba2ba,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  });
+  const pairMarkers = [new Sprite(pairMarkerMaterial), new Sprite(pairMarkerMaterial)];
+  for (const m of pairMarkers) {
+    m.visible = false;
+    m.renderOrder = 9;
+    modelGroup.add(m);
+  }
   const marker = new Sprite(markerMaterial);
   marker.renderOrder = 10;
   marker.visible = false;
@@ -503,6 +588,8 @@ export function createViewport(
   // to agree.
   const holeFillOverlays: HoleFillOverlayHandle = createHoleFillOverlays();
   activePartGroup.add(holeFillOverlays.group);
+  const faceHighlight: FaceHighlightHandle = createFaceHighlight();
+  activePartGroup.add(faceHighlight.group);
 
   /*
    * THE SPLIT PLANE, ITS ARROW AND THE CUT OUTLINE. Created before the orbit
@@ -554,6 +641,7 @@ export function createViewport(
     }),
   };
   let partTints: ReadonlyMap<string, ViewportPartTint> | undefined;
+  let hiddenParts: ReadonlySet<string> = new Set();
   /*
    * The selected surface: a muted rose over the model's grey, translucent
    * enough to keep its shading readable. Presentation only — no material of
@@ -689,6 +777,8 @@ export function createViewport(
   };
 
   let currentModel: ViewportModel | undefined;
+  /** How many times `setModel` fitted the camera to a newly installed model. Published for tests only. */
+  let documentFitCount = 0;
   /**
    * Held beside the model rather than inside it, because it changes far more
    * often than the model does and on a completely different cadence.
@@ -697,6 +787,7 @@ export function createViewport(
   let previewMesh: Mesh<BufferGeometry, MeshStandardMaterial> | undefined;
   let currentPreview: ViewportPreview | undefined;
   let disposed = false;
+  let renderedFrames = 0;
 
   /** The mesh the preview replaces, or `undefined` when no part is active. */
   const activePartMesh = (): Mesh<BufferGeometry, MeshStandardMaterial> | undefined => {
@@ -718,6 +809,9 @@ export function createViewport(
    * stay at one no matter how many models have been loaded.
    */
   const publishRenderStats = (): void => {
+    // Cumulative submissions distinguish a scene update from an unnecessary
+    // repaint; the per-frame draw-call count alone cannot show redundant work.
+    canvas.dataset.renderedFrames = String(renderedFrames);
     canvas.dataset.drawCalls = String(renderer.info.render.calls);
     canvas.dataset.renderedTriangles = String(renderer.info.render.triangles);
     // Counted from the meshes themselves rather than from the group's child
@@ -745,6 +839,22 @@ export function createViewport(
      */
     canvas.dataset.modelRevision = String(currentModel?.revision ?? 0);
     /*
+     * CAMERA FRAMING, as facts a test can read. `cameraFitRatio` is the model's bounding-sphere
+     * radius over the radius the camera sees at its target: exactly 1 / FIT_PADDING when the camera
+     * was fitted to this model, far below that when a previous model's framing was kept.
+     */
+    canvas.dataset.documentFitCount = String(documentFitCount);
+    {
+      const distance = camera.position.distanceTo(controls.target);
+      const seen = distance * Math.sin((camera.fov * Math.PI) / 180 / 2);
+      const radius =
+        currentModel === undefined
+          ? 0
+          : (currentModel.radius > 0 ? currentModel.radius : 1) + assemblyRadius;
+      canvas.dataset.cameraDistance = distance.toFixed(4);
+      canvas.dataset.cameraFitRatio = seen > 0 && radius > 0 ? (radius / seen).toFixed(4) : '0';
+    }
+    /*
      * THE SPLIT PLANE AS DRAWN, so a test can prove the viewport shows the cut
      * the controls describe — not merely that a number was stored.
      */
@@ -759,6 +869,9 @@ export function createViewport(
     canvas.dataset.editArrow =
       arrow === undefined ? 'none' : arrow.map((value) => value.toFixed(1)).join(',');
     canvas.dataset.tintedParts = String(partTints?.size ?? 0);
+    // How many parts are displaced for an exploded view (display only; 0 when assembled).
+    canvas.dataset.explodedParts = String(assemblyOffsets?.size ?? 0);
+    canvas.dataset.hiddenParts = String(hiddenParts.size);
     canvas.dataset.textureSelectionTriangles = String(
       textureSelectionMesh === undefined
         ? 0
@@ -781,6 +894,7 @@ export function createViewport(
      * them.
      */
     canvas.dataset.holeFillOverlayObjects = String(holeFillOverlays.objectCount);
+    canvas.dataset.faceHighlightObjects = String(faceHighlight.objectCount);
     canvas.dataset.holeFillOverlaysCreated = String(holeFillOverlays.lifecycle.created);
     canvas.dataset.holeFillOverlaysDisposed = String(holeFillOverlays.lifecycle.disposed);
   };
@@ -838,6 +952,7 @@ export function createViewport(
   const render = (): void => {
     if (disposed) return;
     renderer.render(scene, camera);
+    renderedFrames += 1;
     publishRenderStats();
     publishOrientation();
   };
@@ -845,11 +960,12 @@ export function createViewport(
   controls.addEventListener('change', render);
 
   /*
-   * ONE FRAME FOR THE SPLIT OVERLAYS, not one per call. A split preview lands
-   * as a model swap followed by the plane, the outline and the piece tints in
-   * the same effect flush; drawing a 500k-triangle scene once per call stacked
-   * several software-rendered frames into one main-thread gap. These three
-   * schedule instead, and the next animation frame draws them together.
+   * A split result arrives as model, active-part, highlight, plane, outline
+   * and tint updates in one effect flush. Mutate the scene synchronously, then
+   * draw their complete final state once. Immediate intermediate model and
+   * selection draws queue redundant full-scene GPU work before presentation,
+   * even when only the last scene is visible. Apply still owns a fully validated
+   * worker candidate; this coalesces drawing, never geometry or transactions.
    */
   let scheduledFrame = 0;
   const scheduleRender = (): void => {
@@ -907,6 +1023,37 @@ export function createViewport(
     currentPreview = undefined;
   };
 
+  let assemblyOffsets: ReadonlyMap<string, readonly [number, number, number]> | undefined;
+  let assemblyRadius = 0;
+  const setAssemblyOffsets = (
+    offsets: ReadonlyMap<string, readonly [number, number, number]> | undefined,
+  ): void => {
+    const unchanged =
+      offsets?.size === assemblyOffsets?.size &&
+      [...(offsets?.entries() ?? [])].every(([id, offset]) =>
+        offset.every((v, k) => v === assemblyOffsets?.get(id)?.[k]),
+      );
+    const axesWereVisible = axes.visible;
+    axes.visible = false;
+    if (unchanged && !axesWereVisible) return;
+    assemblyOffsets = offsets;
+    let far = 0;
+    for (const part of currentModel?.parts ?? []) {
+      const mesh = partMeshes.get(part.partId);
+      if (!mesh) continue;
+      mesh.matrix.copy(partMatrix(part.transform));
+      const offset = offsets?.get(part.partId);
+      if (offset) {
+        mesh.matrix.elements[12] += offset[0];
+        mesh.matrix.elements[13] += offset[1];
+        mesh.matrix.elements[14] += offset[2];
+        far = Math.max(far, Math.hypot(...offset));
+      }
+    }
+    assemblyRadius = far;
+    placeActivePartGroup();
+    fitView();
+  };
   const frameFrom = (direction: Vector3): void => {
     if (currentModel === undefined) {
       camera.position.set(180, 140, 180);
@@ -919,7 +1066,7 @@ export function createViewport(
     // The model group is offset by -centre, so the model occupies a sphere of
     // `radius` about the world origin regardless of where it sat in the file.
     // Fitting therefore never assumes the source coordinates were near zero.
-    const radius = currentModel.radius > 0 ? currentModel.radius : 1;
+    const radius = (currentModel.radius > 0 ? currentModel.radius : 1) + assemblyRadius;
     const halfFov = (camera.fov * Math.PI) / 180 / 2;
     const distance = (radius / Math.sin(halfFov)) * FIT_PADDING;
 
@@ -1022,9 +1169,13 @@ export function createViewport(
     // a model change or a part change; carrying either across would draw the
     // previous selection's opening on geometry that does not have it.
     holeFillOverlays.setData(undefined);
+    faceHighlight.setFaces(undefined, undefined);
     marker.visible = false;
     hideEditPlane();
     currentModel = model;
+    axes.visible = true;
+    assemblyOffsets = undefined;
+    assemblyRadius = 0;
 
     if (model === undefined) {
       grid.visible = true;
@@ -1073,8 +1224,11 @@ export function createViewport(
     canvas.setAttribute('aria-label', 'Loaded 3D model. Drag to orbit, scroll to zoom.');
 
     applyPartTints();
-    if (keepView) render();
-    else fitView();
+    if (keepView) scheduleRender();
+    else {
+      documentFitCount += 1;
+      fitView();
+    }
   };
 
   /** Moves the overlay/preview frame onto the active part. Touches no geometry. */
@@ -1083,6 +1237,12 @@ export function createViewport(
     activePartGroup.matrix.copy(
       active === undefined ? new Matrix4() : partMatrix(active.transform),
     );
+    const offset = active === undefined ? undefined : assemblyOffsets?.get(active.partId);
+    if (offset) {
+      activePartGroup.matrix.elements[12] += offset[0];
+      activePartGroup.matrix.elements[13] += offset[1];
+      activePartGroup.matrix.elements[14] += offset[2];
+    }
   };
 
   const setActivePart = (partId: string | undefined): void => {
@@ -1102,6 +1262,7 @@ export function createViewport(
     // a model change or a part change; carrying either across would draw the
     // previous selection's opening on geometry that does not have it.
     holeFillOverlays.setData(undefined);
+    faceHighlight.setFaces(undefined, undefined);
     marker.visible = false;
     hideEditPlane();
     applyPartTints();
@@ -1109,9 +1270,10 @@ export function createViewport(
     // A preview may have hidden the previously active part. Every part is drawn
     // once no candidate is on screen.
     for (const mesh of partMeshes.values()) mesh.visible = true;
+    applyHiddenParts();
 
     placeActivePartGroup();
-    render();
+    scheduleRender();
   };
 
   const setEditPlane = (plane: ViewportEditPlane | undefined): void => {
@@ -1145,6 +1307,19 @@ export function createViewport(
     }
     splitGizmo.setOutline(data.segments);
     sectionRevision = data.revision;
+    scheduleRender();
+  };
+
+  /** Hidden parts stay hidden across a model install or a preview clearing. */
+  const applyHiddenParts = (): void => {
+    for (const [id, mesh] of partMeshes) if (hiddenParts.has(id)) mesh.visible = false;
+  };
+
+  const setHiddenParts = (ids: ReadonlySet<string> | undefined): void => {
+    const next: ReadonlySet<string> = ids ?? new Set();
+    if (next.size === hiddenParts.size && [...next].every((id) => hiddenParts.has(id))) return;
+    hiddenParts = next;
+    for (const [id, mesh] of partMeshes) mesh.visible = !hiddenParts.has(id);
     scheduleRender();
   };
 
@@ -1199,32 +1374,22 @@ export function createViewport(
    * that everything upstream got it right.
    */
   const setOverlays = (data: ViewportOverlayData | undefined): void => {
-    if (data === undefined || currentModel === undefined) {
-      overlays.setSamples(undefined, undefined);
-      render();
-      return;
-    }
-    if (data.revision !== currentModel.revision) {
-      overlays.setSamples(undefined, undefined);
-      render();
-      return;
-    }
-
     /*
      * SAMPLES INDEX THE ACTIVE PART. Vertex ids in a topology report are local
      * to the mesh that was analysed, so resolving them against another part's
      * buffer would place markers at unrelated coordinates.
      */
-    const activePositions = activePartPositions();
-    if (activePositions === undefined) {
-      overlays.setSamples(undefined, undefined);
-      render();
-      return;
-    }
-
-    overlays.setSamples(data.samples, activePositions);
-    overlays.setVisibility(data.visibility);
-    render();
+    const current = data?.revision === currentModel?.revision ? data : undefined;
+    const activePositions = current === undefined ? undefined : activePartPositions();
+    const needsFrame = overlays.update(
+      activePositions === undefined ? undefined : current?.samples,
+      activePositions,
+      activePositions === undefined ? undefined : current?.visibility,
+    );
+    if (needsFrame) scheduleRender();
+    // Hidden buffers are staged resources, not a newly drawn model. Keep their
+    // count current without advancing the other last-rendered scene statistics.
+    else canvas.dataset.overlayObjects = String(overlays.objectCount);
   };
 
   /**
@@ -1322,6 +1487,19 @@ export function createViewport(
     render();
   };
 
+  const setFaceHighlight = (
+    data: { readonly faces: Uint32Array; readonly revision: number } | undefined,
+  ): void => {
+    const positions = activePartPositions();
+    if (data === undefined || positions === undefined || data.revision !== currentModel?.revision) {
+      faceHighlight.setFaces(undefined, undefined);
+      scheduleRender();
+      return;
+    }
+    faceHighlight.setFaces(data.faces, positions);
+    scheduleRender();
+  };
+
   const setHoleFillOverlays = (data: ViewportHoleFillData | undefined): void => {
     if (data === undefined || currentModel === undefined) {
       holeFillOverlays.setData(undefined);
@@ -1345,16 +1523,21 @@ export function createViewport(
   return {
     setModel,
     setActivePart,
+    setAssemblyOffsets,
     pick,
     setEditPlane,
     setTextureSelection,
     setSectionOutline,
     setPartTints,
+    setConnectorGuide,
+    setCutMark,
+    setHiddenParts,
     setTextureFootprint,
     setOverlays,
     setPreview,
     setChangeOverlays,
     setHoleFillOverlays,
+    setFaceHighlight,
     fitView,
     viewFrom,
     zoomToFit,
@@ -1372,6 +1555,9 @@ export function createViewport(
     },
     get changeOverlayObjectCount(): number {
       return changeOverlays.objectCount;
+    },
+    get faceHighlightObjectCount(): number {
+      return faceHighlight.objectCount;
     },
     get holeFillOverlayObjectCount(): number {
       return holeFillOverlays.objectCount;
@@ -1399,9 +1585,11 @@ export function createViewport(
       // Shared by every part and every model that was ever loaded, so it is
       // released with the viewport rather than with any one mesh.
       surfaceMaterial.dispose();
+      cutMark.dispose();
       overlays.dispose();
       changeOverlays.dispose();
       holeFillOverlays.dispose();
+      faceHighlight.dispose();
       if (scheduledFrame !== 0) cancelAnimationFrame(scheduledFrame);
       splitGizmo.dispose();
       textureFootprint?.geometry.dispose();
@@ -1410,6 +1598,9 @@ export function createViewport(
       textureSelectionMaterial.dispose();
       markerMaterial.map?.dispose();
       markerMaterial.dispose();
+      guideGeometry.dispose();
+      guideMaterial.dispose();
+      pairMarkerMaterial.dispose();
       grid.geometry.dispose();
       disposeMaterial(grid);
       axes.geometry.dispose();

@@ -1,3 +1,11 @@
+import {
+  assemblyAfterSplit,
+  type AssemblyPresentation,
+  type SplitAssemblyContext,
+} from './assembly-presentation';
+import { isLengthUnit, type LengthUnit } from '@cadfixer/shared';
+import type { UnitInterpretation } from './unit-interpretation';
+import { connectorPairsOf, currentJoints, jointsFor, type JointsSlice } from './joint-presentation';
 import type {
   BoundaryFillOutcome,
   BoundaryFillPlan,
@@ -8,7 +16,9 @@ import type {
   LocalRepairPlan,
   DocumentRenderSnapshot,
   EditCommitResult,
+  JointCommitResult,
   SplitCommitResult,
+  SplitTransactionStatus,
   MeshBounds,
   DocumentHandle,
   PartDescriptor,
@@ -954,6 +964,18 @@ const EMPTY_REPAIR: RepairSnapshot = {
 };
 
 export interface WorkspaceState {
+  readonly assembly: AssemblyPresentation | undefined;
+  /**
+   * What the worker last said about this document's connector joints (Stage EC-4). A PROJECTION: the worker owns every joint, this holds
+   * the descriptors it listed for one revision, and a slice whose handle is not the loaded model's is read as nothing (`jointsFor`).
+   */
+  readonly joints: JointsSlice | undefined;
+  /**
+   * The model revision (the application's own counter) that a connector edit, or the undo of one, produced. Such a change replaces both
+   * meshes of a cut and nothing else, so what the split showed as its result (the two pieces, Export) is still true of that revision;
+   * every other change ends it. Equality with the current revision is the whole test, so a stale value can never match.
+   */
+  readonly connectorEditRevision: number | undefined;
   /** `undefined` means no workflow is open. No workflow can be opened yet. */
   readonly selectedWorkflow: WorkflowId | undefined;
   /**
@@ -993,8 +1015,25 @@ export interface WorkspaceState {
         readonly source: DocumentHandle;
         readonly render: DocumentRenderSnapshot;
         readonly parts: readonly PartDescriptor[];
+        /**
+         * How these pieces would be arranged if the preview were applied: DISPLAY ONLY, built from the
+         * worker's preview result by the same code that builds the applied view. It is part of the
+         * preview, so every path that discards the preview discards it too.
+         */
+        readonly assembly?: AssemblyPresentation;
       }
     | undefined;
+  /**
+   * Whether the split PREVIEW is shown exploded. A purely visual choice kept apart from `splitPreview`
+   * so changing it never changes that object's identity — the viewport rebuilds its scene when the
+   * preview changes, and a toggle must not cause one. It touches no document, revision, history or worker.
+   */
+  readonly previewExploded: boolean;
+  /**
+   * Whether the connector editor is open on a cut, which is when that cut is marked on the model. A purely visual request kept apart from
+   * the joints: it touches no document, revision, history or worker, and the editor, which sets it, clears it when it goes.
+   */
+  readonly cutMarkShown: boolean;
   readonly splitPlane:
     | {
         readonly origin: readonly [number, number, number];
@@ -1019,6 +1058,12 @@ export interface WorkspaceState {
    * the loaded model's handle is stale and read as no selection.
    */
   readonly textureSelection: TextureSelectionState | undefined;
+  /**
+   * How the user chose to READ a unitless document's dimensions — PYBRIX-08A.
+   * Keyed by `documentId`, so it survives every revision (a repair, a split,
+   * their Undo) and can never apply to the next import. Never touches geometry.
+   */
+  readonly unitInterpretation: UnitInterpretation | undefined;
   readonly importProgress: ImportProgressState;
   readonly exportProgress: ExportProgressState;
   /**
@@ -1121,14 +1166,20 @@ export function analysisKey(
 const MAX_STATUS_ENTRIES = 50;
 
 const INITIAL_STATE: WorkspaceState = {
+  assembly: undefined,
+  joints: undefined,
+  connectorEditRevision: undefined,
   selectedWorkflow: undefined,
   model: undefined,
   importedHandle: undefined,
   activePartId: undefined,
   splitPreview: undefined,
+  previewExploded: false,
+  cutMarkShown: false,
   splitPlane: undefined,
   texturePreview: undefined,
   textureSelection: undefined,
+  unitInterpretation: undefined,
   importProgress: { state: ImportState.Idle, fraction: 0 },
   exportProgress: { state: ExportState.Idle, fraction: 0 },
   conversion: CONVERSION_CLOSED,
@@ -1232,7 +1283,45 @@ function sharedBuffersFor(
 }
 
 export class WorkspaceStore {
+  private readonly assemblyHistory = new Map<string, AssemblyPresentation | undefined>();
+  private assemblyKey(documentId: string, parts: readonly PartDescriptor[]): string {
+    return (
+      documentId +
+      '/' +
+      parts
+        .map((p) => p.partId)
+        .sort()
+        .join(',')
+    );
+  }
+  public selectConnectorPair(id: string | undefined): void {
+    const assembly = this.state.assembly;
+    const pairs = connectorPairsOf(currentJoints(this.state.joints, this.state.model?.handle));
+    if (!assembly || (id !== undefined && !pairs.some((p) => p.id === id))) return;
+    this.update({ assembly: { ...assembly, selectedPairId: id } });
+  }
+
+  /**
+   * Records what the worker listed for one revision. Refused when the handle is not the loaded model's: a list that arrives after the
+   * model moved on describes a document the user is no longer looking at, and showing it would show a connector that may not exist.
+   */
+  public setJoints(slice: JointsSlice): boolean {
+    const current = jointsFor(slice, this.state.model?.handle);
+    if (current === undefined) return false;
+    this.update({ joints: slice });
+    return true;
+  }
+
   private state: WorkspaceState = INITIAL_STATE;
+  private splitAdoptionStage:
+    | {
+        published: WorkspaceState;
+        target: WorkspaceState['model'];
+        transactionId: string | undefined;
+        rollback: () => void;
+        publish: () => void;
+      }
+    | undefined;
   private readonly listeners = new Set<() => void>();
   private nextStatusId = 1;
   private nextModelRevision = 1;
@@ -1249,7 +1338,7 @@ export class WorkspaceStore {
   private nextHoleFillToken = 1;
   private currentHoleFillToken: HoleFillToken | undefined;
 
-  public getSnapshot = (): WorkspaceState => this.state;
+  public getSnapshot = (): WorkspaceState => this.splitAdoptionStage?.published ?? this.state;
 
   public subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -1301,10 +1390,23 @@ export class WorkspaceStore {
     source: DocumentHandle,
     render: DocumentRenderSnapshot,
     parts: readonly PartDescriptor[],
+    assembly?: AssemblyPresentation,
   ): boolean {
     if (!sameHandle(this.state.model?.handle, source)) return false;
-    this.update({ splitPreview: { source, render, parts } });
+    this.update({
+      splitPreview: { source, render, parts, ...(assembly ? { assembly } : {}) },
+    });
     return true;
+  }
+
+  /** Asks for the cut of the connector editor to be marked on the model, or not. Presentation only. */
+  public setCutMarkShown(shown: boolean): void {
+    if (this.state.cutMarkShown !== shown) this.update({ cutMarkShown: shown });
+  }
+
+  /** Shows the split preview exploded or assembled. Presentation only: nothing but this flag changes. */
+  public setPreviewExploded(exploded: boolean): void {
+    if (this.state.previewExploded !== exploded) this.update({ previewExploded: exploded });
   }
 
   public clearSplitPreview(): void {
@@ -1323,7 +1425,98 @@ export class WorkspaceStore {
     this.update({ splitPlane: plane });
   }
 
-  public applySplitResult(result: SplitCommitResult): boolean {
+  /** Stage adoption without publishing a future worker handle to React. The
+   * exact old snapshot remains readable until ACK. No observer effects need
+   * undoing if preparation/adoption fails. */
+  public splitAdoptionCheckpoint(transactionId?: string): (() => void) & { publish: () => void } {
+    if (this.splitAdoptionStage) throw new Error('A split adoption is already pending.');
+    const state = this.state,
+      nextRevision = this.nextModelRevision,
+      analysis = this.currentAnalysisToken,
+      repair = this.currentRepairToken,
+      intersection = this.currentSelfIntersectionToken,
+      fill = this.currentHoleFillToken,
+      assembly = new Map(this.assemblyHistory),
+      stage = {
+        published: state,
+        target: undefined as WorkspaceState['model'],
+        transactionId,
+        rollback: (): void => undefined,
+        publish: (): void => undefined,
+      };
+    this.splitAdoptionStage = stage;
+    const notify = (): void => {
+      for (const listener of [...this.listeners]) {
+        try {
+          listener();
+        } catch {
+          /* Authoritative publication cannot be reversed by a subscriber. */
+        }
+      }
+    };
+    const rollback = (): void => {
+      if (this.splitAdoptionStage !== stage) return;
+      // A previously completed foreign edit may have arrived before worker
+      // preparation acquired its lock. Preserve that authority rather than
+      // rewinding it to a stale checkpoint.
+      if (this.state.model === state.model || this.state.model === stage.target) {
+        this.state = state;
+        this.nextModelRevision = nextRevision;
+        this.currentAnalysisToken = analysis;
+        this.currentRepairToken = repair;
+        this.currentSelfIntersectionToken = intersection;
+        this.currentHoleFillToken = fill;
+        this.assemblyHistory.clear();
+        for (const [key, value] of assembly) this.assemblyHistory.set(key, value);
+      }
+      this.splitAdoptionStage = undefined;
+      notify();
+    };
+    stage.rollback = rollback;
+    stage.publish = (): void => {
+      if (this.splitAdoptionStage !== stage) return;
+      this.splitAdoptionStage = undefined;
+      notify();
+    };
+    return Object.assign(rollback, { publish: stage.publish });
+  }
+
+  public pendingSplitAdoption():
+    | {
+        transactionId: string | undefined;
+        source: DocumentHandle | undefined;
+        proposed: DocumentHandle | undefined;
+      }
+    | undefined {
+    const stage = this.splitAdoptionStage;
+    return stage
+      ? {
+          transactionId: stage.transactionId,
+          source: stage.published.model?.handle,
+          proposed: stage.target?.handle,
+        }
+      : undefined;
+  }
+  public reconcileSplitAdoption(status: SplitTransactionStatus): void {
+    const stage = this.splitAdoptionStage;
+    if (
+      !stage?.transactionId ||
+      stage.transactionId !== status.transactionId ||
+      !sameHandle(stage.published.model?.handle, status.source)
+    )
+      throw new Error('Split adoption recovery authority does not match.');
+    if (status.state === 'ABORTED') {
+      stage.rollback();
+      return;
+    }
+    if (status.state === 'FINALIZED' && sameHandle(stage.target?.handle, status.handle)) {
+      stage.publish();
+      return;
+    }
+    throw new Error('Split adoption is not reconciled.');
+  }
+
+  public applySplitResult(result: SplitCommitResult, context?: SplitAssemblyContext): boolean {
     const model = this.state.model;
     if (
       model?.handle.documentId !== result.handle.documentId ||
@@ -1336,7 +1529,16 @@ export class WorkspaceStore {
     this.currentRepairToken = undefined;
     this.currentSelfIntersectionToken = undefined;
     this.currentHoleFillToken = undefined;
+    this.assemblyHistory.set(
+      this.assemblyKey(model.handle.documentId, model.parts),
+      this.state.assembly?.revision === model.handle.revision ? this.state.assembly : undefined,
+    );
+    if (this.assemblyHistory.size > 32) {
+      const oldest = this.assemblyHistory.keys().next().value;
+      if (oldest !== undefined) this.assemblyHistory.delete(oldest);
+    }
     this.update({
+      assembly: assemblyAfterSplit(result, context, this.state.assembly),
       model: {
         ...model,
         handle: result.handle,
@@ -1369,7 +1571,18 @@ export class WorkspaceStore {
       repair: { ...EMPTY_REPAIR, handle: result.handle },
       overlays: OVERLAYS_HIDDEN,
     });
+    if (this.splitAdoptionStage) this.splitAdoptionStage.target = this.state.model;
     return true;
+  }
+
+  public setAssemblyExploded(exploded: boolean): void {
+    const assembly = this.state.assembly;
+    if (
+      assembly &&
+      assembly.revision === this.state.model?.handle.revision &&
+      assembly.exploded !== exploded
+    )
+      this.update({ assembly: { ...assembly, exploded } });
   }
 
   public pushStatus(severity: StatusSeverity, message: string): void {
@@ -1489,6 +1702,14 @@ export class WorkspaceStore {
       activePartId: activePart?.partId,
       splitPreview: undefined,
       splitPlane: undefined,
+      /*
+       * THE PREVIOUS DOCUMENT'S PRESENTATION GOES WITH IT. The applied-split layout and the
+       * Assembled / Exploded choice are views of document A; neither describes this file, and the
+       * choice must not make the next preview open exploded because the last one was left so.
+       */
+      assembly: undefined,
+      joints: undefined,
+      previewExploded: false,
       texturePreview: undefined,
       textureSelection: undefined,
       importProgress: { state: ImportState.Ready, fraction: 1 },
@@ -1508,6 +1729,7 @@ export class WorkspaceStore {
        */
       holeFill: { ...EMPTY_HOLE_FILL, handle: model.handle, partId: activePart?.partId },
       conversion: CONVERSION_CLOSED,
+      unitInterpretation: undefined,
       /*
        * The ACTIVE PART's size decides its own policy — not the document total.
        * The check runs on one mesh, so a small part inside a large document is
@@ -2270,6 +2492,80 @@ export class WorkspaceStore {
     return true;
   }
 
+  /**
+   * Adopts the result of a connector edit: the SAME parts with new meshes, one revision on.
+   *
+   * No part id, name or placement changed, so what the page drew of the cut (the interfaces, the explode offsets, the labels) is still
+   * right and is carried to the new revision. The one it replaces is remembered under the parts' own key, so an Undo, which brings
+   * those parts back, finds the layout again instead of finding none. The joint list is NOT carried: it is the worker's, and the sync
+   * hook asks for the new revision's.
+   */
+  public applyJointEditResult(result: JointCommitResult): boolean {
+    const model = this.state.model;
+    if (
+      model?.handle.documentId !== result.handle.documentId ||
+      model.handle.revision !== result.parentRevision
+    )
+      return false;
+    const revision = this.nextModelRevision;
+    this.nextModelRevision += 1;
+    this.currentAnalysisToken = undefined;
+    this.currentRepairToken = undefined;
+    this.currentSelfIntersectionToken = undefined;
+    this.currentHoleFillToken = undefined;
+    const carried =
+      this.state.assembly?.revision === model.handle.revision ? this.state.assembly : undefined;
+    if (carried !== undefined) {
+      this.assemblyHistory.set(this.assemblyKey(model.handle.documentId, model.parts), carried);
+      if (this.assemblyHistory.size > 32) {
+        const oldest = this.assemblyHistory.keys().next().value;
+        if (oldest !== undefined) this.assemblyHistory.delete(oldest);
+      }
+    }
+    const active = result.parts.find((part) => part.partId === this.state.activePartId);
+    this.update({
+      assembly:
+        carried === undefined ? undefined : { ...carried, revision: result.handle.revision },
+      model: {
+        ...model,
+        handle: result.handle,
+        parts: result.parts,
+        render: result.render,
+        bounds: result.bounds,
+        triangleCount: result.triangleCount,
+        vertexCount: result.vertexCount,
+        residentBytes: result.residentBytes,
+        revision,
+      },
+      analysis: {
+        ...EMPTY_ANALYSIS,
+        state: AnalysisState.Idle,
+        handle: result.handle,
+        partId: this.state.activePartId,
+      },
+      selfIntersection: {
+        ...EMPTY_SELF_INTERSECTION,
+        handle: result.handle,
+        partId: this.state.activePartId,
+        band: bandForFaceCount(active?.triangleCount ?? result.triangleCount),
+      },
+      overlays: OVERLAYS_HIDDEN,
+      repair: { ...EMPTY_REPAIR, handle: result.handle, partId: this.state.activePartId },
+      holeFill: { ...EMPTY_HOLE_FILL, handle: result.handle, partId: this.state.activePartId },
+      texturePreview: undefined,
+      textureSelection: undefined,
+      splitPreview: undefined,
+      connectorEditRevision: revision,
+    });
+    return true;
+  }
+
+  /** Notes that the revision now held came from undoing a connector edit, which changed the same two meshes and nothing else. */
+  public noteConnectorEditUndone(): void {
+    const model = this.state.model;
+    if (model !== undefined) this.update({ connectorEditRevision: model.revision });
+  }
+
   public applyRepairResult(result: {
     readonly handle: DocumentHandle;
     readonly parentRevision: number;
@@ -2433,9 +2729,34 @@ export class WorkspaceStore {
     this.currentAnalysisToken = undefined;
     this.currentRepairToken = undefined;
 
-    const restoredPart = result.parts.find((part) => part.partId === result.partId);
+    /*
+     * THE ACTIVE PART MUST BE A PART OF THE DOCUMENT NOW ON SCREEN (RC2.1).
+     *
+     * An undo can change WHICH parts exist: undoing a split removes Piece A and Piece B and puts the
+     * original part back. The selection used to be left as it was, pointing at a part the restored
+     * document does not contain, and every consumer of the active part then asked the worker for a name
+     * that no longer resolved (export refused it, the Split workspace found nothing to cut).
+     *
+     * So: a selection that still exists is KEPT (undoing a repair of one part must not move the user
+     * off the part they chose), otherwise the part the undone change was made to, otherwise the first
+     * part in document order, which is also what an import selects.
+     */
+    const has = (id: string | undefined): id is string =>
+      id !== undefined && result.parts.some((part) => part.partId === id);
+    const activePartId = has(this.state.activePartId)
+      ? this.state.activePartId
+      : has(result.partId)
+        ? result.partId
+        : result.parts[0]?.partId;
+    const activeDescriptor = result.parts.find((part) => part.partId === activePartId);
 
+    const restoredAssembly = this.assemblyHistory.get(
+      this.assemblyKey(result.handle.documentId, result.parts),
+    );
     this.update({
+      assembly: restoredAssembly
+        ? { ...restoredAssembly, revision: result.handle.revision }
+        : undefined,
       model: {
         ...model,
         handle: result.handle,
@@ -2449,11 +2770,12 @@ export class WorkspaceStore {
         residentBytes: result.residentBytes,
         revision,
       },
+      activePartId,
       analysis: {
         ...EMPTY_ANALYSIS,
         state: AnalysisState.Idle,
         handle: result.handle,
-        partId: this.state.activePartId,
+        partId: activePartId,
       },
       /*
        * A NEW REVISION GETS A NEW VERDICT, OR NONE AT ALL. See
@@ -2462,8 +2784,8 @@ export class WorkspaceStore {
       selfIntersection: {
         ...EMPTY_SELF_INTERSECTION,
         handle: result.handle,
-        partId: this.state.activePartId,
-        band: bandForFaceCount(restoredPart?.triangleCount ?? result.triangleCount),
+        partId: activePartId,
+        band: bandForFaceCount(activeDescriptor?.triangleCount ?? result.triangleCount),
       },
       overlays: OVERLAYS_HIDDEN,
       /*
@@ -2475,12 +2797,12 @@ export class WorkspaceStore {
       holeFill: {
         ...EMPTY_HOLE_FILL,
         handle: result.handle,
-        partId: this.state.activePartId,
+        partId: activePartId,
       },
       repair: {
         ...EMPTY_REPAIR,
         handle: result.handle,
-        partId: this.state.activePartId,
+        partId: activePartId,
         selection: this.state.repair.selection,
         fillOpenings: this.state.repair.fillOpenings,
       },
@@ -3166,6 +3488,7 @@ export class WorkspaceStore {
    * install anything afterwards.
    */
   public loseGeometrySession(reason: string): void {
+    this.splitAdoptionStage = undefined;
     this.currentImportToken = undefined;
     this.currentExportToken = undefined;
     this.currentAnalysisToken = undefined;
@@ -3241,8 +3564,47 @@ export class WorkspaceStore {
         ...CONVERSION_CLOSED,
         state: ConversionState.Reviewing,
         target: preferredTarget,
+        // Seeded from the shared interpretation of THIS document, if the user
+        // has made one: the Convert unit is the same statement, not a second one.
+        unitAssertion: this.interpretedUnitOfLoadedModel(),
       },
     });
+  }
+
+  /** The user's chosen reading for the loaded document, when it is a unitless one. */
+  private interpretedUnitOfLoadedModel(): string | undefined {
+    const { model, unitInterpretation } = this.state;
+    if (model === undefined || model.source.unit !== undefined) return undefined;
+    return unitInterpretation?.documentId === model.handle.documentId
+      ? unitInterpretation.unit
+      : undefined;
+  }
+
+  /**
+   * Chooses how a unitless document's dimensions are READ. Metadata only: no
+   * revision, no geometry, no undo entry. Refused (returns false) for a document
+   * whose file states its own unit, or when there is no document.
+   */
+  public setUnitInterpretation(unit: LengthUnit | undefined): boolean {
+    const { model, conversion } = this.state;
+    if (model === undefined || model.source.unit !== undefined) return false;
+    this.update({
+      unitInterpretation:
+        unit === undefined ? undefined : { documentId: model.handle.documentId, unit },
+      // An open Convert session states the same thing, unless an export is running.
+      ...(conversion.state === ConversionState.Closed ||
+      conversion.state === ConversionState.Working
+        ? {}
+        : {
+            conversion: {
+              ...conversion,
+              unitAssertion: unit,
+              failure: undefined,
+              result: undefined,
+            },
+          }),
+    });
+    return true;
   }
 
   public closeConversion(): void {
@@ -3278,7 +3640,17 @@ export class WorkspaceStore {
   public setConversionUnit(unit: string | undefined): void {
     const previous = this.state.conversion;
     if (previous.state === ConversionState.Working) return;
+    // The statement is about the MODEL, so it is also the shared interpretation
+    // (for a unitless document) that Split and Texture read.
+    const { model } = this.state;
+    const interpretation: UnitInterpretation | undefined =
+      model === undefined || model.source.unit !== undefined
+        ? this.state.unitInterpretation
+        : unit !== undefined && isLengthUnit(unit)
+          ? { documentId: model.handle.documentId, unit }
+          : undefined;
     this.update({
+      unitInterpretation: interpretation,
       conversion: {
         ...previous,
         state: ConversionState.Reviewing,
@@ -3446,6 +3818,7 @@ export class WorkspaceStore {
 
   private update(patch: Partial<WorkspaceState>): void {
     this.state = { ...this.state, ...patch };
+    if (this.splitAdoptionStage) return;
     for (const listener of [...this.listeners]) listener();
   }
 }

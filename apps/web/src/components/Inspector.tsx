@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useWorkspaceState } from '../state/store-context';
 import { WorkflowId } from '../state/workflows';
 import { ExportSummary } from './ExportSummary';
@@ -34,6 +34,19 @@ export function Inspector({ inert = false }: { readonly inert?: boolean }): Reac
   const collapsed = layout.inspectorCollapsed;
   const panelRef = useRef<HTMLElement>(null);
   const modal = layout.modalDrawer === 'inspector';
+
+  // A NEW DOCUMENT STARTS A NEW SESSION: the panel returns to its collapsed
+  // default. Within one document the user's own open/close is respected, and
+  // nothing else (a load, a selection, a repair, a workspace change) opens it.
+  const documentId = model?.handle.documentId;
+  const lastDocumentId = useRef<string | undefined>(undefined);
+  const { setInspectorCollapsed } = layout;
+  useEffect(() => {
+    if (documentId !== undefined && documentId !== lastDocumentId.current) {
+      if (lastDocumentId.current !== undefined) setInspectorCollapsed(true);
+      lastDocumentId.current = documentId;
+    }
+  }, [documentId, setInspectorCollapsed]);
 
   return (
     <>
@@ -138,6 +151,8 @@ export function Inspector({ inert = false }: { readonly inert?: boolean }): Reac
             type="button"
             className="icon-btn inspector-rail__expand"
             aria-label="Show inspector"
+            aria-expanded={false}
+            aria-controls="inspector"
             data-tooltip="Show inspector"
             data-tooltip-side="left"
             onClick={() => {

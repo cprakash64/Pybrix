@@ -29,6 +29,7 @@ import {
   threeMfDanglingComponent,
 } from './format-fixtures';
 import { binaryStl } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * OBJ AND 3MF IMPORT, IN A REAL BROWSER.
@@ -106,6 +107,7 @@ test('an OBJ with several objects becomes several parts', async ({ page }) => {
   const fixture = objMultiPart(3);
   await openFile(page, 'assembly.obj', fixture.bytes);
 
+  await openInspector(page);
   await expect(page.getByTestId('part-selector')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('fact-parts')).toHaveText('3');
   await expect(page.getByTestId('part-option-part-1')).toContainText('Part 1');
@@ -125,14 +127,14 @@ test('refuses an OBJ polygon with an explanation, and keeps the workspace empty'
   await expect.poll(async () => statusText(page), { timeout: 30_000 }).toMatch(/triangle faces/i);
   // It says what it will not do, and why.
   expect(await statusText(page)).toMatch(/invent/i);
-  await expect(page.getByTestId('model-empty')).toBeVisible();
+  await expect(page.getByTestId('model-empty')).toBeAttached();
 });
 
 test('refuses an OBJ with an impossible index rather than clamping it', async ({ page }) => {
   await openFile(page, 'bad.obj', objWithBadIndex());
 
   await expect.poll(async () => statusText(page), { timeout: 30_000 }).toMatch(/does not exist/i);
-  await expect(page.getByTestId('model-empty')).toBeVisible();
+  await expect(page.getByTestId('model-empty')).toBeAttached();
 });
 
 test('names a material library it did not open, and makes no request for it', async ({ page }) => {
@@ -171,6 +173,7 @@ test('imports a 3MF and preserves its unit', async ({ page }) => {
 test('a 3MF with two build items becomes two placed parts', async ({ page }) => {
   await openFile(page, 'two.3mf', threeMfTwoParts());
 
+  await openInspector(page);
   await expect(page.getByTestId('part-selector')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('part-option-part-1')).toContainText('Left');
   await expect(page.getByTestId('part-option-part-2')).toContainText('Right');
@@ -265,7 +268,7 @@ test.describe('hostile files are refused in the browser, exactly as in the reade
 
       await expect.poll(async () => statusText(page), { timeout: 60_000 }).toMatch(expected);
       // Nothing was committed, and nothing off-origin was requested.
-      await expect(page.getByTestId('model-empty')).toBeVisible();
+      await expect(page.getByTestId('model-empty')).toBeAttached();
       expect(requests.filter((url) => !isAppOrigin(url))).toEqual([]);
     });
   }
@@ -279,6 +282,7 @@ test.describe('untrusted names render as text, never as markup', () => {
     test(`escapes ${label}`, async ({ page }) => {
       await openFile(page, name, build());
       // Two parts, so the selector renders and the name is actually displayed.
+      await openInspector(page);
       await expect(page.getByTestId('part-selector')).toBeVisible({ timeout: 30_000 });
 
       // The name is on screen as literal text...
@@ -457,7 +461,7 @@ test.describe('a valid file CAD Fixer cannot read is not called a broken one', (
       .poll(async () => statusText(page), { timeout: 60_000 })
       .toMatch(/Object 17, component 2 refers to missing object 42/i);
 
-    await expect(page.getByTestId('model-empty')).toBeVisible();
+    await expect(page.getByTestId('model-empty')).toBeAttached();
   });
 });
 
@@ -571,5 +575,5 @@ test('6E-A4: a 3MF entry declared past the per-entry ceiling is refused by the s
     /per-entry expansion limit is 320 MiB/i,
     { timeout: 60_000 },
   );
-  await expect(page.getByTestId('model-empty')).toBeVisible();
+  await expect(page.getByTestId('model-empty')).toBeAttached();
 });

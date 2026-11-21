@@ -1,5 +1,8 @@
+import { recoverSplitCommit } from './split-commit-transaction';
 import {
   GeometryCoordinator,
+  splitTransactionId,
+  type SplitTransactionStatus,
   toTransferables,
   type DiagnosticSink,
   type MessageEndpoint,
@@ -33,10 +36,16 @@ import {
   type SendForExportResult,
   type StlExportResult,
   type SplitCandidateHandle,
-  type SplitRequest,
+  type ProductSplitRequest,
   type SplitCreateResult,
   type SplitCommitResult,
   type SplitDiscardResult,
+  type JointCommitResult,
+  type JointDiscardResult,
+  type JointEditCandidateHandle,
+  type JointEditRequest,
+  type JointListResult,
+  type JointProposeResult,
   type SurfaceTextureRequest,
   type TextureCreateResult,
   type TextureLayoutResult,
@@ -125,15 +134,113 @@ export interface RepairCandidateOptions {
 
 export class GeometryClient {
   private readonly worker: Worker;
-  private readonly coordinator: GeometryCoordinator;
+  private coordinator: GeometryCoordinator;
+  private readonly onDiagnostic: DiagnosticSink;
   private readonly onWorkerLost: ((reason: string) => void) | undefined;
   private readonly session: number;
   private lost = false;
+  private readonly splitAttempts = new Map<string, number>();
+  private readonly completedSplitReceipts = new Set<string>();
+  private readonly splitRecovery = new Map<
+    string,
+    {
+      source: DocumentHandle;
+      candidateId: string;
+      attempt: number;
+      adopted: boolean;
+      onRecovered?: (status: SplitTransactionStatus) => void;
+      rollback?: (() => void) & { publish?: () => void };
+    }
+  >();
+  public unresolvedSplitCommits(): readonly {
+    transactionId: string;
+    source: DocumentHandle;
+    adopted: boolean;
+  }[] {
+    return [...this.splitRecovery].map(([transactionId, r]) => ({
+      transactionId,
+      source: { ...r.source },
+      adopted: r.adopted,
+    }));
+  }
+  public trackSplitAdoption(
+    transactionId: string,
+    rollback: (() => void) & { publish?: () => void },
+    adopted: boolean,
+  ): void {
+    const r = this.splitRecovery.get(transactionId);
+    if (r) {
+      r.rollback = rollback;
+      r.adopted = adopted;
+    }
+  }
+  public confirmSplitReceipt(transactionId: string, hasWorkerReceipt = true): void {
+    if (typeof transactionId !== 'string') return;
+    const reservation = this.splitRecovery.get(transactionId);
+    if (
+      !hasWorkerReceipt &&
+      reservation &&
+      this.splitAttempts.get(reservation.candidateId) === reservation.attempt
+    )
+      this.splitAttempts.set(reservation.candidateId, reservation.attempt - 1);
+    this.splitRecovery.delete(transactionId);
+    if (hasWorkerReceipt) this.completedSplitReceipts.add(transactionId);
+  }
+  public async reconcileSplitCommit(transactionId: string): Promise<SplitTransactionStatus> {
+    const r = this.splitRecovery.get(transactionId);
+    if (!r) throw modelUnavailable('Unknown local split recovery authority.');
+    const result = await recoverSplitCommit(this, transactionId, r.adopted);
+    if (result.state === 'ABORTED' || result.state === 'UNKNOWN') r.rollback?.();
+    if (result.state === 'FINALIZED') {
+      if (
+        !r.adopted ||
+        result.handle?.documentId !== r.source.documentId ||
+        result.handle.revision !== r.source.revision + 1
+      )
+        throw modelUnavailable('Finalized split has no matching prepared local adoption.');
+      r.rollback?.publish?.();
+    }
+    try {
+      r.onRecovered?.(result);
+    } finally {
+      this.confirmSplitReceipt(transactionId, result.state !== 'UNKNOWN');
+    }
+    return result;
+  }
+
+  public onSplitCommitRecovered(
+    transactionId: string,
+    handler: (status: SplitTransactionStatus) => void,
+  ): void {
+    const r = this.splitRecovery.get(transactionId);
+    if (!r) throw modelUnavailable('Unknown local split recovery authority.');
+    r.onRecovered = handler;
+  }
+  /** Reattach a new coordinator to the SAME live worker, preserving its runtime
+   * namespace and transaction journal. This is not worker restart/persistence. */
+  public async reconnectSplitTransactions(): Promise<readonly SplitTransactionStatus[]> {
+    if (this.lost) throw modelUnavailable('The worker ended. Reload and re-import the model.');
+    const ids = [...this.splitRecovery.keys()];
+    this.coordinator.dispose(false);
+    this.coordinator = new GeometryCoordinator(createWorkerEndpoint(this.worker), {
+      onDiagnostic: this.onDiagnostic,
+    });
+    const outcomes: SplitTransactionStatus[] = [];
+    for (const id of ids) {
+      outcomes.push(
+        this.splitRecovery.has(id)
+          ? await this.reconcileSplitCommit(id)
+          : await this.splitCommitStatus(id).promise,
+      );
+    }
+    return outcomes;
+  }
 
   public constructor(options: GeometryClientOptions) {
     this.session = nextSessionId;
     nextSessionId += 1;
     this.onWorkerLost = options.onWorkerLost;
+    this.onDiagnostic = options.onDiagnostic;
 
     this.worker =
       options.createWorker?.() ??
@@ -178,6 +285,9 @@ export class GeometryClient {
     this.lost = true;
 
     this.coordinator.failAllPending(modelUnavailable(reason));
+    this.splitRecovery.clear();
+    this.completedSplitReceipts.clear();
+    this.splitAttempts.clear();
     this.onWorkerLost?.(reason);
   }
 
@@ -509,30 +619,145 @@ export class GeometryClient {
   public createSplit(
     source: DocumentHandle,
     partId: string,
-    request: SplitRequest,
+    request: ProductSplitRequest,
     onProgress?: (update: ProgressUpdate) => void,
   ): OperationHandle<SplitCreateResult> {
     return this.coordinator.dispatch(
       'split/create',
       { source, partId, request },
-      onProgress === undefined ? {} : { onProgress },
+      { interruptible: true, ...(onProgress === undefined ? {} : { onProgress }) },
     );
   }
 
+  /** Reserve caller-known recovery identity BEFORE transport submission. A
+   * synchronous transport error can therefore never erase the only identity. */
+  public reserveSplitCommit(candidate: SplitCandidateHandle, source: DocumentHandle): string {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    const existing = [...this.splitRecovery].find(
+      ([, r]) =>
+        r.candidateId === candidate.candidateId &&
+        r.source.documentId === source.documentId &&
+        r.source.revision === source.revision,
+    );
+    if (existing) return existing[0];
+    if (this.splitRecovery.size >= 32)
+      throw modelUnavailable('Resolve pending split transactions before editing.');
+    const attempt = (this.splitAttempts.get(candidate.candidateId) ?? 0) + 1,
+      transactionId = splitTransactionId(candidate, attempt);
+    this.splitRecovery.set(transactionId, {
+      source: { ...source },
+      candidateId: candidate.candidateId,
+      attempt,
+      adopted: false,
+    });
+    return transactionId;
+  }
   public commitSplit(
     candidate: SplitCandidateHandle,
     expectedSource: DocumentHandle,
     expectedPart: string,
-  ): OperationHandle<SplitCommitResult> {
-    return this.coordinator.dispatch(
+    reservedTransactionId?: string,
+  ): OperationHandle<SplitCommitResult> & { readonly transactionId: string } {
+    const transactionId =
+        reservedTransactionId ?? this.reserveSplitCommit(candidate, expectedSource),
+      reservation = this.splitRecovery.get(transactionId);
+    if (!reservation) throw modelUnavailable('Split transaction reservation does not match.');
+    if (
+      reservation.candidateId !== candidate.candidateId ||
+      reservation.source.documentId !== expectedSource.documentId ||
+      reservation.source.revision !== expectedSource.revision
+    )
+      throw modelUnavailable('Split transaction reservation does not match.');
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    // Caller-confirmed terminal metadata only; never release an uncertain ACK.
+    for (const transactionId of this.completedSplitReceipts) {
+      try {
+        void this.coordinator
+          .dispatch('split/commit-release', { transactionId }, {})
+          .promise.catch(() => undefined);
+      } catch {
+        /* Retained worker receipt is safe; it remains bounded. */
+      }
+      this.completedSplitReceipts.delete(transactionId);
+    }
+    const attempt = reservation.attempt;
+    // The reservation survives even a throw after transport acceptance.
+    const operation = this.coordinator.dispatch(
       'split/commit',
-      { candidate, expectedSource, expectedPart },
+      { candidate, expectedSource, expectedPart, transactionId },
       {},
     );
+    this.splitAttempts.set(candidate.candidateId, attempt);
+    if (this.splitAttempts.size > 256)
+      this.splitAttempts.delete(this.splitAttempts.keys().next().value ?? '');
+    return { ...operation, transactionId };
+  }
+
+  public splitCommitStatus(transactionId: string): OperationHandle<SplitTransactionStatus> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    return this.coordinator.dispatch('split/commit-status', { transactionId }, {});
+  }
+  public ackSplitCommit(transactionId: string): OperationHandle<SplitTransactionStatus> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    return this.coordinator.dispatch('split/commit-ack', { transactionId }, {});
+  }
+  public abortSplitCommit(transactionId: string): OperationHandle<SplitTransactionStatus> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    return this.coordinator.dispatch('split/commit-abort', { transactionId }, {});
   }
 
   public discardSplit(candidate: SplitCandidateHandle): OperationHandle<SplitDiscardResult> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
     return this.coordinator.dispatch('split/discard', { candidate }, {});
+  }
+
+  /** The connector joints of a document, as descriptors. A READ; the document does not change. */
+  public listJoints(source: DocumentHandle): OperationHandle<JointListResult> {
+    return this.coordinator.dispatch('joint/list', { source }, {});
+  }
+
+  /**
+   * Builds a CANDIDATE edit of one joint's connectors. Applies nothing: the page receives a disposable preview and a candidate handle,
+   * and the geometry stays in the worker.
+   */
+  public proposeJointEdit(
+    source: DocumentHandle,
+    jointId: string,
+    expectedSpecDigest: string,
+    edit: JointEditRequest,
+    onProgress?: (update: ProgressUpdate) => void,
+  ): OperationHandle<JointProposeResult> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    return this.coordinator.dispatch(
+      'joint/propose',
+      { source, jointId, expectedSpecDigest, edit },
+      { interruptible: true, ...(onProgress === undefined ? {} : { onProgress }) },
+    );
+  }
+
+  /** Applies one stored candidate. THE ONLY JOINT MUTATION: identifiers cross, and no geometry. */
+  public commitJointEdit(request: {
+    readonly candidate: JointEditCandidateHandle;
+    readonly expectedSource: DocumentHandle;
+    readonly expectedJointId: string;
+    readonly expectedSpecDigest: string;
+  }): OperationHandle<JointCommitResult> {
+    if (this.lost)
+      throw modelUnavailable('The geometry worker ended. Reopen the model before editing.');
+    return this.coordinator.dispatch('joint/commit', request, {});
+  }
+
+  public discardJointEdit(
+    candidate: JointEditCandidateHandle,
+  ): OperationHandle<JointDiscardResult> {
+    return this.coordinator.dispatch('joint/discard', { candidate }, {});
   }
 
   public createSurfaceTexture(
@@ -715,6 +940,10 @@ export class GeometryClient {
   }
 
   public dispose(): void {
+    this.lost = true;
+    this.splitRecovery.clear();
+    this.completedSplitReceipts.clear();
+    this.splitAttempts.clear();
     this.coordinator.dispose();
   }
 }

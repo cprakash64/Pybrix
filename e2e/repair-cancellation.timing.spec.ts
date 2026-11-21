@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { repairHeavyStl } from './stl-fixtures';
 
@@ -76,6 +77,7 @@ async function importHeavy(page: Page, side: number): Promise<string> {
   await page.goto('/');
   const heavy = repairHeavyStl(side);
   await openFile(page, 'heavy.stl', heavy.bytes);
+  await revealControl(page, page.getByTestId('repair-operations'));
   await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 180_000 });
   return (await page.getByTestId('fact-triangles').textContent()) ?? '';
 }
@@ -137,7 +139,8 @@ test('cancelling a heavy repair stops the work early and leaves the model untouc
 
   const trianglesBefore = await importHeavy(page, HEAVY_SIDE);
   const startFull = Date.now();
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('preview-banner')).toBeVisible({ timeout: 180_000 });
   const tFull = Date.now() - startFull;
 
@@ -151,7 +154,8 @@ test('cancelling a heavy repair stops the work early and leaves the model untouc
   await armCancelWhen(page, { phase: 'Selecting|Solving|Building' });
 
   const startCancel = Date.now();
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('repair-cancelled')).toBeVisible({ timeout: 180_000 });
   const tCancel = Date.now() - startCancel;
   const armed = await readArmed(page);
@@ -200,7 +204,8 @@ test('cancelling a heavy repair stops the work early and leaves the model untouc
 
   // RETRY SUCCEEDS: cancellation left the engine able to repair again.
   await expect(page.getByTestId('preview-repair')).toBeEnabled();
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('preview-banner')).toBeVisible({ timeout: 180_000 });
 
   process.stdout.write(
@@ -236,7 +241,8 @@ test('cancelling DURING candidate validation unwinds it and publishes nothing', 
 
   // Warm the topology cache with a completed repair, then discard it, so the
   // measured run spends its time in the pipeline and its validation.
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('preview-banner')).toBeVisible({ timeout: 180_000 });
   await page.getByTestId('discard-preview').click();
   await expect(page.getByTestId('preview-banner')).toHaveCount(0);
@@ -244,7 +250,8 @@ test('cancelling DURING candidate validation unwinds it and publishes nothing', 
   await armCancelWhen(page, { phase: 'revalidating' });
 
   const requestedAt = Date.now();
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('repair-cancelled')).toBeVisible({ timeout: 180_000 });
   const acknowledgeLatency = Date.now() - requestedAt;
   const armed = await readArmed(page);
@@ -265,7 +272,8 @@ test('cancelling DURING candidate validation unwinds it and publishes nothing', 
 
   // Retry succeeds.
   await expect(page.getByTestId('preview-repair')).toBeEnabled();
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('preview-banner')).toBeVisible({ timeout: 180_000 });
 
   process.stdout.write(

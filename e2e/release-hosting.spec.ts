@@ -1,6 +1,8 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page, type Response } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
 import { APP_BASE_URL } from './app-origin';
+import { openInspector } from './inspector';
 
 /**
  * BQ23–BQ29, BQ43–BQ54 — THE HOSTING CONTRACT, MEASURED RATHER THAN DECLARED.
@@ -79,6 +81,7 @@ test('BQ26, BQ27, BQ44-BQ46: every asset class loads with the right type under C
   // Import, then run the self-intersection check: that is what pulls the worker
   // chunks and the Geogram WASM over the wire under these headers.
   await openFile(page, 'small.stl', binaryStl(500).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
   const find = (pattern: RegExp): { url: string; type: string; status: number } | undefined =>
@@ -124,8 +127,10 @@ test('BQ29, BQ54: the whole flow is same-origin and sends no geometry anywhere',
   const origin = new URL(response?.url() ?? APP_BASE_URL).origin;
 
   await openFile(page, 'small.stl', binaryStl(700).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   const pending = page.waitForEvent('download', { timeout: 60_000 });
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await pending;
 
@@ -161,9 +166,12 @@ test('BQ53: the Geogram kernel is not fetched until a check needs it', async ({ 
    */
   expect(wasmRequests, 'no WASM may be fetched before a model is even loaded').toEqual([]);
 
-  await openFile(page, 'small.stl', binaryStl(500).bytes);
+  await openFile(page, 'explicit-check.stl', binaryStl(25_001).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   // Import and topology are kernel-free too: topology is our own exact-coordinate
   // engine, not the WASM narrowphase.
   expect(wasmRequests).toEqual([]);
+  await page.getByTestId('run-self-intersection').click();
+  await expect.poll(() => wasmRequests.length).toBe(1);
 });

@@ -1,11 +1,16 @@
 import {
   distinctMeshes,
+  placementReversesOrientation,
   triangleCount,
   type CanonicalMesh,
   type GeometryDocument,
 } from '@cadfixer/mesh-core';
 import { ExportRefusal, exportBlocked, exportInternal } from './export-errors';
-import { planThreeMfObjects, type ExportDocumentSnapshot } from './export-contract';
+import {
+  mirroredObjectPlacement,
+  planThreeMfObjects,
+  type ExportDocumentSnapshot,
+} from './export-contract';
 import { xmlSafeText } from '../threemf/xml-scan';
 
 /**
@@ -305,6 +310,10 @@ export function validate3mfRoundTrip(
     const mesh = snapshot.meshes[part.meshResourceIndex];
     if (mesh === undefined) fail('missing mesh resource', { partIndex: index });
 
+    // A placement that mirrors the part is written as the mesh mirrored in x, its triangles turned, and the placement composed with
+    // that mirror (`mirroredObjectPlacement`): the expected geometry is built the same way, from the same one function.
+    const mirrored = placementReversesOrientation(part.transform);
+    const expectedPlacement = mirrored ? mirroredObjectPlacement(part.transform) : part.transform;
     if (actual.mesh.indices.length !== mesh.indices.length) {
       fail('index count', {
         partIndex: index,
@@ -313,7 +322,9 @@ export function validate3mfRoundTrip(
       });
     }
     for (let at = 0; at < mesh.indices.length; at += 1) {
-      if (actual.mesh.indices[at] !== mesh.indices[at]) {
+      const within = at % 3;
+      const source = mirrored && within !== 0 ? at + (within === 1 ? 1 : -1) : at;
+      if (actual.mesh.indices[at] !== mesh.indices[source]) {
         fail('index', { partIndex: index, at });
       }
     }
@@ -325,22 +336,23 @@ export function validate3mfRoundTrip(
       });
     }
     for (let at = 0; at < mesh.positions.length; at += 1) {
-      if (!Object.is(actual.mesh.positions[at], mesh.positions[at])) {
+      const expected = mirrored && at % 3 === 0 ? -(mesh.positions[at] ?? 0) : mesh.positions[at];
+      if (!Object.is(actual.mesh.positions[at], expected)) {
         fail('coordinate', {
           partIndex: index,
           at,
-          expected: String(mesh.positions[at]),
+          expected: String(expected),
           actual: String(actual.mesh.positions[at]),
         });
       }
     }
 
     for (let at = 0; at < 12; at += 1) {
-      if (!Object.is(actual.transform[at], part.transform[at])) {
+      if (!Object.is(actual.transform[at], expectedPlacement[at])) {
         fail('transform', {
           partIndex: index,
           at,
-          expected: String(part.transform[at]),
+          expected: String(expectedPlacement[at]),
           actual: String(actual.transform[at]),
         });
       }
