@@ -664,7 +664,7 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   per operand became a fraction of that, with the same numbering and the same coordinates (`-0` kept).
   Welding was considered and rejected: it adds topology semantics the ceiling does not need.
 
-## Camera framing invariants (v0.7.1)
+## Camera framing invariants (v0.8.0; written for the unreleased v0.7.1 candidate)
 
 - **A DOCUMENT IS FRAMED ONCE, BY IDENTITY.** `ViewportPanel` keeps the document id the camera was last
   fitted to (`framedDocumentRef`); `setModel(..., { preserveView })` is true only for the SAME document

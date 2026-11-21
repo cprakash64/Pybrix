@@ -1,6 +1,6 @@
 # Pybrix v0.7.1 Technical Preview
 
-**Status:** a candidate; not deployed. The live site is v0.7.0.
+**Status:** never released. This candidate was folded into [v0.8.0](V0_8_0_TECHNICAL_PREVIEW_RELEASE.md), which carries its fix. The live site is v0.7.0.
 
 A defect found in owner acceptance of v0.7.0 is corrected: a second model was not framed from its own
 bounds. This branch does not contain Auto Split (Beta); that work is carried separately.
