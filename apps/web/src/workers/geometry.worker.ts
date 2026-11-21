@@ -27,7 +27,21 @@ import {
   editCommitHandler,
   editDiscardHandler,
 } from './geometry-edit-handlers';
-import { splitCommitHandler, splitCreateHandler, splitDiscardHandler } from './split-handlers';
+import {
+  splitCommitHandler,
+  splitCommitStatusHandler,
+  splitCommitReleaseHandler,
+  splitCommitAckHandler,
+  splitCommitAbortHandler,
+  splitCreateHandler,
+  splitDiscardHandler,
+} from './split-handlers';
+import {
+  jointCommitHandler,
+  jointDiscardHandler,
+  jointListHandler,
+  jointProposeHandler,
+} from './joint-handlers';
 import {
   textureCreateHandler,
   textureLayoutHandler,
@@ -92,7 +106,16 @@ host.register('edit/commit', editCommitHandler);
 host.register('edit/discard', editDiscardHandler);
 host.register('split/create', splitCreateHandler);
 host.register('split/commit', splitCommitHandler);
+host.register('split/commit-status', splitCommitStatusHandler);
+host.register('split/commit-release', splitCommitReleaseHandler);
+host.register('split/commit-ack', splitCommitAckHandler);
+host.register('split/commit-abort', splitCommitAbortHandler);
 host.register('split/discard', splitDiscardHandler);
+// Editing the connectors of an existing joint (Stage EC-3): one read, one candidate builder, ONE mutation and a discard.
+host.register('joint/list', jointListHandler);
+host.register('joint/propose', jointProposeHandler);
+host.register('joint/commit', jointCommitHandler);
+host.register('joint/discard', jointDiscardHandler);
 host.register('texture/create', textureCreateHandler);
 host.register('texture/select', textureSelectHandler);
 host.register('texture/layout', textureLayoutHandler);

@@ -33,7 +33,9 @@ export function ActionFooter({
   testId,
   className,
   children,
+  hidden = false,
 }: {
+  readonly hidden?: boolean;
   readonly testId: string;
   readonly className?: string;
   readonly children: ReactNode;
@@ -42,6 +44,7 @@ export function ActionFooter({
     <div
       className={`convert-footer action-footer${className === undefined ? '' : ` ${className}`}`}
       data-testid={testId}
+      hidden={hidden}
     >
       {children}
     </div>

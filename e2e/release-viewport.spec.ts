@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
 
@@ -65,6 +66,7 @@ for (const dpr of [1, 2, 3] as const) {
     try {
       await page.goto('/');
       await openFile(page, 'small.stl', binaryStl(400).bytes);
+      await revealControl(page, page.getByTestId('issue-list'));
       await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
       const measured = await backingStore(page);
@@ -100,6 +102,7 @@ test('BQ12, BQ13: a 4K-like viewport stays within the ratio ceiling at high DPR'
     try {
       await page.goto('/');
       await openFile(page, 'small.stl', binaryStl(400).bytes);
+      await revealControl(page, page.getByTestId('issue-list'));
       await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
       const measured = await backingStore(page);
@@ -132,6 +135,7 @@ test('BQ14, BQ15, BQ16: 100 resize cycles leave the canvas bounded and aligned',
   try {
     await page.goto('/');
     await openFile(page, 'small.stl', binaryStl(600).bytes);
+    await revealControl(page, page.getByTestId('issue-list'));
     await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
     const sizes: readonly { width: number; height: number }[] = [

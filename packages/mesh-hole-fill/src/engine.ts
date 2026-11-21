@@ -14,7 +14,12 @@ import {
   type VertexIdentityResult,
 } from '@cadfixer/mesh-topology';
 import { assertNever } from '@cadfixer/shared';
-import { FaceBvh, createCounters, faceBoxOf, type BroadphaseBudget } from './bvh';
+import {
+  FaceBvh,
+  createCounters,
+  faceBoxOf,
+  type BroadphaseBudget,
+} from '@cadfixer/mesh-core/spatial';
 import { earClip, EarClipRefusal, projectionAxisFor, type PatchTriangle } from './ear-clip';
 import { assessPlanarity, type LoopPoint } from './planarity';
 import { narrowHoleFillLimits, patchFaceCountFor, type HoleFillLimits } from './limits';

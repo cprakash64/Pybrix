@@ -14,7 +14,10 @@ import {
   textureSettingsProblem,
   type TextureSettings,
 } from './texture-presentation';
+import type { LengthUnit } from '@cadfixer/shared';
 import { useWorkspaceState, useWorkspaceStore } from './store-context';
+import { millimetresToCoordinates } from './unit-interpretation';
+import { useUnitInterpretation } from './use-unit-interpretation';
 import { StatusSeverity, type TextureSelectionState } from './workspace-store';
 import { WorkflowId } from './workflows';
 
@@ -88,14 +91,19 @@ const messageOf = (cause: unknown, fallback: string): string =>
 export function textureRequest(
   selection: TextureSelection,
   settings: TextureSettings,
+  unit?: LengthUnit,
 ): SurfaceTextureRequest {
+  // The panel's sizes are physical (millimetres); the engine works in the
+  // model's coordinate units. A model read as inches has 25.4 mm to a unit.
+  const toCoordinates = (millimetres: number): number =>
+    unit === undefined ? millimetres : millimetresToCoordinates(millimetres, unit);
   return {
     seedTriangle: selection.seedTriangle,
     pattern: settings.pattern,
     mode: settings.mode,
-    featureSize: settings.featureSize,
-    spacing: settings.spacing,
-    heightOrDepth: settings.heightOrDepth,
+    featureSize: toCoordinates(settings.featureSize),
+    spacing: toCoordinates(settings.spacing),
+    heightOrDepth: toCoordinates(settings.heightOrDepth),
     // Dots ignore rotation in the engine; sending 0 keeps the layout key stable.
     rotationDegrees: settings.pattern === 'dots' ? 0 : settings.rotationDegrees,
   };
@@ -107,11 +115,12 @@ export function useTextureWorkflow(): TextureControls {
   const client = useGeometryClient();
   const active = selectedWorkflow === WorkflowId.Texture;
   const part = model?.parts.find((candidate) => candidate.partId === activePartId);
-  const unit = model?.source.unit;
+  const { unit: unitValue } = useUnitInterpretation();
+  const unit: string | undefined = unitValue;
   const available = textureAvailable(unit);
   const session =
     active && model !== undefined && part !== undefined
-      ? `${model.handle.documentId}@${String(model.handle.revision)}/${part.partId}`
+      ? `${model.handle.documentId}@${String(model.handle.revision)}/${part.partId}|${unitValue ?? ''}`
       : '';
 
   const [settings, setSettingsState] = useState<TextureSettings>(DEFAULT_TEXTURE_SETTINGS);
@@ -168,8 +177,8 @@ export function useTextureWorkflow(): TextureControls {
   const settingsProblem = textureSettingsProblem(settings);
 
   const request = useMemo(
-    () => (selection === undefined ? undefined : textureRequest(selection, settings)),
-    [selection, settings],
+    () => (selection === undefined ? undefined : textureRequest(selection, settings, unitValue)),
+    [selection, settings, unitValue],
   );
   const layoutKey =
     request === undefined || !available || settingsProblem !== undefined

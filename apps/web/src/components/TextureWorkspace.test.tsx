@@ -13,7 +13,10 @@ import { ShellLayoutProvider } from './shell/shell-layout';
 import { GeometryClientProvider } from '../runtime/client-context';
 import { GeometryClient } from '../runtime/geometry-client';
 import { WorkspaceProvider } from '../state/store-context';
-import { TextureControlsProvider } from '../state/workflow-controllers';
+import {
+  ConnectorEditControlsProvider,
+  TextureControlsProvider,
+} from '../state/workflow-controllers';
 import { WorkspaceStore } from '../state/workspace-store';
 import { WorkflowId } from '../state/workflows';
 import type { LoadedModel } from '../state/model';
@@ -106,9 +109,11 @@ function mount(configure: (store: WorkspaceStore) => void): WorkspaceStore {
       <GeometryClientProvider client={client}>
         <ShellLayoutProvider>
           <TextureControlsProvider>
-            <TextureWorkspace />
-            <TextureHud />
-            <TextureInspector />
+            <ConnectorEditControlsProvider>
+              <TextureWorkspace />
+              <TextureHud />
+              <TextureInspector />
+            </ConnectorEditControlsProvider>
           </TextureControlsProvider>
         </ShellLayoutProvider>
       </GeometryClientProvider>
@@ -227,15 +232,24 @@ describe('texture source, mapping and parameters', () => {
     expect(screen.getByTestId('texture-generate')).toBeDisabled();
   });
 
-  it('disables texturing for a model that does not state millimetres, and says why', () => {
+  it('disables texturing for a model that states no unit, and asks how to read it', () => {
     mount((store) => {
       select(store, load(store, undefined));
     });
-    expect(screen.getByTestId('texture-unit')).toHaveTextContent('millimetres');
+    expect(screen.getByTestId('texture-unit')).toHaveTextContent('Choose how to read');
     expect(screen.getByTestId('texture-pattern-lines')).toBeDisabled();
     expect(screen.getByTestId('texture-generate')).toBeDisabled();
     // The selection's area is still measured, without an invented unit.
     expect(screen.getByTestId('texture-area')).toHaveTextContent('800 sq. units');
+  });
+
+  it('enables texturing once the user chooses how to read the units', () => {
+    mount((store) => {
+      select(store, load(store, undefined));
+    });
+    fireEvent.click(screen.getByTestId('texture-unit-interpretation-millimeter'));
+    expect(screen.getByTestId('texture-pattern-lines')).toBeEnabled();
+    expect(screen.queryByTestId('texture-unit')).toBeNull();
   });
 
   it('needs a selection before anything can be generated', () => {

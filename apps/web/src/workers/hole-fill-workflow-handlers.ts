@@ -5,7 +5,10 @@ import {
   createIndexArray,
   documentTriangleCount,
   documentVertexCount,
+  jointRetainedBytes,
   meshByteLength,
+  retireDetachedJoints,
+  retiredByInstall,
   triangleCount,
   withPartMesh,
 } from '@cadfixer/mesh-core';
@@ -437,7 +440,12 @@ export function createHoleFillCommitHandler(
     // Rule 11. A returned mesh is not success, however confident its producer is.
     assertMeshStructure(prepared, 'holefill/commit');
 
-    const successor = successorDocument(source, filledPart, prepared);
+    // Retire before reporting (Stage EC-3): the joint over a part whose mesh this fill replaces is retired when the store installs the
+    // document, so what is reported is the document as it will be held.
+    const successor = retireDetachedJoints(
+      successorDocument(source, filledPart, prepared),
+      payload.expectedSource.revision + 1,
+    );
 
     /*
      * ---- EVERYTHING THAT CAN FAIL, BEFORE ANYTHING CHANGES ----
@@ -460,6 +468,13 @@ export function createHoleFillCommitHandler(
       // The mesh's own size. An UPPER BOUND on what this record costs, not a
       // claim about what it adds — see `RepairHistoryEntry.retainedBytes`.
       byteLength: meshByteLength(previousMesh),
+      // A change that retires a joint keeps the document it came from, so Undo can bring the joint back (Stage EC-3).
+      ...(retiredByInstall(source, successor) > 0
+        ? {
+            previousDocument: source,
+            byteLength: meshByteLength(previousMesh) + jointRetainedBytes(source),
+          }
+        : {}),
     };
 
     // Reported BEFORE the swap and worded for what is actually true at this

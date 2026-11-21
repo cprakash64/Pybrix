@@ -219,8 +219,9 @@ test('E: a stated unit labels the 3MF and never moves a coordinate', async ({ pa
   expect(artifact.unit).toBe('inch');
   // The numbers are the numbers: inch labels them, it does not scale them.
   expect(distinct(artifact.objects[0]?.vertices ?? [])).toEqual(distinct(CORNERS));
-  // And the model itself still states no unit.
-  await expect(page.getByTestId('fact-units')).toHaveText('Unspecified by STL');
+  // The model still states no unit: the panel shows the user's own reading,
+  // labelled as theirs, and the exported coordinates above are unchanged.
+  await expect(page.getByTestId('fact-units')).toHaveText('Inches (your choice)');
 
   // A NEW FILE STARTS WITH NO UNIT: the statement was about the previous model.
   await openModel(page, 'other.stl', ASYMMETRIC);

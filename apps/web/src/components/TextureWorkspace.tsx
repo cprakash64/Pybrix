@@ -22,6 +22,9 @@ import {
   WorkspaceOutcome,
   useRevealOnMount,
 } from './shell/action-footer';
+import { WorkflowId } from '../state/workflows';
+import { ConnectorEditorSlot } from './ConnectorEditor';
+import { UnitInterpretationPrompt } from './UnitInterpretationPrompt';
 import { Icon } from './shell/Icon';
 import { NumberField } from './shell/number-field';
 import { PanelSection, SegmentedControl, type SegmentedOption } from './shell/primitives';
@@ -60,6 +63,10 @@ export function TextureWorkspace(): ReactNode {
                 {TEXTURE_COPY.needsMillimetres}
               </p>
             )}
+            <UnitInterpretationPrompt
+              reason="Texture sizes are physical, so Pybrix needs to know what this model’s numbers mean."
+              testId="texture-unit-interpretation"
+            />
             <SourceSection texture={texture} />
             <MappingSection texture={texture} />
             <ParametersSection texture={texture} />
@@ -67,6 +74,7 @@ export function TextureWorkspace(): ReactNode {
             {texture.appliedRecordId === undefined ? null : <AppliedSection texture={texture} />}
           </>
         )}
+        <ConnectorEditorSlot workflow={WorkflowId.Texture} />
         <WorkspaceOutcome revealKey={texture.error}>
           {texture.error === undefined ? null : (
             <OutcomeAlert testId="texture-error">

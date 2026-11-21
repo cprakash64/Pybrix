@@ -26,17 +26,21 @@ export function SplitHud(): ReactNode {
       aria-label="Active cut"
       data-testid="split-hud"
     >
-      <div className="split-hud__lines">
-        <p className="split-hud__cut" data-testid="split-hud-cut">
-          <span className="split-hud__name">Cut</span>{' '}
-          {describeCut(split.plane, split.offset, split.unit)}
-        </p>
-        <p className="split-hud__detail" data-testid="split-hud-detail">
-          {section !== undefined && split.phase !== SplitPhase.Computing
-            ? describeSection(section, split.unit, split.preview === undefined)
-            : SPLIT_COPY.hintDrag}
-        </p>
-      </div>
+      <details className="split-hud__disclosure">
+        <summary tabIndex={0}>{showingPieces ? 'Cut details' : 'Cut plane'}</summary>
+        <div className="split-hud__lines">
+          <p className="split-hud__cut" data-testid="split-hud-cut">
+            <span className="split-hud__name">Cut</span>{' '}
+            {describeCut(split.plane, split.offset, split.unit)}
+          </p>
+          <p className="split-hud__detail" data-testid="split-hud-detail">
+            {section !== undefined && split.phase !== SplitPhase.Computing
+              ? describeSection(section, split.unit, split.preview === undefined)
+              : SPLIT_COPY.hintDrag}
+          </p>
+        </div>
+      </details>
+      {!showingPieces ? <p className="split-hud__detail">{SPLIT_COPY.hintDrag}</p> : null}
       {showingPieces ? (
         <p className="split-hud__legend">
           <span className="piece-swatch piece-swatch--a" aria-hidden="true" />

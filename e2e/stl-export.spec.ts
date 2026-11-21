@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl } from './stl-fixtures';
 import { isAppOrigin } from './app-origin';
+import { openInspector } from './inspector';
 
 /**
  * STL export, end to end.
@@ -35,6 +36,7 @@ test('exports a binary STL of exactly the right size', async ({ page }) => {
   await loadModel(page, triangles);
 
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   const saved = await download;
 
@@ -58,6 +60,7 @@ test('exports an ASCII STL that is valid, locale-independent text', async ({ pag
   await loadModel(page, triangles);
 
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-ascii').click();
   const saved = await download;
 
@@ -89,6 +92,7 @@ test('the UI describes what CAD Fixer can now actually write', async ({ page }) 
    */
   // UI-06 moved the exports out of the Model facts into the inspector's own
   // Export section, whose region is "Model export".
+  await openInspector(page);
   const panel = page.getByRole('region', { name: 'Model export' });
   await expect(panel).toContainText('reads STL, OBJ and 3MF, and writes all three');
   await expect(panel).not.toContainText('STL is the only format CAD Fixer can write');
@@ -111,10 +115,12 @@ test('importing and exporting a model sends nothing to the network', async ({ pa
   await loadModel(page, 500);
 
   const binaryDownload = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await binaryDownload;
 
   const asciiDownload = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-ascii').click();
   await asciiDownload;
 
@@ -136,6 +142,7 @@ test('no request ever carries a model payload, even to our own origin', async ({
   await loadModel(page, 300);
 
   const download = page.waitForEvent('download');
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   await download;
 

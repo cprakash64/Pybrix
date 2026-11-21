@@ -1,6 +1,14 @@
 import type { LengthUnit } from '@cadfixer/shared';
-import { triangleCount, vertexCount, type CanonicalMesh } from './mesh';
+import {
+  createIndexArray,
+  createPositionArray,
+  triangleCount,
+  vertexCount,
+  type CanonicalMesh,
+} from './mesh';
+import { placementReversesOrientation } from './placement';
 import type { MeshBounds, Vector3Tuple } from './analysis';
+import type { JointRecord } from './joint';
 
 /**
  * The canonical multi-part geometry document.
@@ -162,6 +170,14 @@ export interface GeometryDocument {
   readonly unit?: LengthUnit;
   /** Ordered. Order is the source's order and is preserved on export. */
   readonly parts: readonly GeometryPart[];
+  /**
+   * The editable connectors this session made (Stage EC-1), or a bounded trail of the ones that stopped being usable.
+   *
+   * SESSION STATE, NOT FILE CONTENT. No reader produces it and no writer reads it: an export carries the pieces as plain
+   * geometry, exactly as before. Whether a record is still usable is DERIVED from the parts (`jointAttachment`), never read
+   * from a flag, because every operation that replaces a part spreads the previous document and would carry a flag along.
+   */
+  readonly joints?: readonly JointRecord[];
 }
 
 /**
@@ -355,6 +371,51 @@ export function applyPartTransform(
     m01 * x + m11 * y + m21 * z + m31,
     m02 * x + m12 * y + m22 * z + m32,
   ];
+}
+
+/**
+ * A mesh as it stands once its placement has been applied: a COPY whose positions are the placed coordinates and whose triangles keep
+ * their outside facing out (Stage C03-D).
+ *
+ * THE PLACEMENT IS APPLIED ONCE, in Float64 by `applyPartTransform`, and narrowed ONCE to the canonical Float32 on assignment — the same
+ * single narrowing every writer performs, so a baked copy and a streamed bake agree bit for bit. A placement that mirrors the part
+ * (`placementReversesOrientation`) also swaps the second and third corner of every triangle; without that a closed solid comes out
+ * inside out, with its normals into the material and a negative volume. Vertices, triangle order and groups are otherwise untouched, so
+ * every face keeps its index and every group range still names exactly its own faces.
+ *
+ * WHAT IT DROPS: stored normals and texture coordinates. A normal is placed by the inverse transpose and a texture coordinate is not
+ * a position; this carries neither, and every consumer of a placed mesh (an STL or OBJ writer) derives or ignores them. Nothing is
+ * stored back: the authoritative mesh is never replaced by this.
+ *
+ * It exists for the operations that hold ONE mesh and cannot stream a bake, notably the active-part STL export. The document writers
+ * bake while writing and never build this: there is no flattened mesh of a whole document anywhere.
+ */
+export function placeMesh(mesh: CanonicalMesh, transform: PartTransform): CanonicalMesh {
+  const positions = createPositionArray(mesh.positions.length);
+  for (let at = 0; at + 2 < mesh.positions.length; at += 3) {
+    const [x, y, z] = applyPartTransform(
+      transform,
+      mesh.positions[at] ?? 0,
+      mesh.positions[at + 1] ?? 0,
+      mesh.positions[at + 2] ?? 0,
+    );
+    positions[at] = x;
+    positions[at + 1] = y;
+    positions[at + 2] = z;
+  }
+  const indices = createIndexArray(mesh.indices.length);
+  const reversed = placementReversesOrientation(transform);
+  for (let at = 0; at + 2 < mesh.indices.length; at += 3) {
+    indices[at] = mesh.indices[at] ?? 0;
+    indices[at + 1] = mesh.indices[at + (reversed ? 2 : 1)] ?? 0;
+    indices[at + 2] = mesh.indices[at + (reversed ? 1 : 2)] ?? 0;
+  }
+  return {
+    positions,
+    indices,
+    ...(mesh.groups === undefined ? {} : { groups: mesh.groups }),
+    metadata: mesh.metadata,
+  };
 }
 
 /**

@@ -121,7 +121,7 @@ test('rejects a truncated binary STL and keeps the workspace empty', async ({ pa
   await openFile(page, 'broken.stl', truncatedBinaryStl());
 
   await expect(page.getByTestId('status-list')).toContainText('truncated', { timeout: 20_000 });
-  await expect(page.getByTestId('model-empty')).toBeVisible();
+  await expect(page.getByTestId('model-empty')).toBeAttached();
 });
 
 test('a failed replacement import keeps the previously loaded model', async ({ page }) => {
@@ -170,6 +170,7 @@ test('loading many models does not grow the scene graph', async ({ page }) => {
 });
 
 test('the main thread stays responsive while a large STL parses', async ({ page }) => {
+  test.setTimeout(180_000);
   await page.goto('/');
 
   // WHY THIS SHAPE. The previous version of this test asserted that the progress

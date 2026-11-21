@@ -40,7 +40,14 @@ export function useModelExport(): ModelExportControls {
        * warning naming what a multi-part document left out, and the panel shows
        * it. Nothing is flattened and nothing is lost silently.
        */
-      if (activePartId === undefined) return;
+      if (activePartId === undefined || !model.parts.some((part) => part.partId === activePartId)) {
+        // Never a silent no-op, and never a request for a part this document does not hold.
+        store.pushStatus(
+          StatusSeverity.Error,
+          'Export failed: there is no selected part to export.',
+        );
+        return;
+      }
 
       sessionRef.current?.cancel();
       const token: ExportToken = store.beginExport(encoding);

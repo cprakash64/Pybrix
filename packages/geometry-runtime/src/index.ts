@@ -26,6 +26,17 @@ export type {
   ModelReleasePayload,
   ModelReleaseResult,
   PartDescriptor,
+  JointDescriptor,
+  JointCutAxes,
+  JointOutline,
+  JointListPayload,
+  JointListResult,
+  JointProposePayload,
+  JointProposeResult,
+  JointCommitPayload,
+  JointCommitResult,
+  JointDiscardPayload,
+  JointDiscardResult,
   PartRenderSnapshot,
   RenderSnapshot,
   RepairCandidatePayload,
@@ -129,6 +140,14 @@ export type { MeshBounds } from '@cadfixer/mesh-core';
  */
 export type { GeometryDocument, GeometryPart, PartId, PartTransform } from '@cadfixer/mesh-core';
 
+export { describeJoints } from './joint-descriptors';
+export { JointEditRefusal, JointEditStore, sameSpec, specFromEdit } from './joint-edits';
+export type {
+  JointEditCandidateHandle,
+  JointEditRequest,
+  JointEditSession,
+  JointEditSummary,
+} from './joint-edits';
 export {
   documentByteLength,
   isDocument,
@@ -222,6 +241,12 @@ export {
 } from './boolean-adapter';
 export type { BooleanBackend, BooleanKind, BooleanResult } from './boolean-adapter';
 export {
+  BOOLEAN_KERNEL_BYTES_PER_TRIANGLE,
+  booleanKernelInputBytes,
+  MAX_BOOLEAN_INPUT_BYTES,
+  MAX_BOOLEAN_TOOL_TRIANGLES,
+} from './boolean-limits';
+export {
   buildSplitCutters,
   identifyCutSurface,
   meshVolume,
@@ -229,11 +254,40 @@ export {
   dovetailFemaleDimensions,
   splitTolerance,
   splitWithConnectors,
+  assertProductConnectorRequest,
+  withStatedUnit,
+  splitSourceReasons,
+  describeSplitSourceRefusal,
+  SPLIT_SOURCE_NOT_CLOSED_SOLID_CODE,
+  SplitSourceReason,
+  SplitStage,
 } from './split-connectors';
-export { SplitCandidateStore } from './split-candidates';
-export type { SplitCandidateHandle, SplitCandidateSummary } from './split-candidates';
+export { SplitCandidateStore, splitTransactionId } from './split-candidates';
+export type {
+  SplitCandidateHandle,
+  SplitCandidateSummary,
+  SplitTransactionStatus,
+} from './split-candidates';
+export type { ConnectorManifest } from './connector-plan';
+export {
+  describeCutAxes,
+  describeCutOutline,
+  jointAuthorityOf,
+  jointSpecDigest,
+  pinCutOf,
+  recordJointFromSplit,
+  pinCutOfJoint,
+  pinCutRetainedBytes,
+  rebuildJointConnectors,
+  siteOnInterface,
+} from './connector-rebuild';
+export type { JointNotRecorded, JointRebuild, JointRecording } from './connector-rebuild';
+export type { PinCut } from './split-connectors';
 export type {
   CutSurfaceSummary,
+  PhysicalPinRequest,
+  ProductConnectorRequest,
+  ProductSplitRequest,
   SplitConnector,
   SplitMetrics,
   SplitPlane,
@@ -309,3 +363,11 @@ export type {
   LocalRepairPlan,
   LocalRepairWorkFigure,
 } from './local-repair';
+
+export {
+  choosePlaneSplitStrategy,
+  splitOpenSurface,
+  OPEN_SPLIT_LIMITS,
+  CUT_NOT_SAFE,
+} from './open-plane-split';
+export type { PlaneSplitCapability } from './open-plane-split';

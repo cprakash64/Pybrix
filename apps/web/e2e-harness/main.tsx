@@ -24,6 +24,8 @@ import { HarnessBar } from './harness-bar';
 import { RepairWorkCeilingProvider } from '../src/state/repair-limits-context';
 import type {
   GeometryEditCandidateHandle,
+  JointDescriptor,
+  JointEditRequest,
   RepairCandidateHandle,
 } from '@cadfixer/geometry-runtime';
 import { objNeedsFileSink } from '@cadfixer/file-formats';
@@ -981,6 +983,20 @@ declare global {
       ): Promise<{ revision: number; recordId: string }>;
       discardTestEdit(candidate: GeometryEditCandidateHandle): Promise<boolean>;
       undoTestEdit(documentId: string, revision: number, recordId: string): Promise<number>;
+      listTestJoints(documentId: string, revision: number): Promise<readonly JointDescriptor[]>;
+      editTestJoint(
+        documentId: string,
+        revision: number,
+        jointId: string,
+        specDigest: string,
+        edit: JointEditRequest,
+      ): Promise<{
+        revision: number;
+        recordId: string;
+        descriptors: readonly JointDescriptor[];
+        residentBytes: number;
+        triangleCount: number;
+      }>;
       beginTestBoolean(
         operation: 'union' | 'difference' | 'intersection',
         segments?: number,
@@ -996,6 +1012,18 @@ declare global {
        * camera cannot isolate. Resolves to the number of selected faces.
        */
       selectTextureSurface(partId: string, triangleIndex: number): Promise<number>;
+      setSplitTransactionFault(
+        fault:
+          | 'delivery'
+          | 'adoption-false'
+          | 'adoption-throw'
+          | 'after-write-throw'
+          | 'ack-delivery'
+          | 'commit-drop'
+          | 'ack-drop',
+      ): void;
+      splitTransactionStates(): Promise<readonly { transactionId: string; state: string }[]>;
+      reconnectSplitTransactions(): Promise<readonly string[]>;
       resetSplitQualification(): void;
       splitQualificationEvents(): readonly HarnessSplitQualificationEvent[];
       /** Stage 6E-A2: which 3MF reader the harness worker's real import uses. */
@@ -1098,6 +1126,46 @@ function harnessWorkCeiling(): number | undefined {
 }
 
 window.cadfixerHarness = {
+  setSplitTransactionFault: (fault): void => {
+    if (
+      fault === 'delivery' ||
+      fault === 'ack-delivery' ||
+      fault === 'commit-drop' ||
+      fault === 'ack-drop'
+    ) {
+      harnessWorker.postMessage({
+        kind: 'harness/split-transaction-fault',
+        operation:
+          fault === 'commit-drop'
+            ? 'split/commit-drop'
+            : fault === 'ack-drop'
+              ? 'split/commit-ack-drop'
+              : fault === 'delivery'
+                ? 'split/commit'
+                : 'split/commit-ack',
+      });
+      return;
+    }
+    const original = store.applySplitResult.bind(store);
+    store.applySplitResult = (...args): boolean => {
+      store.applySplitResult = original;
+      if (fault === 'after-write-throw') original(...args);
+      if (fault === 'adoption-throw' || fault === 'after-write-throw')
+        throw Error('Injected UI split adoption throw');
+      return false;
+    };
+  },
+  splitTransactionStates: async (): Promise<readonly { transactionId: string; state: string }[]> =>
+    Promise.all(
+      geometryClient
+        .unresolvedSplitCommits()
+        .map(async ({ transactionId }): Promise<{ transactionId: string; state: string }> => {
+          const status = await geometryClient.splitCommitStatus(transactionId).promise;
+          return { transactionId, state: status.state };
+        }),
+    ),
+  reconnectSplitTransactions: async (): Promise<readonly string[]> =>
+    (await geometryClient.reconnectSplitTransactions()).map((s) => s.state),
   digest: requestDigest,
   chunkBenchmark,
   beginTestEdit,
@@ -1122,6 +1190,38 @@ window.cadfixerHarness = {
   discardTestEdit: async (candidate): Promise<boolean> => {
     const result = await geometryClient.discardGeometryEdit(candidate).promise;
     return result.released;
+  },
+  listTestJoints: async (documentId, revision): Promise<readonly JointDescriptor[]> =>
+    (await geometryClient.listJoints({ documentId, revision } as never).promise).joints,
+  editTestJoint: async (
+    documentId,
+    revision,
+    jointId,
+    specDigest,
+    edit,
+  ): Promise<{
+    revision: number;
+    recordId: string;
+    descriptors: readonly JointDescriptor[];
+    residentBytes: number;
+    triangleCount: number;
+  }> => {
+    const source = { documentId, revision } as never;
+    const proposed = await geometryClient.proposeJointEdit(source, jointId, specDigest, edit)
+      .promise;
+    const committed = await geometryClient.commitJointEdit({
+      candidate: proposed.candidate,
+      expectedSource: source,
+      expectedJointId: jointId,
+      expectedSpecDigest: specDigest,
+    }).promise;
+    return {
+      revision: committed.handle.revision,
+      recordId: committed.recordId,
+      descriptors: committed.joints,
+      residentBytes: committed.residentBytes,
+      triangleCount: committed.triangleCount,
+    };
   },
   undoTestEdit: async (documentId, revision, recordId): Promise<number> => {
     const result = await geometryClient.undoRepair(

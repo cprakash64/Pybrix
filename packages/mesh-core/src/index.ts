@@ -19,6 +19,7 @@ export type {
 
 export {
   applyPartTransform,
+  placeMesh,
   composePartTransforms,
   DEFAULT_DOCUMENT_LIMITS,
   distinctMeshes,
@@ -42,6 +43,35 @@ export type {
   PartTransform,
   SinglePartDocumentOptions,
 } from './document';
+
+export {
+  attachedJoints,
+  jointAttachment,
+  jointId,
+  JOINT_RETAINED_BYTES_PER_TRIANGLE,
+  jointRetainedBytes,
+  JointRetirement,
+  liveJoints,
+  MAX_JOINT_RETAINED_BYTES,
+  MAX_PINS_PER_JOINT,
+  MAX_RETIRED_JOINT_DESCRIPTORS,
+  retireDetachedJoints,
+  retiredByInstall,
+  retiredJoints,
+} from './joint';
+export type {
+  ConnectorJoint,
+  JointAttachment,
+  JointConnectorSpec,
+  JointFrame,
+  JointId,
+  JointInterfaceAuthority,
+  JointPin,
+  JointRecord,
+  JointSide,
+  JointSite,
+  RetiredJoint,
+} from './joint';
 
 export {
   assertGeometryDocument,
@@ -71,6 +101,16 @@ export {
   UNSHARED_IMPORT_BYTES_PER_TRIANGLE,
 } from './import-cost';
 export type { ImportGeometryCost } from './import-cost';
+export { isWithinSplitTriangleCeiling, MAX_SUPPORTED_SPLIT_TRIANGLES } from './split-limits';
+export {
+  classifyPlacement,
+  IDENTITY_PLACEMENT,
+  PLACEMENT_CLASSIFICATION_TOLERANCE,
+  placementLinearDeterminant,
+  PlacementRefusal,
+  placementReversesOrientation,
+} from './placement';
+export type { PlacementClass } from './placement';
 export type { DrawableTriangles } from './analysis';
 export type { MeshBounds, Vector3Tuple } from './analysis';
 

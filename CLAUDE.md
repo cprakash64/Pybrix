@@ -324,7 +324,8 @@ believing it.
   in world space are not self-intersecting, and nothing checks whether they do.
   Never flatten a document for the diagnostic.
 - **STL export writes ONE part and says what it left out.** STL holds one
-  object. The panel states this before the click. Never flatten silently.
+  object. The panel states this before the click. Never flatten silently. It
+  writes that part AS PLACED — see the export placement invariants (Stage C03-D).
 - **`assertGeometryDocument` is the second gate**, mirroring
   `assertMeshStructure`. Structural validity is NOT mesh health: a part with
   degenerate triangles is a valid document describing a defective model.
@@ -631,6 +632,63 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   a negative case that changes GEOMETRY; each accepted negative is classified in
   the Stage 6D-A4 design section, and a new one must be too.
 
+## Large-mesh split invariants (the split ceiling, qualified in `docs/design/AUTO_SPLIT_LARGE_MESH.md`)
+
+- **ONE TRIANGLE CEILING FOR EVERY SPLIT PATH: `MAX_SUPPORTED_SPLIT_TRIANGLES` (2,000,000), in
+  `mesh-core/src/split-limits.ts`.** The page's pre-check and the Boolean adapter's per-input gate
+  both read it, so the page never accepts a part the exact split would refuse for size alone. 1,999,999 and 2,000,000 are allowed, 2,000,001 is refused, and tests hold all three.
+  Never restate the number. Raising it needs the ladder in
+  `docs/design/AUTO_SPLIT_LARGE_MESH.md` re-measured, not an argument. That document was written for
+  an Auto Split feature this branch does not carry; its ladder is the record for the ceiling.
+- **THE CUT'S OWN WORK BUDGET IS A SEPARATE LIMIT, AND IT CAN REFUSE BELOW THE CEILING.** The exact closed-solid cut
+  (`closed-plane-kernel.ts`) meters its work against a fixed budget and refuses with `CUT_NOT_SAFE` carrying the reason
+  `WORK_LIMIT`. Measured on closed test spheres: 1,499,400 triangles cut, 1,560,000 cut at the centre and refused
+  off-centre, 1,999,396 refused at every position tried. So the 2,000,000-triangle ceiling is the part's size limit, not a
+  promise that a cut or a connector succeeds at that size. The page words that refusal as the resource refusal it is
+  (`isCutWorkLimitRefusal`), never as an unsound cut and never as advice to move it; the worker's typed error is
+  unchanged, and `cut-work-limit.test.ts` pins it. No budget or ceiling was changed to say this.
+- **THE MANIFOLD INPUT BUDGET IS DERIVED, NEVER A FLAT CONSTANT.** `MAX_BOOLEAN_INPUT_BYTES` is
+  `(MAX_SUPPORTED_SPLIT_TRIANGLES + MAX_BOOLEAN_TOOL_TRIANGLES) * 84`, where 84 is
+  `BOOLEAN_KERNEL_BYTES_PER_TRIANGLE` (nine Float64 coordinates and three Uint32 indices) and
+  `booleanKernelInputBytes` is the one estimator the backend uses. The tool term is not slack: a plane
+  split intersects the part with a 12-triangle half-space, so `2,000,000 * 84` alone would refuse the part
+  the ceiling admits. It replaced a flat 128 MiB that refused at 1,597,830 triangles, below the Boolean
+  ceiling it sat under.
+- **EVERY INDEPENDENT GUARD STAYS.** The Boolean adapter's triangle ceiling, the topology-workspace
+  limit, the canonical-byte limit, the output-triangle limit and the edit-peak limit each fire on their
+  own. Raising one budget aligned it with the others; it removed none.
+- **A SIZE VERDICT IS A STATUS, NOT A FAILURE.** A part above the ceiling is told so BEFORE Preview,
+  from `PartDescriptor.triangleCount`, as `role="status"` with the size, the limit and "your model is
+  unchanged", and NO retry. The worker's check is the authority and the page's is courtesy.
+  `2,000,001` is written out in full against `2,000,000`, so a sentence never says a number exceeds a
+  limit it prints equal to.
+- **A RESOURCE REFUSAL OF A CUT NEVER SAYS "USE MANUAL SPLIT".** Manual Split meets the same exact-split
+  limits, so pointing at it is a promise the product cannot keep. A split declined for resources is a
+  neutral status (`ResourceRefusalCard`); "adjust the cut or use Manual Split" remains for a cut that is
+  merely unsound. All of it is copy in `state/split-size-presentation.ts`.
+- **BOOKKEEPING IS TYPED, GEOMETRY IS NOT TOUCHED.** The kernel's exact-coordinate
+  indexing replaced a JavaScript `Map` per vertex with int32 tables: 593 MB of heap became 1 MB, and 2.1 s
+  per operand became a fraction of that, with the same numbering and the same coordinates (`-0` kept).
+  Welding was considered and rejected: it adds topology semantics the ceiling does not need.
+
+## Camera framing invariants (v0.8.0; first written for the v0.7.1 camera-fix candidate branch)
+
+- **A DOCUMENT IS FRAMED ONCE, BY IDENTITY.** `ViewportPanel` keeps the document id the camera was last
+  fitted to (`framedDocumentRef`); `setModel(..., { preserveView })` is true only for the SAME document
+  inside the Split workspace (a preview or an applied split of what is on screen). A different document is
+  fitted exactly once, from its own bounds. The decision was once `preserveView: splitWorkspaceRef.current`
+  alone, which kept model A's framing for model B whenever Split was open (owner acceptance, v0.7.0).
+- **NOTHING ELSE REFITS.** Not a re-render, a preview, Exploded / Assembled, a part selection, Show part,
+  a connector control or the inspector. No timer, no polling, no triangle-count heuristic. The viewport
+  publishes `data-document-fit-count`, `data-camera-distance` and `data-camera-fit-ratio` so
+  `e2e/camera-replacement.spec.ts` reads what the camera did; the ratio is exactly `1 / FIT_PADDING` when
+  fitted.
+- **`commitImport` RESETS THE PREVIOUS DOCUMENT'S PRESENTATION**: the applied-split layout (`assembly`)
+  and `previewExploded`. Model A's view state must not reach model B.
+- **THE WORKSPACE PACKAGE LINKS ARE RELATIVE.** `node_modules/@cadfixer/*` links resolve into whichever
+  tree owns that `node_modules`. A git worktree that borrows another tree's `node_modules` builds the
+  OTHER tree's packages, silently ignoring its own edits: give the worktree its own `@cadfixer` links.
+
 ## Streaming 3MF ingestion invariants (Stage 6E-A1 prototype, 6E-A2 production)
 
 - **BUFFERED IS `read3mf`'s DEFAULT; THE PRODUCT ROUTES — Stage 6E-A3
@@ -874,6 +932,226 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   test-only structural checkers that share no code with production, and a
   boundary test keeps them out of it.
 
+## Export placement invariants (Stage C03-D)
+
+- **A FILE HOLDS THE PART WHERE THE DOCUMENT PUTS IT, in every format.** The
+  active-part STL export (`model/export`) used to write `part.mesh` and ignore
+  `part.transform`: a part that was translated, rotated, scaled or mirrored came
+  out somewhere other than where the document has it, and a connector-bearing
+  split piece at ×2 came out half its physical size. It now writes
+  `placeMesh(part.mesh, part.transform)`, with no copy at all for an identity
+  placement. Whole-document STL and OBJ bake while streaming; 3MF writes
+  placements as build-item transforms. Never write local coordinates for a
+  placed part and say nothing.
+- **ONE PLACEMENT ARITHMETIC AND ONE ORIENTATION QUESTION.** `applyPartTransform`
+  applies a placement (Float64, narrowed once to Float32). `placementReversesOrientation`
+  (the sign of `placementLinearDeterminant`, the same triple product
+  `classifyPlacement` reads for `mirrored`) answers whether a placement turns a
+  mesh inside out. No exporter re-derives either. It is independent of
+  `classifyPlacement`'s support policy: a non-uniform placement that also
+  mirrors reverses orientation too, and an exporter that bakes it must turn the
+  triangles whether or not a connector could have been cut into that part.
+- **A MIRROR REVERSES THE WINDING, EVERYWHERE IT IS BAKED.** Positions go where
+  the placement puts them; keeping the stored corner order writes a closed solid
+  inside out (negative volume, normals into the material). `placeMesh`, the
+  whole-document STL writer, the OBJ writer, its stream validator and the two
+  expected round-trips all exchange the second and third corner of every triangle
+  of a part whose placement mirrors. Before C03-D2 the whole-document STL and OBJ
+  exports of a mirrored part were inside out.
+- **A 3MF BUILD ITEM NEVER REFLECTS.** A negative-determinant item transform is
+  one of the defects the 3MF Consortium's conformance suite files as a negative
+  case, so a mirrored part is written as its mesh mirrored in x (corners turned)
+  and the placement composed with that mirror (`mirroredObjectPlacement`: the
+  first basis row negated, zeros kept +0). World positions are exactly what they
+  were: both steps are negations. `planThreeMfObjects` keys on (mesh, name,
+  mirrored): mirrored placements of one mesh share ONE mirrored object, plain
+  ones keep the plain object, and the page's `threeMfObjectCount` mirrors that
+  rule. A part whose placement mirrors does not come back as the same
+  (mesh, transform) pair on re-import; it comes back as the same PHYSICAL object.
+- **BAKING NEVER RESCALES AND NEVER LABELS.** STL and OBJ state no unit: the
+  coordinates written are the document's, placement applied, with no unit
+  invented and none lost to a different number. A known unit survives only where
+  the format can state it (3MF). The active-part STL says "placement was applied"
+  (`STL_EXPORT_PLACEMENT_APPLIED`, with `mirrored`) only when there is one.
+- **THE ORACLE THAT MATTERS IS BYTES MEASURED BY CODE THAT SHARES NOTHING.**
+  The C03-D export oracle parses the written STL, OBJ and 3MF with its own
+  parsers and applies placements with its own arithmetic. A test that exports
+  through our writer and reads back with our reader proves only that they agree.
+
+## Editable connector model invariants (Stage EC-1 model, EC-2 rebuild engine, EC-3 transactions, EC-4 page projection, EC-5 editor, EC-6 move and add, EC-7 every workspace, EC-8 axis labels, EC-9 cut marked on the model, ADR 0033)
+
+EC-1 is the MODEL, its lifecycle and its accounting. EC-2 is the engine that rebuilds a joint's connectors from what it retained.
+EC-3 records a joint at split commit and makes an edit a transaction (`joint/list`, `joint/propose`, `joint/commit`,
+`joint/discard`). EC-4 makes the page a projection of the worker's joints. EC-5 adds the control that changes a connector: a size, the
+male side, or taking the connectors off. EC-6 adds WHERE a connector sits and HOW MANY there are: a picture of the cut to drag on, the same
+two numbers to type, and add and remove for one connector.
+
+- **A JOINT IS SESSION STATE IN THE WORKER'S DOCUMENT.** `GeometryDocument.joints` holds records for the two parts of one cut, the
+  pre-connector pieces they were built from, the physical frame they were sized in and the engine's interface authority. No reader
+  produces it and no writer reads it; `exportSnapshotOf` builds a fresh part list and cannot carry one. The page holds
+  `JointDescriptor`s — ids, a status, a reason and counts — and never a mesh. A boundary test names every module allowed to build
+  a joint list and every one that may never mention one.
+- **VALIDITY IS DERIVED FROM THE PARTS, NEVER STORED.** `jointAttachment` is the one function that says whether a joint is usable:
+  both parts present, no document unit that contradicts the frame's (a unit-less model does not: the unit asserted at split time is the
+  frame's, and the document never gains one), both placements element-wise equal to the ones it was built under, and both meshes
+  the exact OBJECTS it built. Identity, not content: a byte-equal copy is a change. The reasons come in a fixed order (part removed,
+  unit, placement, geometry) so one document has one answer. A stored flag would be carried onto a changed part, because
+  `withPartMesh`, `withPartTransform` and the split candidate all spread the previous document.
+- **RETIREMENT IS AT THE ONE INSTALL PATH.** `ResidentDocumentStore.replace` (and `commit`) retire every joint that is no longer
+  attached, replacing the record with a bounded descriptor and releasing the meshes it held. The same document object is installed
+  when nothing retires, and the part array is shared in every case. A retired joint is never edited, rebuilt, re-attached or
+  guessed. A boundary test asserts the two writes to the resident map and the single call site.
+- **UNDO NEEDS NO RULE OF ITS OWN.** `repair/undo` installs the previous document OBJECT, so a joint attached before a change is
+  attached again after undoing it.
+- **A PART IS IN AT MOST ONE ATTACHED JOINT**, because an edit rebuilds both of a joint's pieces. The document gate refuses two.
+- **INTENT IS STORED IN MILLIMETRES WITH ITS FRAME.** A pin carries `diameterMm`, `depthMm`, `clearanceMm`; a local length is
+  derived through the frame and never stored as intent. A site is always explicit: the exact `local` point the pin was cut at plus its `(u, v)` in the interface frame, and an
+  explicit site is validated, never trusted. `mmPerCoordinate` is stored as built and not re-derived by the model.
+- **RETAINED BYTES ARE COUNTED ONCE PER DISTINCT MESH AND NEVER WITH A PART.** `jointRetainedBytes` charges bases, stale built
+  meshes and the authority's own bytes; `documentByteLength` includes it, so every resident total sees it. The ceiling
+  `MAX_JOINT_RETAINED_BYTES` is `MAX_SUPPORTED_SPLIT_TRIANGLES × 52` — derived, not a number of its own — and is a POLICY bound:
+  above it a producer keeps the connectors as plain geometry and says so, and never refuses a split on account of editability.
+  `npm run bench:joint-retention` measured accounting equal to the Node typed-array bytes and release on retirement to the byte;
+  it is NOT a browser footprint, and the first stage that actually retains bases must measure that.
+- **A REBUILD STARTS FROM THE RETAINED CUT, NEVER FROM THE BUILT PIECES.** `rebuildJointConnectors` hands the two pre-connector pieces,
+  their provenance, the generated interface and the cut's tolerance (`PinCut`) and a connector spec to `constructPinConnectors`, the
+  ONE pin stage: footprint containment, receiving material, material support, then the Booleans. It was the body of
+  `splitWithConnectors` and is called by both, so there is no edit-only validator, relaxation or refusal; a boundary test holds that a
+  rebuild names no validator or primitive itself. Because every rebuild starts from the same cut, an edit never builds on an edit, and
+  editing a joint back to an earlier spec returns the same bytes. Differential, on the real kernel: a joint rebuilt from its own cut
+  is byte-identical to the split that made it, manual and automatic, one to three pins, male side A and B, four units and a scaled
+  placement, with an equal manifest. Booleans are never inverted.
+- **A SITE IS THE POINT IT NAMES.** `local` is the exact point cut; `u`/`v` are that point read through `interfaceCoordinates` and
+  nothing else. A rebuild recomputes them and refuses a pair that disagrees (`INVALID_PLAN`). `siteOnInterface(cut, u, v)` makes a site
+  from a requested `(u, v)` and may differ from the request by a rounding error; that is the price of cutting an exact point.
+- **TWO PINS HAVE ONE SPACING RULE.** `minimumPinSpacing` / `pinsTooClose` are used by the resolver that chooses sites AND by the
+  rebuild that is handed them. Explicit sites would otherwise have been a way to build overlapping pins a split would never place.
+- **A REBUILD PROVES ITS FRAME RATHER THAN ASSUMING IT.** The size is resolved through the same resolver with the unit and the current
+  placement, and must equal the frame the joint was built under to the bit, or it is `INVALID_PLAN`. An attached joint guarantees
+  that; the rebuild checks it anyway. The engine's cut lives in `JointInterfaceAuthority.detail`, opaque to the model, minted only by
+  `jointAuthorityOf` and read back only through a guard that refuses anything else. `provenanceSHA` names the per-face provenance and
+  not the geometry; identity of the pieces is by object.
+- **PIN IDS ARE NOT PLAN PAIR IDS.** The plan numbers pairs `pin-1…` by position, so after a pin is removed a refusal's `pairId` is a
+  position and the transaction stage must translate it. One size per joint is checked by the rebuild; the model already carries sizes
+  per pin.
+- **THE ENGINE REBUILDS; IT INSTALLS NOTHING.** It returns two candidate meshes, the manifest and the successor joint record. Checking
+  that the joint is attached, the transaction, the history record and the page are the next stage's.
+- **THE PAGE KEEPS NO RECORD OF A CONNECTOR (EC-4).** What the page knows is what `joint/list` said about the revision it holds
+  (`WorkspaceState.joints`, read through `currentJoints`, which reads a slice for another revision, another document or no model as
+  nothing). `useJointSync` asks once for every revision the model comes to hold and is mounted once, in the controllers provider; an
+  answer for a revision the model has left is refused by the store. A list that could not be read is `UNAVAILABLE` and the inspector
+  says so; it is never read as "no connectors". This replaced a list inside the assembly layout that was built from the size a split
+  asked for and carried across later cuts by a sign test at `1e-8` that silently dropped what it could not place. The pair field, the pair
+  migration and the local pick arithmetic are gone, and a boundary test keeps them gone. The assembly layout's INTERFACES (explode
+  offsets, labels, the interface footprints a later cut is tested against) are page presentation and are unchanged; they hold no connector.
+- **THE WORKER PUTS A PIN IN THE SCENE FOR THE PAGE.** A joint descriptor carries each pin's centre in the scene's coordinates, the axis the
+  pin points along and `mmPerSceneUnit`, so a scene length is millimetres divided by it, the placement scale cancelling out. The page
+  therefore holds no placement inverse, interface or mesh to place a marker or answer a pick. The guard radius of a connector is
+  `hypot(depth × 1.0001, socket radius)` in the scene; the engine's floor of eight split tolerances is dropped, so it errs outward.
+- **A CUT IS GUARDED BY THE WORKER'S CONNECTORS ALONE.** `preservesAssemblyInterfaces` takes the connectors the worker lists, so a plane
+  near an attached pin is refused whether or not a layout was kept. A later cut of a piece in an attached joint retires the joint in
+  the worker, exactly, and the connector stops being listed.
+- **A REPAIR OR A FILL SAYS WHAT IT DOES TO RECORDED CONNECTORS BEFORE APPLY**, in the sentence that already says what Apply does
+  (`disclosureFor`), and the action region still draws one line. All the wording is in `connector-edit-presentation.ts`, exhaustive,
+  and a test holds it to no claim about use (no fits, holds, strong, secure, printable) and no word that calls a place good, safe or
+  recommended: the worker alone says whether a place has room, and only when the change is checked.
+- **THE EDITOR CHANGES WHAT A CONNECTOR IS (EC-5) AND WHERE IT SITS (EC-6).** Four values (diameter, depth, clearance, male side), a
+  removal, and the connectors themselves. Every pin is sent back with its own name and its own `(u, v)`, which the worker reads as "keep
+  this site exactly" (`specFromEdit` reuses the site object), so an edit of a size or of ANOTHER pin reproduces every untouched pin's point
+  to the bit. A connector the person added is sent with no name and the worker names it from `nextPinOrdinal`.
+- **A POSITION IS PLACED BY LOOKING AT THE CUT, AND THE PICTURE JUDGES NOTHING (EC-6).** `JointDescriptor.cutFace` carries the cut's outline
+  in its own `(u, v)` axes, the unit factor and the most pins the cut holds; `describeCutOutline` (`connector-rebuild.ts`, the one module
+  that reads the cut) draws it from the retained interface and returns nothing above 4,096 outline points, in which case the sizes and the
+  removal stay available and no picture is offered. `CutFace` is an SVG with `v` drawn upward (the one negation is `toViewY`); a drag
+  follows the pointer through window listeners, an arrow key moves a connector 0.5 mm (Shift: five times that), Delete takes it out, and
+  the same two numbers can be typed in millimetres. The picture does not keep a connector inside the outline or away from another: whether
+  a place has room, and whether two are far enough apart, is `joint/propose` and nothing else, so a second opinion drawn on the page cannot
+  disagree with it. A boundary test bans the page from the outline test and the spacing rule.
+- **A PLAIN CUT TAKES ITS FIRST CONNECTOR HERE.** A cut recorded with no connectors is offered when it can be drawn; Add connector puts a new
+  one at the middle of the cut's extent at the split's own default sizes (a test holds `NEW_CONNECTOR` to `DEFAULT_CONNECTOR`). Taking
+  every connector out of the draft is checked as the removal, since that is what it is.
+- **A MOVE IS JUDGED BY A DISTANCE, NOT BY VOLUME.** Moving a pin leaves the pieces' volumes where they were, so the e2e reads the pin's
+  place from the tip and socket-bottom rings of the exported files and compares DISTANCES, which a turned or flipped cut axis cannot
+  change. The expected distance of a drag is computed from the picture's own box and the 12 % margin written out in the spec.
+- **CHECK, THEN APPLY, AND THE SCREEN BETWEEN IS "Preview — not applied".** `use-connector-edit.ts` holds a DRAFT and a candidate HANDLE,
+  never geometry. Its state is keyed by the connectors it was made for (document, revision, joint, spec digest), so a draft or candidate
+  for connectors that have since changed reads as nothing; changing a value releases the candidate it made stale; a late answer for a
+  superseded check is released, not shown; a cancel says nothing; a candidate left when the editor goes is released. The apply states
+  the digest it started from, and the worker refuses it against connectors that are not those.
+- **A SIZE OUT OF RANGE IS NOT CHECKED.** The page uses the split's own range and sentence (0.01 to 1000 mm, zero clearance allowed), so one
+  size reads and is limited the same wherever it is typed; a refusal about geometry carries the worker's own sentence, the joint's own
+  refusals ours (`describeEditRefusal`), and no code is ever shown.
+- **AFTER AN APPLY THE SENTENCE IS "Connectors changed and checked" PLUS WHAT THE CHECK WAS NOT** (`CONNECTOR_EDIT_COPY.qualifier`): a
+  geometric check of the material around each connector, not a claim about strength, and not about how the pieces go together. It is shown
+  beside the control as well as in the status log, because a status log is not where a person looks after pressing a button.
+- **THE CUT'S AXES ARE NAMED AGAINST THE MODEL'S, FROM THE WORKER'S FRAME (EC-8).** `JointDescriptor.cutFace.axes` carries `u`, `v` and the
+  normal as unit vectors in the scene (`describeCutAxes`, `connector-rebuild.ts`: the retained interface frame, carried by the LINEAR part of
+  the first piece's placement). The scene's axes are the model's own: only a placement turns a model, and it is already in the vectors.
+  `cut-axes-presentation.ts` names a direction `+X` within 1° of an axis, `≈+X` with `turned n° from the X axis` up to 20°, and gives
+  components beyond that rather than the nearest axis. The picture writes `→+X` and `↑+Z` in its margin, the fields read `Across (+X)`,
+  and a sentence says which side it is seen from, computed from the handedness of the three vectors (u × v against the normal), never
+  assumed. It says nothing is top, front or left: those depend on a viewer the model does not state. LABELS ONLY: nothing moves and
+  nothing is decided by them. The e2e reads each claim against the exported files: a pin moved across by 5 mm and along by 4 mm moves
+  that far toward the labelled directions, and the viewer side matches the sign of the two moves' cross product. Reversing the across
+  label fails it.
+- **THE CUT IS MARKED ON THE MODEL WHILE THE EDITOR IS OPEN (EC-9), FROM THE WORKER'S STATEMENT OF WHERE IT IS.** `cutFace.axes` also carries the
+  cut's origin in the scene and `scenePerCoordinate`, so a point `(u, v)` of the cut is `origin + scale × (u·U + v·V)` and the outline the
+  picture draws can be laid on each piece's face by arithmetic alone (`cut-mark-presentation.ts`; no mesh, interface or placement on the
+  page). The real kernel holds that mapping to a pin's scene centre under an identity and a turned, scaled, moved placement. The viewport
+  (`create-cut-mark.ts`, three alone, in the model's group so the centring offset applies, drawn over the model) shows the outline, a pin
+  ring and a socket ring for every connector of the DRAFT (a drag in the picture moves one on the model as it is dragged) and an arrow
+  along each direction named by the model axis. It is requested by the editor through `store.setCutMarkShown` while its section is open on
+  a cut that can be placed, and withdrawn when it closes or goes; faces are drawn once when the pieces sit together and once each when exploded.
+  Display only: nothing is picked, exported or decided from it, and the camera never moves. The page asks on every render of the viewport
+  panel, so `setMark` returns whether anything could have changed and a frame is scheduled only then: the first version drew a frame for
+  every ask, even to clear a mark that was not drawn, and a heavy sphere's Apply in the harness (7B-X02, `7B browser flow 1`) missed its five-second wait three times in three. The e2e compares the drawn ring's movement with
+  where the EXPORTED FILES put the pin (the same vector), reading the ring from the canvas's record of what it drew; swapping the axes in
+  the mapping fails it.
+- **THE EDITOR IS ONE CONTROLLER DRAWN IN ONE WORKSPACE AT A TIME (EC-7).** `useConnectorEdit` runs once, in `ConnectorEditControlsProvider`
+  (`workflow-controllers.tsx`), so the draft, the candidate and the undo belong to the application. Repair, Convert, Split & Connect
+  and Surface Texture each mount `ConnectorEditorSlot`, which draws the editor only while its workspace is the one shown: the workspaces
+  stay mounted while hidden, so a copy in each would be four sets of controls with the same ids. A draft survives moving between
+  workspaces, and an edit made in one can be undone from another. It is open in Split and a collapsed section elsewhere, and open
+  whenever there is a change to undo. That open state lives in the editor and is passed to `PanelSection` (new optional `open` /
+  `onOpenChange`): the section is absent for the moment after an apply while the connectors are listed again, and without this it came
+  back collapsed in the other workspaces with its Undo behind the heading. Found by driving the real flow from Convert. A boundary test
+  holds the single hook call and the four slots.
+- **THE EDITOR IS MOUNTED BESIDE THE SPLIT'S RESULT, NOT INSIDE IT**, and a connector edit keeps what the split showed (the two pieces and
+  Export) through `connectorEditRevision`: the model revision that an edit, or the undo of one, produced. Equality with the current
+  revision is the whole test, and both pieces must still be parts. Undo split is NOT offered then, because the latest change is the edit
+  and the split's own record has been superseded; the edit's Undo is beside its controls and goes through `repair/undo`. Two real flows
+  found this: with the editor inside the result it vanished, with its Undo, the moment the model moved to the edit's revision.
+- **AN EDIT IS JUDGED BY THE FILES IT WRITES.** `e2e/connector-edit.spec.ts` changes a diameter through the shipped application, exports
+  both pieces and adds up their volumes with the divergence theorem written in the test: the pin minus its socket is -15.733 mm³ for
+  Ø4 / 6 / 0.2, -11.992 for Ø3, and nothing once the connectors are taken off, and undo returns the first.
+- **A SPLIT RECORDS A JOINT AND IS NEVER REFUSED FOR IT.** `recordJointFromSplit` assembles it from the split's own result at
+  `SplitCandidateStore.resolve`: the clip's pieces become the bases, the returned pieces the built meshes, the plan's pins the sites. A
+  plain cut records a joint with no connectors, so connectors can be added later. Why one was not recorded travels in
+  `SplitCandidateSummary.editableConnector` (`UNIT_UNKNOWN`, `UNSUPPORTED_TRANSFORM`, `RETENTION_CEILING` with the metric, the value
+  and the limit, `NOT_A_CLOSED_PLANE_CUT`, `LEGACY_CONNECTOR`, `FRAME_DISAGREES`), and the pieces are then exactly what they always were.
+  The ceiling is judged on the document AS IT WILL BE INSTALLED, so a joint the cut itself retires is not counted against the new one.
+- **THE UNIT A JOINT WAS SIZED IN IS THE FRAME'S.** A document that states a unit must agree with it; one that states none (an STL) does
+  not contradict it, and the document never gains one. A plain cut on a unit-less model has no assertion to record and records nothing.
+- **AN EDIT IS A CANDIDATE, THEN ONE MUTATION.** `JointEditStore.begin` resolves the joint the caller named, proves it attached and
+  proves its connectors are what the caller saw (`JOINT_UNKNOWN`, `JOINT_RETIRED` with the reason, `JOINT_SPEC_STALE`), and takes the
+  document's ONE edit ticket, so an edit, a split and every other candidate exclude one another by construction. `resolve` validates
+  the rebuilt pieces (structure, ceilings, degenerate faces against what the BASES already carried) and the document gate.
+  `joint/commit` is the only mutation. The caller states the document and revision, the joint and the spec digest; the store compares
+  each with its own reading. A refused commit consumes nothing; the candidate is consumed only after the swap.
+- **THE SPEC DIGEST IS DERIVED, NEVER STORED** (`jointSpecDigest`), so it cannot disagree with the spec it names. The page states the
+  digest of the descriptor it is looking at.
+- **AN EDIT KEEPS EVERY PART ID, NAME AND PLACEMENT**, unlike a split. It commits in ONE step like a hole fill and not in the split's two
+  phases: a split must be ADOPTED (new part ids, a new assembly, a new view) and can fail part way, an edit has nothing to adopt but a
+  revision. The worker dying between the swap and the reply is the boundary Policy A already covers.
+- **PIN NAMES ONLY GROW.** `nextPinOrdinal` is a field of the joint; a removed pin's name is never given to another.
+- **RETIRE BEFORE REPORTING.** Every handler that builds its reply from a successor document before the swap builds it from the
+  document AS IT WILL BE INSTALLED (`retireDetachedJoints` at the revision it will be installed as), so a reported `residentBytes` never
+  counts geometry about to be released. Installation retires again and finds nothing left to do. A boundary test names the modules.
+- **A CHANGE THAT RETIRES A JOINT KEEPS THE DOCUMENT IT CAME FROM.** A mesh-only inverse restores the part and leaves a descriptor where
+  the joint was, so a repair, a fill or a generic edit that retires one records `previousDocument` (`retiredByInstall`), and Undo
+  installs that object. Without this, "undo of a repair re-attaches the connectors" was false for every change but a split. What it
+  retains is the joint's bases for as long as that one undo record lives.
+
 ## 3MF property-reference invariants (Stage 4A-2B3-R1)
 
 - **NO `pid` IS EVER EMITTED, FOR ANY TARGET, FROM ANY DOCUMENT.** 3MF core
@@ -1067,14 +1345,27 @@ lost`, `printable`, `watertight`, and the rest. **"The numbers are unchanged"
   viewport's former `moveEditPlaneAlongNormal` / `rotateEditPlane` were deleted
   because they held a second copy of the plane.
 - **ONLY WHAT STAGE 7B BUILDS.** One flat plane per split (XY / XZ / YZ plus one
-  bounded tilt), automatic placement only, None / round pins (1–4) / one
-  dovetail, connectors only for a millimetre document. No cut list, custom
+  bounded tilt), automatic placement only, None / round pins (1–4) —
+  the dovetail is NOT offered since v0.7.0, because it cannot be assembled
+  (`OfferedConnectorKind` excludes it; the engine type still names it) —
+  connectors only for a millimetre document. No cut list, custom
   plane, align-to-face, three-point plane, extra connector types, manual
   placement, pattern or margin control, bed fit or orientation.
 - **CLEARANCE IS STATED EXACTLY.** Pin: radial, socket Ø = pin Ø + 2 × clearance.
-  Dovetail: per side, slot width and length each + 2 × clearance.
-  `socketDiameter` / `dovetailSlot` mirror the engine and a test holds them
-  together.
+  `socketDiameter` mirrors the engine and a test holds them together.
+  `dovetailSlot` was removed from the interface with the dovetail card.
+- **THE EXPLODED VIEW IS PRESENTATION ONLY, DURING PREVIEW TOO (v0.7.0).**
+  `assemblyForSplitPreview` builds the preview's offsets with the SAME
+  `assemblyAfterSplit` that builds the applied view, so the two cannot drift. The
+  Assembled / Exploded flag is `previewExploded` in the store, separate from
+  `splitPreview`, so toggling rebuilds no scene. Offsets are drawn translations
+  of each part's matrix: never a part transform, never geometry, never read by
+  Apply or export. A boundary test keeps `assembly-presentation` out of
+  `runtime/`, `workers/` and `packages/`.
+- **THE CHECKS LINE STATES WHAT WAS DONE.** `describeSplitChecks`: a surface cut
+  (`volumeInterpretable === false`) never reads "closed; capped". The placement
+  note says the connector is checked against the cut face and that the wall
+  behind it is NOT measured.
 - **CROSS-SECTION FACTS COME FROM THE ENGINE AFTER A PREVIEW.** Area, outline
   (loop) count and a bounded outline are measured from Piece A's cap in
   `identifyCutSurface`; nothing is estimated during a drag. `loopCount` counts
@@ -1085,6 +1376,40 @@ lost`, `printable`, `watertight`, and the rest. **"The numbers are unchanged"
   (while the workspace is shown); the effect cleanup releases the worker
   candidate. No effect resets React state. Cancel resets the settings;
   switching workspace keeps them.
+
+## Workspace foundations invariants (PYBRIX-08A)
+
+- **THE INSPECTOR STARTS COLLAPSED, AND NOTHING BUT THE USER OPENS IT.**
+  `inspectorCollapsed` initialises to `true` in `ShellLayoutProvider`, is session
+  state only, and is never persisted. A new document id re-collapses it. A load, a
+  selection, a Repair and a workspace change never open it. Its facts stay in the
+  DOM while collapsed, so tests assert them with `toHaveText`, not `toBeVisible`.
+- **A UNIT INTERPRETATION IS A READING OF COORDINATES, NEVER AN EDIT.** It lives in
+  `WorkspaceState.unitInterpretation` as `{ documentId, unit }`: no coordinate is
+  rewritten, no revision is consumed, and `GeometryDocument.unit` is untouched. It
+  is keyed by `documentId` because that is stable across revisions, so Repair,
+  Split, Texture and the Undo of any of them cannot discard it, and a new import
+  cannot inherit it. Do not turn it into a document edit: that consumes a revision
+  and re-analyses a two-million-triangle model to change a label.
+- **A UNIT THE FILE STATES ALWAYS WINS.** `setUnitInterpretation` refuses a
+  document whose source states a unit. Nothing is inferred from bounding-box
+  size, and the prompt preselects nothing.
+- **PHYSICAL PARAMETERS ARE MILLIMETRES IN THE INTERFACE AND COORDINATE UNITS IN
+  THE REQUEST.** `millimetresToCoordinates` is applied where the request is built
+  (`connectorRequest`, `textureRequest`) and nowhere else. A value the engine
+  would refuse in the model's units is refused with a message, never clamped.
+- **ONE READER: `useUnitInterpretation`.** Split, Texture, the Model panel and
+  Convert read it; Convert's `unitAssertion` is seeded from it and writes back to
+  it. A hook boundary is deliberate (the React Compiler rejects a plain function
+  call on `model` inside these hooks).
+- **SPLIT REFUSALS ARE TYPED.** `SplitSourceReason` travels in
+  `AppError.details.reasons`. The sentence names Repair only when every reason is
+  winding or degenerate/duplicate triangles. It never promises Repair for an
+  opening or a non-manifold edge.
+- **THE PLANE WITH NO ROLL AND NO SWAP IS THE QUALIFIED PLANE, BYTE FOR BYTE.**
+  A zero roll is skipped, not applied as an identity rotation.
+- **PIECE VISIBILITY HIDES, IT NEVER RE-UPLOADS.** `setHiddenParts` toggles a
+  mesh's `visible`; it is not routed through `setModel`.
 
 ## Surface Texture workspace invariants (UI-05)
 

@@ -1,5 +1,9 @@
-import type { CanonicalMesh } from '@cadfixer/mesh-core';
-import type { BooleanBackend, BooleanKind } from '@cadfixer/geometry-runtime';
+import { MAX_SUPPORTED_SPLIT_TRIANGLES, type CanonicalMesh } from '@cadfixer/mesh-core';
+import {
+  MAX_BOOLEAN_TOOL_TRIANGLES,
+  type BooleanBackend,
+  type BooleanKind,
+} from '@cadfixer/geometry-runtime';
 import {
   internalError,
   invalidState,
@@ -15,7 +19,21 @@ import type {
 } from './boolean-operation-protocol';
 
 export const MAX_BOOLEAN_OPERATION_COPY_BYTES = 256 * 1024 * 1024;
-export const MAX_BOOLEAN_OPERATION_INPUT_TRIANGLES = 2_000_000;
+/**
+ * THE TRIANGLES BOTH OPERANDS MAY HOLD TOGETHER: the split ceiling plus the largest tool beside it.
+ *
+ * This was a flat 2,000,000 over `a + b`, a THIRD copy of the ceiling that disagreed with the other two
+ * by exactly the size of the tool: a plane split intersects the part with a 12-triangle half-space, so
+ * a part of exactly 2,000,000 triangles arrived here as 2,000,012 and was refused, while 1,992,704 was
+ * not. It is derived the way the Manifold byte budget is (`boolean-limits.ts`): the part the ceiling
+ * admits plus the largest tool any caller builds. Each operand is still held to the ceiling ON ITS OWN
+ * (`MAX_BOOLEAN_OPERAND_TRIANGLES`), exactly as `runValidatedBoolean` holds it, so raising the
+ * combined figure raises nothing about how large one operand may be.
+ */
+export const MAX_BOOLEAN_OPERATION_INPUT_TRIANGLES =
+  MAX_SUPPORTED_SPLIT_TRIANGLES + MAX_BOOLEAN_TOOL_TRIANGLES;
+/** One operand's triangles: the shared split ceiling, the same figure the adapter's per-input gate reads. */
+export const MAX_BOOLEAN_OPERAND_TRIANGLES = MAX_SUPPORTED_SPLIT_TRIANGLES;
 export const MAX_BOOLEAN_KNOWN_WORK_BYTES = 768 * 1024 * 1024;
 export interface BooleanOperationAccounting {
   readonly inputCopyBytes: number;
@@ -116,6 +134,21 @@ export class BooleanOperationController implements BooleanBackend {
     throwIfCancelled(cancellation);
     const triangles = a.indices.length / 3 + b.indices.length / 3;
     const accounting = measureBooleanOperation(a, b);
+    for (const [label, operand] of [
+      ['left', a],
+      ['right', b],
+    ] as const) {
+      const operandTriangles = operand.indices.length / 3;
+      if (operandTriangles > MAX_BOOLEAN_OPERAND_TRIANGLES)
+        throw resourceLimitExceeded(
+          `Boolean operation ${label} operand triangles are ${String(operandTriangles)}; limit is ${String(MAX_BOOLEAN_OPERAND_TRIANGLES)}.`,
+          {
+            metric: 'operandTriangles',
+            observed: operandTriangles,
+            limit: MAX_BOOLEAN_OPERAND_TRIANGLES,
+          },
+        );
+    }
     if (triangles > MAX_BOOLEAN_OPERATION_INPUT_TRIANGLES)
       throw resourceLimitExceeded(
         `Boolean operation input triangles are ${String(triangles)}; limit is ${String(MAX_BOOLEAN_OPERATION_INPUT_TRIANGLES)}.`,

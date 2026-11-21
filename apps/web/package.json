@@ -10,7 +10,7 @@
     "build:harness": "vite build --config vite.harness.config.ts",
     "preview": "vite preview",
     "preview:harness": "vite preview --config vite.harness.config.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/workers/tsconfig.json && tsc --noEmit -p src/workers/node-tests/tsconfig.json && tsc --noEmit -p e2e-harness/tsconfig.json && tsc --noEmit -p e2e-harness/worker/tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/workers/tsconfig.json && tsc --noEmit -p src/workers/node-tests/tsconfig.json && tsc --noEmit -p src/workers/node-integration-tests/tsconfig.json && tsc --noEmit -p e2e-harness/tsconfig.json && tsc --noEmit -p e2e-harness/worker/tsconfig.json"
   },
   "dependencies": {
     "@cadfixer/file-formats": "*",

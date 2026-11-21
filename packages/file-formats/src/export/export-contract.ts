@@ -1,5 +1,6 @@
 import {
   applyPartTransform,
+  placementReversesOrientation,
   createIndexArray,
   createPositionArray,
   DEFAULT_DOCUMENT_LIMITS,
@@ -152,6 +153,13 @@ export interface FormatWriteDocumentContext {
 export const ExportObservation = {
   /** Placements were applied to coordinates because the target cannot express them. */
   TransformsBaked: 'TRANSFORMS_BAKED',
+  /**
+   * A placement that MIRRORS a part was written, and the triangles were turned with it so the solid still faces outward
+   * (Stage C03-D2). For STL and OBJ the corners of every triangle of the mirrored part were exchanged while baking; for 3MF the
+   * object holds the part mirrored in its own coordinates, with the placement composed so the item carries no reflection (a
+   * negative determinant is a defect to a 3MF consumer). The physical object is the one the document describes either way.
+   */
+  MirroredPlacementReoriented: 'MIRRORED_PLACEMENT_REORIENTED',
   /** The source stated a unit and the target has nowhere to put it. */
   UnitOmitted: 'UNIT_OMITTED',
   /** The source's unit token was written into the file unchanged. */
@@ -497,8 +505,14 @@ export function expectedObjRoundTrip(snapshot: ExportDocumentSnapshot): Geometry
       baked[at + 2] = wz;
     }
 
+    // A placement that mirrors the part turns every triangle (corners two and three swap), so the solid still faces outward.
+    const reversed = placementReversesOrientation(part.transform);
     const copiedIndices = createIndexArray(indices.length);
-    for (let at = 0; at < indices.length; at += 1) copiedIndices[at] = indices[at] ?? 0;
+    for (let at = 0; at < indices.length; at += 1) {
+      const within = at % 3;
+      const source = reversed && within !== 0 ? at + (within === 1 ? 1 : -1) : at;
+      copiedIndices[at] = indices[source] ?? 0;
+    }
 
     return {
       id: partId(`part-${String(index + 1)}`),
@@ -563,8 +577,13 @@ export function expectedStlRoundTrip(snapshot: ExportDocumentSnapshot): Geometry
     const mesh = snapshot.meshes[part.meshResourceIndex];
     if (mesh === undefined) continue;
     const identity = isIdentityTransform(part.transform);
+    const reversed = placementReversesOrientation(part.transform);
 
-    for (const index of mesh.indices) {
+    for (let corner = 0; corner < mesh.indices.length; corner += 1) {
+      // A mirroring placement turns every triangle: the second and third corner of each swap.
+      const within = corner % 3;
+      const source = reversed && within !== 0 ? corner + (within === 1 ? 1 : -1) : corner;
+      const index = mesh.indices[source] ?? 0;
       const vertex = index * 3;
       const x = mesh.positions[vertex] ?? 0;
       const y = mesh.positions[vertex + 1] ?? 0;
@@ -601,6 +620,11 @@ export function expectedStlRoundTrip(snapshot: ExportDocumentSnapshot): Geometry
 export interface ThreeMfObjectPlan {
   readonly meshResourceIndex: number;
   readonly name: string | undefined;
+  /**
+   * The object holds the mesh MIRRORED in its own x (see `mirroredObjectPlacement`). True exactly when the parts that place it have a
+   * placement that mirrors, so an object is shared by mirrored placements and by unmirrored ones, never by both.
+   */
+  readonly mirrored: boolean;
   /** Indices into `snapshot.parts`, in document order. */
   readonly partIndices: readonly number[];
 }
@@ -627,12 +651,36 @@ export interface ThreeMfObjectPlan {
  * actually carry. A thousand unnamed placements of one mesh are one object;
  * two placements under two NAMES are two, because a name is written.
  */
+/**
+ * THE PLACEMENT A MIRRORED 3MF OBJECT IS PLACED BY (Stage C03-D2).
+ *
+ * A 3MF consumer reads a build item whose transform has a NEGATIVE determinant as a defect — the Consortium's own conformance suite
+ * files it with the negatives a printer must reject — so a part whose placement mirrors it cannot be written as "the stored mesh and
+ * the stored placement". It is written as the mesh mirrored in its own x, with the triangles turned so it still faces outward, and
+ * the placement composed with that same mirror so the world position of every vertex is exactly what it was:
+ *
+ *     world = v · P            (the document: row-vector layout)
+ *     v' = v · F  with F = diag(-1, 1, 1)         (the object's mesh)
+ *     world = v' · F · P = v' · P'        P' = F · P  =  P with its FIRST basis row negated
+ *
+ * det(P') = -det(P) > 0, so the item reflects nothing. Both steps are negations, so they are exact in Float64 and in Float32: no
+ * coordinate is rounded that was not rounded before. The writer and the parse-back validator both read this one function.
+ */
+export function mirroredObjectPlacement(transform: PartTransform): PartTransform {
+  const [m00, m01, m02, ...rest] = transform;
+  // A zero stays +0: negating one would write "-0" into an item that is otherwise exact, and a pure mirror would no longer be seen
+  // as the identity. Only the SIGN of a zero product can differ, never a coordinate.
+  const negated = (value: number): number => (value === 0 ? 0 : -value);
+  return [negated(m00), negated(m01), negated(m02), ...rest] as unknown as PartTransform;
+}
+
 export function planThreeMfObjects(snapshot: ExportDocumentSnapshot): readonly ThreeMfObjectPlan[] {
   const byKey = new Map<string, { plan: ThreeMfObjectPlan; parts: number[] }>();
   const order: string[] = [];
 
   for (const [index, part] of snapshot.parts.entries()) {
-    const key = `${String(part.meshResourceIndex)}\u0000${part.name ?? ''}`;
+    const mirrored = placementReversesOrientation(part.transform);
+    const key = `${String(part.meshResourceIndex)}\u0000${part.name ?? ''}\u0000${mirrored ? 'mirrored' : 'plain'}`;
     const existing = byKey.get(key);
     if (existing === undefined) {
       const parts: number[] = [index];
@@ -640,6 +688,7 @@ export function planThreeMfObjects(snapshot: ExportDocumentSnapshot): readonly T
         plan: {
           meshResourceIndex: part.meshResourceIndex,
           name: part.name,
+          mirrored,
           partIndices: parts,
         },
         parts,

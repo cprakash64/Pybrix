@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { isAppOrigin } from './app-origin';
+import { openInspector } from './inspector';
 
 /**
  * End-to-end smoke tests against the production build served by `vite preview`.
@@ -41,7 +42,8 @@ test('the viewport acquires a real WebGL context', async ({ page }) => {
 
   // Because the viewport starts cleanly in a real browser, the status log has
   // nothing to report on load.
-  await expect(page.getByTestId('status-empty')).toBeVisible();
+  await expect(page.getByTestId('status-empty')).toHaveCount(0);
+  await expect(page.getByTestId('status-list')).toHaveCount(0);
 });
 
 test('the viewport canvas is sized to its container and does not overflow the page', async ({
@@ -89,6 +91,7 @@ test('the document is cross-origin isolated, so multithreaded WASM will be possi
 test('the geometry worker round-trips a transferred buffer', async ({ page }) => {
   await page.goto('/');
 
+  await openInspector(page);
   await page.getByTestId('run-self-test').click();
 
   await expect(page.getByTestId('self-test-state')).toHaveText('passed', { timeout: 15_000 });
@@ -127,6 +130,7 @@ test('the page issues no network requests beyond its own assets', async ({ page 
   });
 
   await page.goto('/');
+  await openInspector(page);
   await page.getByTestId('run-self-test').click();
   await expect(page.getByTestId('self-test-state')).toHaveText('passed', { timeout: 15_000 });
 

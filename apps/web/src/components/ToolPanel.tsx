@@ -39,7 +39,10 @@ export function ToolPanel({ inert = false }: { readonly inert?: boolean }): Reac
   const modal = layout.modalDrawer === 'tool';
   const current = selectedWorkflow ?? DEFAULT_WORKSPACE;
   const presentation = WORKSPACE_PRESENTATION[current];
-  const summary = WORKFLOWS.find((workflow) => workflow.id === current)?.summary ?? '';
+  const summary =
+    current === WorkflowId.Repair
+      ? 'Check and fix common model issues.'
+      : (WORKFLOWS.find((workflow) => workflow.id === current)?.summary ?? '');
 
   return (
     <aside

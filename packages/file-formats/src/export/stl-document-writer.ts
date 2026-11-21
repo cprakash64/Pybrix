@@ -1,6 +1,7 @@
 import {
   applyPartTransform,
   IDENTITY_PART_TRANSFORM,
+  placementReversesOrientation,
   type PartTransform,
 } from '@cadfixer/mesh-core';
 import { throwIfCancelled } from '@cadfixer/shared';
@@ -137,6 +138,7 @@ export async function writeStlDocument(
   view.setUint32(BINARY_HEADER_BYTES, totalTriangles, true);
 
   let anyBaked = false;
+  let anyReoriented = false;
   let anyName = false;
   let anyGroups = false;
   let anyMaterial = false;
@@ -171,6 +173,13 @@ export async function writeStlDocument(
 
     const identity = isIdentity(part.transform);
     if (!identity) anyBaked = true;
+    /*
+     * A PLACEMENT THAT MIRRORS THE PART TURNS EVERY TRIANGLE (Stage C03-D2). Vertices go where the placement puts them; keeping the
+     * corner order as stored would leave a closed solid inside out — its normals into the material and a negative volume — so the
+     * second and third corner are exchanged. The question has one answer, `placementReversesOrientation`, shared with the classifier.
+     */
+    const reversed = placementReversesOrientation(part.transform);
+    if (reversed) anyReoriented = true;
 
     const { positions, indices } = mesh;
 
@@ -201,6 +210,14 @@ export async function writeStlDocument(
         corners[corner * 3] = Math.fround(wx);
         corners[corner * 3 + 1] = Math.fround(wy);
         corners[corner * 3 + 2] = Math.fround(wz);
+      }
+
+      if (reversed) {
+        for (let axis = 0; axis < 3; axis += 1) {
+          const second = corners[3 + axis] ?? 0;
+          corners[3 + axis] = corners[6 + axis] ?? 0;
+          corners[6 + axis] = second;
+        }
       }
 
       const offset = BINARY_PREFIX_BYTES + written * BINARY_FACET_BYTES;
@@ -276,6 +293,7 @@ export async function writeStlDocument(
   const observations: ExportObservation[] = [];
   if (snapshot.parts.length > 1) observations.push(ExportObservation.PartStructureFlattened);
   if (anyBaked) observations.push(ExportObservation.TransformsBaked);
+  if (anyReoriented) observations.push(ExportObservation.MirroredPlacementReoriented);
   if (snapshot.unit !== undefined) observations.push(ExportObservation.UnitOmitted);
   if (anyName) observations.push(ExportObservation.NamesDropped);
   if (anyGroups) observations.push(ExportObservation.GroupsDropped);

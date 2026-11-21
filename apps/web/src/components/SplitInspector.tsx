@@ -60,7 +60,7 @@ export function SplitInspector(): ReactNode {
           value={describeConnectorResult(connector.kind)}
           testId="split-inspector-connector"
         />
-        {section === undefined ? null : (
+        {section === undefined || (section.loopCount === 0 && section.area === 0) ? null : (
           <>
             <PropertyRow
               label={split.preview === undefined ? 'Last cut face' : 'Cut face'}
@@ -106,7 +106,9 @@ export function SplitInspector(): ReactNode {
             testId="split-inspector-size"
           />
         )}
-        {metrics !== undefined && selectedPiece !== undefined ? (
+        {metrics !== undefined &&
+        metrics.volumeInterpretable !== false &&
+        selectedPiece !== undefined ? (
           <PropertyRow
             label="Volume"
             value={formatVolume(

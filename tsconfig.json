@@ -10,6 +10,7 @@
   "include": [
     "vitest.config.ts",
     "vitest.bench.config.ts",
+    "vitest.live.config.ts",
     "playwright.config.ts",
     "playwright.browser-harness.config.ts",
     "playwright.harness.config.ts",

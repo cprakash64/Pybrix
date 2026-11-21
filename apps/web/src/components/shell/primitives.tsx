@@ -74,6 +74,13 @@ export interface PanelSectionProps {
   /** Short trailing text in the header, such as a count. */
   readonly meta?: ReactNode;
   readonly defaultOpen?: boolean;
+  /**
+   * CONTROLLED OPEN STATE, for a section whose owner outlives it. A section that unmounts while its owner stays (a connector editor whose
+   * content is absent while a list is read) would come back collapsed; the owner then keeps the state and passes it here, with the
+   * change to make when the toggle is pressed. Without both, the section keeps its own.
+   */
+  readonly open?: boolean;
+  readonly onOpenChange?: (open: boolean) => void;
   readonly testId?: string;
   /**
    * An explanation behind an ⓘ beside the heading. The button sits OUTSIDE the
@@ -96,10 +103,13 @@ export function PanelSection({
   children,
   meta,
   defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
   testId,
   info,
 }: PanelSectionProps): ReactNode {
-  const [open, setOpen] = useState(defaultOpen);
+  const [ownOpen, setOwnOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? ownOpen;
   const bodyId = useId();
   const infoDisclosure = useInfoDisclosure();
 
@@ -116,7 +126,8 @@ export function PanelSection({
           aria-expanded={open}
           aria-controls={bodyId}
           onClick={() => {
-            setOpen((current) => !current);
+            if (onOpenChange === undefined) setOwnOpen((current) => !current);
+            else onOpenChange(!open);
           }}
         >
           <Icon
