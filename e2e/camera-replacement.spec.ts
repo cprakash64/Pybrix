@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { binaryStlFrom, type Point } from './stl-fixtures';
 
 /**
- * v0.8.0 (first written for the unreleased v0.7.1 candidate) — an entirely new document must be framed once, from its own bounds.
+ * v0.8.0 (first written for the v0.7.1 camera-fix candidate branch) — an entirely new document must be framed once, from its own bounds.
  *
  * The owner's reproduction: open model A, then open model B without refreshing; B loads but the
  * camera keeps A's framing. The viewport publishes three facts for this, so a test reads what the

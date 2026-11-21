@@ -418,3 +418,53 @@ describe('a refusal about what the connector was asked to BE is said as that, no
     expect(screen.getByTestId('split-error')).toHaveTextContent("This cut can't be made safely.");
   });
 });
+
+describe('a cut that ran out of its work budget is said as that, not as an unsafe cut (v0.8.0 scale-limit truthfulness)', () => {
+  /** The worker's refusal exactly as the kernel types it: `CUT_NOT_SAFE` carrying a `reason`. Only the reason differs between the two cases. */
+  function workerRefusesCut(reason: string): void {
+    vi.spyOn(GeometryClient.prototype, 'createSplit').mockImplementation(
+      () =>
+        ({
+          promise: Promise.reject(
+            invalidState('This cut cannot be made safely. Try a different plane.', {
+              code: 'CUT_NOT_SAFE',
+              reason,
+            }),
+          ),
+          cancel: (): void => undefined,
+        }) as unknown as ReturnType<GeometryClient['createSplit']>,
+    );
+  }
+  function preview(): void {
+    mount((store) => {
+      load(store, 'millimeter');
+    });
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    fireEvent.click(screen.getByTestId('split-preview'));
+  }
+  it('WORK_LIMIT is the resource sentence, with no advice to move the cut', async () => {
+    workerRefusesCut('WORK_LIMIT');
+    preview();
+    const shown = await screen.findByTestId('split-resource-limit');
+    expect(shown).toHaveTextContent(
+      'This operation is too large to process safely with the current limits.',
+    );
+    expect(shown).toHaveTextContent('Try a smaller model or a simpler operation.');
+    expect(shown).toHaveTextContent('Your model is unchanged.');
+    expect(shown).not.toHaveTextContent(/move the cut|another part|different plane|invalid/i);
+    expect(shown).toHaveAttribute('role', 'status');
+    expect(screen.queryByTestId('split-error')).toBeNull();
+    expect(screen.queryByText(/can't be made safely/)).toBeNull();
+  });
+  it.each(['EMPTY_PIECE', 'COPLANAR_MATERIAL_AMBIGUOUS', 'UNPAIRED_SOURCE_SECTION'])(
+    'a cut refused for a reason about the cut itself (%s) keeps its advice about the cut',
+    async (reason) => {
+      workerRefusesCut(reason);
+      preview();
+      const shown = await screen.findByTestId('split-error');
+      expect(shown).toHaveTextContent("This cut can't be made safely.");
+      expect(shown).toHaveTextContent('Try moving the cut');
+      expect(screen.queryByTestId('split-resource-limit')).toBeNull();
+    },
+  );
+});

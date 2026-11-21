@@ -640,6 +640,13 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   Never restate the number. Raising it needs the ladder in
   `docs/design/AUTO_SPLIT_LARGE_MESH.md` re-measured, not an argument. That document was written for
   an Auto Split feature this branch does not carry; its ladder is the record for the ceiling.
+- **THE CUT'S OWN WORK BUDGET IS A SEPARATE LIMIT, AND IT CAN REFUSE BELOW THE CEILING.** The exact closed-solid cut
+  (`closed-plane-kernel.ts`) meters its work against a fixed budget and refuses with `CUT_NOT_SAFE` carrying the reason
+  `WORK_LIMIT`. Measured on closed test spheres: 1,499,400 triangles cut, 1,560,000 cut at the centre and refused
+  off-centre, 1,999,396 refused at every position tried. So the 2,000,000-triangle ceiling is the part's size limit, not a
+  promise that a cut or a connector succeeds at that size. The page words that refusal as the resource refusal it is
+  (`isCutWorkLimitRefusal`), never as an unsound cut and never as advice to move it; the worker's typed error is
+  unchanged, and `cut-work-limit.test.ts` pins it. No budget or ceiling was changed to say this.
 - **THE MANIFOLD INPUT BUDGET IS DERIVED, NEVER A FLAT CONSTANT.** `MAX_BOOLEAN_INPUT_BYTES` is
   `(MAX_SUPPORTED_SPLIT_TRIANGLES + MAX_BOOLEAN_TOOL_TRIANGLES) * 84`, where 84 is
   `BOOLEAN_KERNEL_BYTES_PER_TRIANGLE` (nine Float64 coordinates and three Uint32 indices) and
@@ -664,7 +671,7 @@ materialise -> RELEASE -> next`. The entry buffer and the decoded XML are
   per operand became a fraction of that, with the same numbering and the same coordinates (`-0` kept).
   Welding was considered and rejected: it adds topology semantics the ceiling does not need.
 
-## Camera framing invariants (v0.8.0; written for the unreleased v0.7.1 candidate)
+## Camera framing invariants (v0.8.0; first written for the v0.7.1 camera-fix candidate branch)
 
 - **A DOCUMENT IS FRAMED ONCE, BY IDENTITY.** `ViewportPanel` keeps the document id the camera was last
   fitted to (`framedDocumentRef`); `setModel(..., { preserveView })` is true only for the SAME document

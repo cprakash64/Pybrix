@@ -182,9 +182,21 @@ const isConnectorInputRefusal = (cause: unknown): boolean =>
   typeof cause.details.code === 'string' &&
   CONNECTOR_INPUT_REFUSAL_CODES.includes(cause.details.code);
 
+/**
+ * The exact cut ran out of its computational work budget. The kernel reports that as `CUT_NOT_SAFE` carrying the reason
+ * `WORK_LIMIT` (an invalid-state error, not a resource-limit one), and that typed error is the worker's and stays as it is. The cut
+ * was never judged unsound, so "move the cut" is advice that cannot help; the page therefore says it as the resource refusal it is.
+ * A test in `geometry-runtime` pins the worker's value, so a change there fails loudly instead of silently reverting this wording.
+ */
+const isCutWorkLimitRefusal = (cause: unknown): boolean =>
+  isAppError(cause) &&
+  cause.details.code === 'CUT_NOT_SAFE' &&
+  cause.details.reason === 'WORK_LIMIT';
+
 /** The worker declined for resources: a limit it enforces, as opposed to a cut it found unsound. */
 const isResourceRefusal = (cause: unknown): boolean =>
-  isAppError(cause) && cause.code === AppErrorCode.ResourceLimitExceeded;
+  (isAppError(cause) && cause.code === AppErrorCode.ResourceLimitExceeded) ||
+  isCutWorkLimitRefusal(cause);
 
 /**
  * The connector request, stated PHYSICALLY. The panel's sizes are millimetres and they are sent as millimetres, with the unit the

@@ -1,6 +1,6 @@
 # Pybrix v0.7.1 Technical Preview
 
-**Status:** never released. This candidate was folded into [v0.8.0](V0_8_0_TECHNICAL_PREVIEW_RELEASE.md), which carries its fix. The live site is v0.7.0.
+**Status:** this note describes the camera-fix candidate branch, which does not contain Auto Split (Beta). The label v0.7.1 is also on the public site, which was built from a separate branch that includes Auto Split (Beta). [v0.8.0](V0_8_0_TECHNICAL_PREVIEW_RELEASE.md) carries the camera fix.
 
 A defect found in owner acceptance of v0.7.0 is corrected: a second model was not framed from its own
 bounds. This branch does not contain Auto Split (Beta); that work is carried separately.

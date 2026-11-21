@@ -74,8 +74,8 @@ export function describeTooDetailed(tool: SplitToolName, notice: SplitSizeNotice
  * Manual Split can place a cut the exact split just declined is exactly what was not possible.
  */
 export const RESOURCE_REFUSAL_COPY = Object.freeze({
-  heading: 'This split needs more room than Pybrix allows.',
-  body: 'Pybrix could not prepare a preview of this cut on a model this detailed. Your model is unchanged.',
+  heading: 'This operation is too large to process safely with the current limits.',
+  body: 'Pybrix stopped before it could prepare a preview of this cut. Try a smaller model or a simpler operation. Your model is unchanged.',
   others: 'Repair, Convert and Export have their own limits.',
 });
 

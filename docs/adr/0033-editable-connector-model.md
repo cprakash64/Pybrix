@@ -12,7 +12,7 @@ A committed split is two plain parts. Pins and sockets are Boolean results baked
 - **Validity is derived by object identity** (`jointAttachment`): both parts present, the frame's unit, both placements equal, both meshes the built objects. It is not stored, because every mesh replacement spreads the previous document.
 - **Retirement happens at the one install path.** `ResidentDocumentStore.replace`/`commit` replace a no-longer-attached joint with a bounded descriptor and release what it held. Undo installs the previous document object, so it re-attaches a joint with no rule of its own.
 - Connector intent is stored in **millimetres with its physical frame** (ADR for C03-C). A site is resolver-chosen or an explicit `(u, v)` in the interface frame; either is validated, never trusted.
-- Retained geometry is **counted once per distinct mesh** and included in `documentByteLength`. The retention ceiling is derived from the split triangle ceiling (`2,000,000 × 52` bytes) and is a policy bound: above it connectors stay plain geometry and the split is not refused.
+- Retained geometry is **counted once per distinct mesh** and included in `documentByteLength`. The retention ceiling is derived from the split triangle ceiling (`2,000,000 × 52` bytes) and is a policy bound: above it connectors stay plain geometry and the split is not refused. It is an accounting bound and says nothing about which sizes can be cut: the exact cut's own work budget (`WORK_LIMIT`) can refuse a closed model below the split ceiling, so a joint at the bound was never held in the browser.
 - The page receives `JointDescriptor`s only. Export writes geometry only and never carries a joint.
 
 ## Measured
