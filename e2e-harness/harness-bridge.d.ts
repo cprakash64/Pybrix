@@ -17,6 +17,39 @@ interface GeometryEditCandidateHandle {
   readonly candidateId: string;
 }
 
+interface HarnessJointDescriptor {
+  readonly jointId: string;
+  readonly aPartId: string;
+  readonly bPartId: string;
+  readonly status: 'ATTACHED' | 'RETIRED';
+  readonly reason?: string;
+  readonly pinCount: number;
+  readonly retainedBytes: number;
+  readonly specDigest?: string;
+  readonly connector?: {
+    readonly maleSide: 'A' | 'B';
+    readonly pins: readonly {
+      readonly pinId: string;
+      readonly u: number;
+      readonly v: number;
+      readonly diameterMm: number;
+      readonly depthMm: number;
+      readonly clearanceMm: number;
+    }[];
+  };
+}
+
+type HarnessJointEdit =
+  | {
+      readonly kind: 'SET_CONNECTORS';
+      readonly maleSide: 'A' | 'B';
+      readonly diameterMm: number;
+      readonly depthMm: number;
+      readonly clearanceMm: number;
+      readonly pins: readonly { readonly pinId?: string; readonly u: number; readonly v: number }[];
+    }
+  | { readonly kind: 'REMOVE_CONNECTORS' };
+
 interface HarnessPartDigest {
   readonly partId: string;
   readonly name?: string | null;
@@ -104,6 +137,23 @@ declare global {
       ): Promise<{ revision: number; recordId: string }>;
       discardTestEdit(candidate: GeometryEditCandidateHandle): Promise<boolean>;
       undoTestEdit(documentId: string, revision: number, recordId: string): Promise<number>;
+      listTestJoints(
+        documentId: string,
+        revision: number,
+      ): Promise<readonly HarnessJointDescriptor[]>;
+      editTestJoint(
+        documentId: string,
+        revision: number,
+        jointId: string,
+        specDigest: string,
+        edit: HarnessJointEdit,
+      ): Promise<{
+        revision: number;
+        recordId: string;
+        descriptors: readonly HarnessJointDescriptor[];
+        residentBytes: number;
+        triangleCount: number;
+      }>;
       beginTestBoolean(
         operation: 'union' | 'difference' | 'intersection',
         segments?: number,
@@ -125,6 +175,18 @@ declare global {
        * camera cannot isolate. Resolves to the number of selected faces.
        */
       selectTextureSurface(partId: string, triangleIndex: number): Promise<number>;
+      setSplitTransactionFault(
+        fault:
+          | 'delivery'
+          | 'adoption-false'
+          | 'adoption-throw'
+          | 'after-write-throw'
+          | 'ack-delivery'
+          | 'commit-drop'
+          | 'ack-drop',
+      ): void;
+      splitTransactionStates(): Promise<readonly { transactionId: string; state: string }[]>;
+      reconnectSplitTransactions(): Promise<readonly string[]>;
       resetSplitQualification(): void;
       splitQualificationEvents(): readonly {
         documentId: string;

@@ -1,0 +1,98 @@
+import { expect, it } from 'vitest';
+import {
+  createIndexArray,
+  createPositionArray,
+  partId,
+  singlePartDocument,
+} from '@cadfixer/mesh-core';
+import { isAppError, uncancellable } from '@cadfixer/shared';
+import { ResidentDocumentStore } from './resident-documents';
+import { RepairHistoryStore } from './repair-history';
+import { GeometryEditStore } from './geometry-edit';
+import { SplitCandidateStore } from './split-candidates';
+import { splitOpenSurface } from './open-plane-split';
+it('fallback Preview, failed validation, failed Apply and Undo preserve the exact source document', () => {
+  const positions = createPositionArray(9),
+    indices = createIndexArray(3);
+  positions.set([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
+  indices.set([0, 1, 2]);
+  const mesh = { positions, indices, metadata: { sourceFormat: 'stl' } },
+    doc = singlePartDocument(mesh),
+    resident = new ResidentDocumentStore(),
+    history = new RepairHistoryStore(),
+    edit = new GeometryEditStore(resident, history),
+    splits = new SplitCandidateStore(resident, history, edit),
+    source = resident.commit(doc);
+  const result = splitOpenSurface(mesh, { origin: [0, 0, 0], normal: [1, 0, 0] }, uncancellable);
+  let ticket = splits.begin(source, partId('part-1'));
+  const invalidPositions = createPositionArray(result.pieceA.positions.length);
+  invalidPositions.set(result.pieceA.positions);
+  invalidPositions[0] = NaN;
+  expect(() =>
+    splits.resolve(
+      ticket,
+      { ...result, pieceA: { ...result.pieceA, positions: invalidPositions } },
+      uncancellable,
+    ),
+  ).toThrow();
+  splits.fail(ticket);
+  expect(resident.resolve(source)).toBe(doc);
+  expect(splits.stats().candidateCount).toBe(0);
+  ticket = splits.begin(source, partId('part-1'));
+  const summary = splits.resolve(ticket, result, uncancellable);
+  expect(resident.resolve(source)).toBe(doc);
+  expect(() =>
+    splits.commit(summary.candidate, source, partId('part-1'), () => {
+      throw Error('forced Apply failure');
+    }),
+  ).toThrow('forced Apply failure');
+  expect(resident.resolve(source)).toBe(doc);
+  expect(history.undoableFor(source.documentId)).toBeUndefined();
+  const applied = splits.commit(summary.candidate, source, partId('part-1'), (d) => d.parts.length);
+  const undo = history.prepareUndo(applied.recordId, applied.handle, applied.handle.revision);
+  if (isAppError(undo)) throw undo;
+  expect(undo.inverse.previousDocument).toBe(doc);
+  const restored = resident.replace(applied.handle, undo.inverse.previousDocument ?? doc);
+  if (isAppError(restored)) throw restored;
+  expect(resident.resolve(restored)).toBe(doc);
+});
+
+it('trusted semantic authorization is rechecked and consumed before any commit attempt, while manual retry is unchanged', () => {
+  const positions = createPositionArray(9),
+    indices = createIndexArray(3);
+  positions.set([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
+  indices.set([0, 1, 2]);
+  const mesh = { positions, indices, metadata: { sourceFormat: 'stl' } },
+    doc = singlePartDocument(mesh);
+  const resident = new ResidentDocumentStore(),
+    history = new RepairHistoryStore(),
+    edits = new GeometryEditStore(resident, history),
+    store = new SplitCandidateStore(resident, history, edits),
+    source = resident.commit(doc);
+  const result = splitOpenSurface(mesh, { origin: [0, 0, 0], normal: [1, 0, 0] }, uncancellable);
+  const preview = store.resolve(store.begin(source, partId('part-1')), result, uncancellable);
+  const identity = store.resultIdentity(preview.candidate);
+  expect(Object.keys(identity)).toHaveLength(0);
+  expect(Object.isFrozen(identity)).toBe(true);
+  expect(store.resultIdentity(preview.candidate)).toBe(identity);
+  let confirmed = false,
+    consumed = false;
+  store.authorizeCommit(preview.candidate, () => {
+    if (!confirmed || consumed) throw Error('missing or consumed authority');
+    consumed = true;
+  });
+  expect(() => store.commit(preview.candidate, source, partId('part-1'), (d) => d)).toThrow(
+    'missing or consumed authority',
+  );
+  expect(resident.resolve(source)).toBe(doc);
+  confirmed = true;
+  expect(() => store.commit(preview.candidate, source, partId('wrong-part'), (d) => d)).toThrow();
+  expect(consumed).toBe(true);
+  expect(() => store.commit(preview.candidate, source, partId('part-1'), (d) => d)).toThrow(
+    'missing or consumed authority',
+  );
+  const replacement = store.resolve(store.begin(source, partId('part-1')), result, uncancellable);
+  expect(store.resultIdentity(replacement.candidate)).not.toBe(identity);
+  expect(() => store.resultIdentity(preview.candidate)).toThrow();
+  expect(resident.resolve(source)).toBe(doc);
+});

@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { boxesOverlap, createCounters, faceBoxOf, FaceBvh, type BroadphaseBudget } from './bvh';
-import { MAX_AABB_TESTS, MAX_BROADPHASE_CANDIDATES, MAX_BVH_NODE_VISITS } from './limits';
+import {
+  boxesOverlap,
+  createCounters,
+  faceBoxOf,
+  FaceBvh,
+  type BroadphaseBudget,
+} from './face-bvh';
+
+/*
+ * The budget the hole-fill engine runs this tree under (40,000,000 AABB tests, 20,000,000 node visits, 4,000,000
+ * candidates). Restated here, with the same values the test used before the move, because mesh-core must not depend on
+ * a feature package: the oracle comparisons below must never be truncated by a budget.
+ */
+const MAX_AABB_TESTS = 40_000_000;
+const MAX_BVH_NODE_VISITS = 20_000_000;
+const MAX_BROADPHASE_CANDIDATES = 4_000_000;
 
 const GENEROUS: BroadphaseBudget = {
   maxNodeVisits: MAX_BVH_NODE_VISITS,

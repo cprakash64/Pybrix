@@ -4377,3 +4377,575 @@
     transition: none;
   }
 }
+
+/* PYBRIX-08A: Reset plane and Swap sides share one row, each taking half. */
+.split-workspace__plane-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.split-workspace__plane-actions > .secondary-action {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+.split-workspace__plane-actions > .secondary-action[aria-pressed='true'] {
+  border-color: var(--cad-accent, currentColor);
+}
+
+/* ------------------------------------------------------ auto split (08B) -- */
+
+/*
+ * Auto Split lives inside the Split workspace as a second tab. It reuses the workspace's sections,
+ * notes and footer; what is new is the tab strip, the model-type chips, the disclosure and failure
+ * cards and the suggestion list. A status is always a word beside an icon, never a tint alone.
+ */
+.split-mode-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 2px;
+  background: var(--cad-well);
+  border: 1px solid var(--cad-border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.split-mode-tabs__tab {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--cad-text-muted);
+  font: 600 var(--fs-ui) var(--font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.split-mode-tabs__tab:hover {
+  color: var(--cad-text-strong);
+}
+
+.split-mode-tabs__tab[aria-selected='true'] {
+  background: #2e3d4c;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  color: var(--cad-text-strong);
+}
+
+.split-mode-tabs__tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.beta-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--cad-border-strong);
+  border-radius: 999px;
+  color: var(--cad-text);
+  font: 600 10px/1.4 var(--font-body);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.auto-kinds__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+
+.auto-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--cad-border-control);
+  border-radius: 999px;
+  background: var(--cad-control);
+  color: var(--cad-text);
+  font: 500 var(--fs-ui) var(--font-body);
+  cursor: pointer;
+}
+
+.auto-chip[data-selected='true'] {
+  border-color: var(--cad-accent);
+  background: var(--cad-accent-soft);
+  color: var(--cad-text-strong);
+}
+
+.auto-chip[data-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* The radio is the control; the pill is its label. Visually hidden, never display:none. */
+.auto-chip__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.auto-chip:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.auto-kinds__hint,
+.auto-start__note,
+.auto-progress__hint {
+  margin: 0 0 8px;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+
+.auto-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid var(--cad-border);
+  border-radius: var(--radius-control);
+  background: var(--cad-well);
+}
+
+.auto-card--failure {
+  border-color: var(--cad-warning);
+  background: var(--cad-control-raised);
+}
+
+.auto-card--repair,
+.auto-card--stale {
+  border-left: 3px solid var(--cad-warning);
+  background: var(--cad-warning-soft);
+}
+
+.auto-card__title {
+  margin: 0;
+  color: var(--cad-text-strong);
+  font: 600 var(--fs-ui) var(--font-body);
+  line-height: 1.4;
+}
+
+.auto-card__title:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.auto-card--notice {
+  border-left: 3px solid var(--cad-border-strong, var(--cad-border));
+}
+
+.auto-card__figure {
+  margin: 0;
+  color: var(--cad-text-strong);
+  font: 600 var(--fs-ui) var(--font-mono);
+  line-height: 1.4;
+}
+
+.auto-card__body {
+  margin: 0;
+  color: var(--cad-text);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+
+.auto-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.auto-card__actions > button {
+  flex: 1 1 120px;
+  width: auto;
+}
+
+.auto-card__action {
+  width: auto;
+  align-self: flex-start;
+  margin: 2px 0 0;
+  padding: 0 12px;
+}
+
+.auto-start {
+  margin-top: 8px;
+}
+
+.auto-start__button {
+  margin-bottom: 8px;
+}
+
+.auto-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.auto-progress__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--cad-text-strong);
+  font-size: var(--fs-ui);
+}
+
+.auto-progress__cancel {
+  width: auto;
+  align-self: flex-start;
+}
+
+.auto-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.auto-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--cad-border);
+  border-radius: var(--radius-control);
+  background: var(--cad-control);
+}
+
+.auto-row[data-selected='true'] {
+  border-color: var(--cad-accent);
+  background: var(--cad-accent-soft);
+}
+
+.auto-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.auto-row__name {
+  color: var(--cad-text-strong);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.auto-row__op {
+  flex: none;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.auto-row__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--cad-text);
+  font: 600 var(--fs-secondary) var(--font-body);
+}
+
+.auto-row[data-tone='ready'] .auto-row__status {
+  color: var(--cad-success);
+}
+
+.auto-row[data-tone='review'] .auto-row__status,
+.auto-row[data-tone='repair'] .auto-row__status {
+  color: var(--cad-warning);
+}
+
+.auto-row[data-tone='unavailable'] .auto-row__status {
+  color: var(--cad-text-muted);
+}
+
+.auto-row__reason {
+  margin: 0;
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.4;
+}
+
+.auto-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.auto-row__button {
+  flex: 1;
+  width: auto;
+  height: 30px;
+  padding: 0 10px;
+}
+
+.auto-row__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--cad-border-control);
+  border-radius: var(--radius-control);
+  background: var(--cad-control-raised);
+  color: var(--cad-text);
+  cursor: pointer;
+}
+
+.auto-row__icon[aria-pressed='true'] {
+  border-color: var(--cad-accent);
+  color: var(--cad-accent);
+}
+
+.auto-row__icon:focus-visible,
+.auto-component__label input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.auto-row__icon:disabled,
+.auto-row__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.auto-component__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--cad-text);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+.auto-component__faces {
+  color: var(--cad-text-muted);
+  font-size: var(--fs-secondary);
+}
+
+/* Touch-sized targets on a phone (UI-06): 40 px, the same floor the rest of the shell holds. */
+@media (width < 600px) {
+  .split-mode-tabs__tab,
+  .auto-chip,
+  .auto-row__button,
+  .auto-row__icon,
+  .auto-card__actions > button,
+  .auto-card__action,
+  .auto-start__button,
+  .auto-progress__cancel {
+    min-height: 40px;
+  }
+
+  .auto-row__icon {
+    width: 40px;
+  }
+
+  .auto-component__label {
+    min-height: 40px;
+  }
+
+  /* The shared section header was 37 px here; every Auto Split section is under one, and the floor is 40. */
+  .panel-section__toggle {
+    min-height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auto-progress .spin {
+    animation: none;
+  }
+}
+
+.auto-part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: var(--fs-secondary);
+}
+
+.auto-part__label {
+  color: var(--cad-text-muted);
+}
+
+.auto-part__name {
+  color: var(--cad-text-strong);
+  overflow-wrap: anywhere;
+}
+
+/* Intent first; disclosure bodies retain their operation owners. */
+.workflow-intent {
+  padding: 1.25rem 1rem;
+}
+.workflow-intent h2 {
+  margin: 0 0 0.75rem;
+  color: var(--cad-text-strong);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+.workflow-intent p {
+  margin: 0 0 1.25rem;
+  color: var(--cad-text-muted);
+  line-height: 1.6;
+}
+.workflow-intent button {
+  margin: 0 0.5rem 0.5rem 0;
+}
+.workflow-limitation {
+  padding: 1rem;
+  color: var(--cad-text-muted);
+  line-height: 1.6;
+}
+.activity-disclosure > summary {
+  min-height: 40px;
+  padding: 0.75rem 1rem;
+  color: var(--cad-text-muted);
+  cursor: pointer;
+}
+.activity-disclosure > summary:focus-visible {
+  outline: 2px solid var(--cad-accent);
+  outline-offset: -3px;
+}
+.split-workspace .auto-row {
+  border: 0;
+  border-bottom: 1px solid var(--cad-border-subtle);
+  border-radius: 0;
+  background: transparent;
+  padding: 1rem 0;
+}
+.split-workspace .auto-row[data-tone] .auto-row__status {
+  color: var(--cad-text-muted);
+}
+.split-workspace .auto-row__name {
+  font-size: 0.9375rem;
+}
+.split-workspace .split-field__range {
+  display: none;
+}
+.repair-workspace .issue-row__icon,
+.repair-workspace .issue-row__count,
+.repair-workspace .health-summary {
+  color: var(--cad-text-muted);
+}
+.repair-workspace .issue-row__count {
+  font-family: var(--font-body);
+  font-weight: 500;
+}
+.action-footer[hidden] {
+  display: none;
+}
+.repair-workspace .workspace-outcome__alert,
+.split-workspace .workspace-outcome__alert {
+  border-left-color: var(--cad-warning);
+  background: var(--cad-control-raised);
+}
+.split-hud__disclosure > summary {
+  color: var(--cad-text-strong);
+  cursor: pointer;
+  font-size: var(--fs-secondary);
+}
+.split-hud__disclosure > summary:focus-visible {
+  outline: 2px solid var(--cad-accent);
+  outline-offset: 3px;
+}
+.split-hud__disclosure[open] .split-hud__lines {
+  margin-top: 0.5rem;
+}
+
+/* The face of a cut, with its connectors (EC-6). */
+.cut-face {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  margin: 4px 0 8px;
+  background: var(--cad-well);
+  border: 1px solid var(--cad-border);
+  border-radius: 6px;
+  touch-action: none;
+  user-select: none;
+}
+.cut-face__outline {
+  fill: var(--cad-control-raised);
+  stroke: var(--cad-border-strong);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.cut-face__pin {
+  cursor: grab;
+  outline: none;
+}
+.cut-face[data-dragging='true'] .cut-face__pin {
+  cursor: grabbing;
+}
+.cut-face__socket {
+  fill: none;
+  stroke: var(--cad-text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.cut-face__body {
+  fill: var(--cad-accent-soft);
+  stroke: var(--cad-accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.cut-face__number {
+  fill: var(--cad-text-strong);
+  pointer-events: none;
+}
+.cut-face__pin:focus-visible .cut-face__body,
+.cut-face__pin--selected .cut-face__body {
+  stroke: var(--cad-accent-hover);
+  stroke-width: 3;
+}
+.cut-face__pin:focus-visible .cut-face__socket {
+  stroke: var(--cad-accent-ring);
+}
+.connector-positions {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.connector-positions__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: end;
+}
+.connector-positions__row--selected .connector-positions__name {
+  color: var(--cad-text-strong);
+  font-weight: 600;
+}
+.connector-positions__name {
+  align-self: center;
+  color: var(--cad-text);
+  font-size: var(--fs-meta);
+}
+
+.cut-face__axis {
+  fill: var(--cad-text-muted);
+  font-family: var(--font-mono, monospace);
+  pointer-events: none;
+}

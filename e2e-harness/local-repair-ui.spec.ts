@@ -1,3 +1,4 @@
+import { revealControl } from '../e2e/progressive-disclosure';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { pinchedPairsStl } from '../e2e/local-repair-fixtures';
 import { enter, pick } from '../e2e/ui-fixtures';
@@ -27,6 +28,7 @@ async function open(page: Page, name: string, bytes: Buffer, url = '/'): Promise
   ) {
     await toggle.click();
   }
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 }
 
@@ -43,9 +45,12 @@ test('LIMIT: a complex model reaches the safe limit, shown as a partial result, 
   // A narrowed limit (URL option, narrowing only) so a small model reaches the typed limit.
   await open(page, 'many.stl', pinchedPairsStl(120), '/?repairWorkCeiling=1500');
   await expect(count(page, 'non-manifold-vertices')).toHaveText('120');
+  await revealControl(page, page.getByTestId('repair-work-ceiling-note'));
   await expect(page.getByTestId('repair-work-ceiling-note')).toBeVisible();
   await ready(page);
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId('repair-summary')).toHaveAttribute('data-outcome', 'partial-limit');
   await expect(page.getByTestId('repair-summary-support')).toContainText(
@@ -53,6 +58,7 @@ test('LIMIT: a complex model reaches the safe limit, shown as a partial result, 
   );
   await expect(page.locator('[role="alert"]')).toHaveCount(0);
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
   // Some, not all, are repaired: the model is valid and the rest is still reported.
   await expect

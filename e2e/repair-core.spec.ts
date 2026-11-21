@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Download, type Page } from '@playwright/test';
 import { holedCubeStl } from '../scripts/boundary-fill-fixture.mjs';
 import { pick } from './ui-fixtures';
@@ -20,6 +21,7 @@ async function openCube(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await pick(page, 'holed-cube.stl', 'model/stl', Buffer.from(CUBE.bytes));
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 180_000 });
   await expect(page.getByTestId('repair-op-status-fill-openings')).toHaveText('6 to fill', {
     timeout: 180_000,
@@ -27,7 +29,8 @@ async function openCube(page: Page): Promise<void> {
 }
 
 async function previewAndApply(page: Page): Promise<void> {
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
   await page.getByTestId('apply-repair').click();
   // The fresh analysis of the NEW revision settles the card (a complete repair has no
@@ -69,7 +72,8 @@ test('RCF2: preview fills thirteen — six, plus seven separated first — appli
   const triangles = page.getByTestId('status-triangles');
   await expect(triangles).toHaveText(TRIANGLES.toLocaleString('en-US'));
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
   await expect(page.getByTestId('change-count-filledOpenings')).toHaveText('13');
   // Nothing is left open: the seven pinched boundaries became simple openings and were filled.
@@ -177,7 +181,8 @@ test('RCF4: cancelling a preview that would fill openings leaves the model untou
   page,
 }) => {
   await openCube(page);
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
   await page.getByTestId('cancel-repair').click();
   await expect(page.getByTestId('repair-cancelled')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('apply-repair')).toHaveCount(0);
@@ -190,6 +195,7 @@ test('RCF5: switching filling off leaves the openings alone; Repair still has th
   page,
 }) => {
   await openCube(page);
+  await revealControl(page, page.getByTestId('repair-op-toggle-fill-openings'));
   await page.getByTestId('repair-op-toggle-fill-openings').uncheck();
   // The seven pinched vertices are still work for Repair, so it is not disabled.
   await expect(page.getByTestId('preview-repair')).toBeEnabled({ timeout: 60_000 });

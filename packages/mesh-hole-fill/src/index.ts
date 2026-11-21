@@ -49,9 +49,6 @@ export {
 } from './ear-clip';
 export type { EarClipResult, PatchTriangle } from './ear-clip';
 
-export { boxesOverlap, createCounters, faceBoxOf, FaceBvh } from './bvh';
-export type { BroadphaseBudget, BroadphaseCounters } from './bvh';
-
 export {
   analysePatchConnectivity,
   analysePatchFaces,

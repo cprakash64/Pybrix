@@ -1,5 +1,7 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { binaryStlFrom, type Point } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * UI-02: the Repair workspace.
@@ -54,6 +56,7 @@ async function openModel(page: Page, name: string, triangles: Triangle[]): Promi
     mimeType: 'model/stl',
     buffer: binaryStlFrom(triangles),
   });
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 }
 
@@ -107,9 +110,7 @@ test('A: the overview lists every real check, with counts and a health summary',
   // The summary counts categories and is the status bar's too.
   const summary = page.getByTestId('health-summary');
   await expect(summary).toHaveText(/^\d+ errors? · \d+ warnings?$/);
-  await expect(page.getByTestId('status-health')).toHaveText(
-    (await summary.textContent()) ?? 'unreachable',
-  );
+  await expect(page.getByTestId('status-health')).toHaveText('Model details');
   // No row for checks CAD Fixer does not run.
   await expect(page.getByTestId('issue-list')).not.toContainText(/thin wall|gap/i);
   expect(problems).toEqual([]);
@@ -142,17 +143,22 @@ test('B, C: selecting an issue synchronizes the list, the HUD and the inspector'
   expect(second.inspector).toBe(second.hud);
   await expect(page.getByTestId('issue-inspector-coordinates')).toHaveText(/^X .+ Y .+ Z .+$/);
 
+  await revealControl(page, page.getByTestId('occurrence-previous'));
   await page.getByTestId('occurrence-previous').click();
   await expect(page.getByTestId('issue-hud-position')).toHaveText(`1 / ${String(total)}`);
   // Wraps backwards from the first.
+  await revealControl(page, page.getByTestId('occurrence-previous'));
   await page.getByTestId('occurrence-previous').click();
   await expect(page.getByTestId('issue-hud-position')).toHaveText(
     `${String(total)} / ${String(total)}`,
   );
 
   // Dismiss clears the selection everywhere and deletes nothing.
+  await openInspector(page);
+  await revealControl(page, page.getByTestId('issue-dismiss'));
   await page.getByTestId('issue-dismiss').click();
   await expect(page.getByTestId('issue-hud')).toHaveCount(0);
+  await openInspector(page);
   await expect(page.getByTestId('issue-inspector-empty')).toBeVisible();
   await expect(row(page, 'winding-conflicts')).toHaveAttribute('aria-pressed', 'false');
   await expect(row(page, 'winding-conflicts')).toHaveAttribute('data-severity', 'warning');
@@ -185,12 +191,15 @@ test('E: Fix this previews a real whole-part repair, and the findings are re-der
 
   await row(page, 'degenerate-faces').click();
   await expect(page.getByTestId('issue-suggested-fix')).toContainText('whole part');
+  await openInspector(page);
+  await revealControl(page, page.getByTestId('issue-preview-repair'));
   await page.getByTestId('issue-preview-repair').click();
   // The conservative repair builds and validates a candidate; nothing is applied yet.
   await expect(page.getByTestId('apply-repair')).toBeVisible({ timeout: 60_000 });
   await expect(row(page, 'degenerate-faces')).toHaveAttribute('data-severity', 'warning');
 
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
   // Re-analysed at the new revision: the category is now clean, and the
   // selection made against the old revision has gone stale.
@@ -198,6 +207,7 @@ test('E: Fix this previews a real whole-part repair, and the findings are re-der
     timeout: 60_000,
   });
   await expect(page.getByTestId('issue-count-degenerate-faces')).toHaveText('0');
+  await openInspector(page);
   await expect(page.getByTestId('issue-inspector-empty')).toBeVisible();
   // Winding conflicts were not selected for this repair, and remain.
   await expect(row(page, 'winding-conflicts')).toHaveAttribute('data-severity', 'warning');
@@ -213,8 +223,14 @@ test('E: Fix this fills ONE open boundary through the validated fill workflow', 
   await row(page, 'open-boundaries').click();
   await expect(page.getByTestId('issue-hud-position')).toHaveText('1 / 1');
   await expect(page.getByTestId('issue-hud-next')).toBeDisabled();
+  await openInspector(page);
+  await revealControl(page, page.getByTestId('issue-preview-fill'));
   await page.getByTestId('issue-preview-fill').click();
+  await openInspector(page);
+  await revealControl(page, page.getByTestId('issue-apply-fill'));
   await expect(page.getByTestId('issue-apply-fill')).toBeVisible({ timeout: 60_000 });
+  await openInspector(page);
+  await revealControl(page, page.getByTestId('issue-apply-fill'));
   await page.getByTestId('issue-apply-fill').click();
 
   await expect(page.getByTestId('issue-count-open-boundaries')).toHaveText('0', {
@@ -237,11 +253,12 @@ test('F: the Repair workspace works in the drawer, with focus trapped and no ove
     mimeType: 'model/stl',
     buffer: binaryStlFrom(defects()),
   });
-  await expect(page.getByTestId('status-health')).toHaveText(/warning/, { timeout: 60_000 });
+  await expect(page.getByTestId('status-health')).toHaveText('Model details', { timeout: 60_000 });
 
   await page.getByTestId('toggle-tool-drawer').click();
   const drawer = page.getByTestId('tool-panel');
   await expect(drawer).toHaveAttribute('aria-modal', 'true');
+  await revealControl(page, row(page, 'winding-conflicts'));
   await row(page, 'winding-conflicts').focus();
   await page.keyboard.press('Enter');
   await expect(row(page, 'winding-conflicts')).toHaveAttribute('aria-pressed', 'true');

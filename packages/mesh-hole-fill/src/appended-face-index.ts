@@ -1,4 +1,4 @@
-import { createCounters, FaceBvh, type BroadphaseBudget } from './bvh';
+import { createCounters, FaceBvh, type BroadphaseBudget } from '@cadfixer/mesh-core/spatial';
 
 /**
  * REPAIR-CORE-05D — an INCREMENTAL broadphase over the faces a sequential repair has appended.

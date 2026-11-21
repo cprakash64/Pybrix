@@ -50,6 +50,7 @@ import { measurementUnitKey, outputSize, type OutputSize } from '../state/output
 import { useWorkspaceState, useWorkspaceStore } from '../state/store-context';
 import { useDocumentConversion, type ObjOverwritePrompt } from '../state/use-document-conversion';
 import { WorkflowId } from '../state/workflows';
+import { ConnectorEditorSlot } from './ConnectorEditor';
 import {
   ConversionState,
   HoleFillWorkState,
@@ -149,6 +150,8 @@ export function ConvertWorkspace({ active }: { readonly active: boolean }): Reac
         <PanelSection title={CONVERT_WORKSPACE_COPY.sourceSection} testId="convert-source-section">
           {model === undefined ? <EmptySource /> : <SourceCard model={model} />}
         </PanelSection>
+
+        <ConnectorEditorSlot workflow={WorkflowId.Convert} />
 
         <PanelSection
           title={CONVERT_WORKSPACE_COPY.outputsSection}

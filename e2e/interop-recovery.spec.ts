@@ -14,6 +14,7 @@ import {
   zipOverTotalBudget,
 } from './format-fixtures';
 import { binaryStl, truncatedBinaryStl } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * STAGE 6D-A4 — RECOVERY, SUPERSESSION AND LOCALITY, IN A REAL BROWSER.
@@ -190,6 +191,7 @@ test.describe('A4-P: import and export in every format stay on this origin', () 
       await expectLoaded(page, fixture.name, fixture.triangles);
 
       // Export the whole document to all three formats and take the downloads.
+      await openInspector(page);
       await page.getByTestId('open-convert').click();
       await expect(page.getByTestId('convert-workspace')).toBeVisible();
       for (const target of ['stl', 'obj', '3mf'] as const) {

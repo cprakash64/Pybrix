@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { invalidState } from '@cadfixer/shared';
 import { IDENTITY_PART_TRANSFORM } from '@cadfixer/mesh-core';
 import type {
   DocumentHandle,
@@ -12,7 +13,10 @@ import { ShellLayoutProvider } from './shell/shell-layout';
 import { GeometryClientProvider } from '../runtime/client-context';
 import { GeometryClient } from '../runtime/geometry-client';
 import { WorkspaceProvider } from '../state/store-context';
-import { SplitControlsProvider } from '../state/workflow-controllers';
+import {
+  ConnectorEditControlsProvider,
+  SplitControlsProvider,
+} from '../state/workflow-controllers';
 import { WorkspaceStore } from '../state/workspace-store';
 import { WorkflowId } from '../state/workflows';
 import type { LoadedModel } from '../state/model';
@@ -26,7 +30,10 @@ import type { LoadedModel } from '../state/model';
  * precisely, and nothing carried to a part it was not set for.
  */
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 function part(partId: string, zMax = 104): PartDescriptor {
   return {
@@ -96,8 +103,10 @@ function mount(configure: (store: WorkspaceStore) => void): WorkspaceStore {
       <GeometryClientProvider client={client}>
         <ShellLayoutProvider>
           <SplitControlsProvider>
-            <SplitWorkspace />
-            <SplitHud />
+            <ConnectorEditControlsProvider>
+              <SplitWorkspace />
+              <SplitHud />
+            </ConnectorEditControlsProvider>
           </SplitControlsProvider>
         </ShellLayoutProvider>
       </GeometryClientProvider>
@@ -145,6 +154,46 @@ describe('the cut plane', () => {
     expect(store.getSnapshot().splitPlane?.origin[2]).toBe(60);
   });
 
+  it('rolls the plane about the second axis, and the published plane follows', () => {
+    const store = mount((s) => {
+      load(s, 'millimeter');
+    });
+    expect(screen.getByTestId('split-roll')).toHaveValue(0);
+    fireEvent.change(screen.getByTestId('split-roll'), { target: { value: '30' } });
+    fireEvent.blur(screen.getByTestId('split-roll'));
+    const normal = store.getSnapshot().splitPlane?.normal;
+    expect(normal?.[1]).toBeCloseTo(-Math.sin(Math.PI / 6), 9);
+    expect(normal?.[2]).toBeCloseTo(Math.cos(Math.PI / 6), 9);
+    expect(screen.getByTestId('split-hud-cut')).toHaveTextContent('rolled 30.0°');
+  });
+
+  it('swaps sides without moving the plane, and says it is pressed', () => {
+    const store = mount((s) => {
+      load(s, 'millimeter');
+    });
+    const flip = screen.getByTestId('split-flip-plane');
+    expect(flip).toHaveAttribute('aria-pressed', 'false');
+    const before = store.getSnapshot().splitPlane;
+    fireEvent.click(flip);
+    const after = store.getSnapshot().splitPlane;
+    expect(flip).toHaveAttribute('aria-pressed', 'true');
+    expect(after?.origin).toEqual(before?.origin);
+    expect(after?.normal.map((c) => c + 0)).toEqual(before?.normal.map((c) => -c + 0));
+  });
+
+  it('reset restores a level, unflipped plane at the centre', () => {
+    const store = mount((s) => {
+      load(s, 'millimeter');
+    });
+    fireEvent.change(screen.getByTestId('split-roll'), { target: { value: '30' } });
+    fireEvent.blur(screen.getByTestId('split-roll'));
+    fireEvent.click(screen.getByTestId('split-flip-plane'));
+    fireEvent.click(screen.getByTestId('split-reset-plane'));
+    expect(screen.getByTestId('split-roll')).toHaveValue(0);
+    expect(screen.getByTestId('split-flip-plane')).toHaveAttribute('aria-pressed', 'false');
+    expect(store.getSnapshot().splitPlane?.normal).toEqual([0, 0, 1]);
+  });
+
   it('clamps a typed position to the part', () => {
     const store = mount((s) => {
       load(s, 'millimeter');
@@ -183,31 +232,63 @@ describe('the cut plane', () => {
 });
 
 describe('connectors', () => {
-  it('shows only None, round pin and dovetail, as a labelled radio group', () => {
+  it('shows only None and round pin — no dovetail — as a labelled radio group', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
+    fireEvent.click(
+      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
+    );
     const group = screen.getByRole('radiogroup', { name: 'Connector type' });
     const radios = [...group.querySelectorAll('input[type="radio"]')];
-    expect(radios).toHaveLength(3);
+    expect(radios).toHaveLength(2);
     expect(screen.getByTestId('split-connector-none')).toBeChecked();
+    expect(screen.queryByTestId('split-connector-dovetail')).toBeNull();
+    expect(group).not.toHaveTextContent(/dovetail/i);
     expect(group).not.toHaveTextContent(/snap|thread|magnet|puzzle|screw|keyed/i);
   });
 
-  it('disables connectors for a model that states no millimetres, and says why', () => {
+  it('disables connectors for a model that states no unit, and asks how to read it', () => {
     mount((store) => {
       load(store, undefined);
     });
-    expect(screen.getByTestId('split-connector-pin')).toBeDisabled();
-    expect(screen.getByTestId('split-connector-dovetail')).toBeDisabled();
+    expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
+    expect(screen.queryByTestId('split-unit-interpretation')).toBeNull();
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    expect(screen.getByTestId('split-preview')).toBeDisabled();
     expect(screen.getByTestId('split-connector-none')).toBeEnabled();
-    expect(screen.getByTestId('split-connectors-unit')).toHaveTextContent('millimetres');
+    expect(screen.getByTestId('split-connectors-unit')).toHaveTextContent('Choose its units');
+    // Nothing is preselected: no radio is checked until the user chooses.
+    const prompt = screen.getByTestId('split-unit-interpretation');
+    expect(prompt.querySelectorAll('input:checked')).toHaveLength(0);
+  });
+
+  it('enables connectors once the user chooses how to read the units', () => {
+    mount((store) => {
+      load(store, undefined);
+    });
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    fireEvent.click(screen.getByTestId('split-unit-interpretation-inch'));
+    expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
+    expect(screen.getByTestId('split-unit-interpretation-inch')).toBeChecked();
+    expect(screen.queryByTestId('split-connectors-unit')).toBeNull();
+  });
+
+  it('offers no unit choice when the file states its own unit', () => {
+    mount((store) => {
+      load(store, 'millimeter');
+    });
+    expect(screen.queryByTestId('split-unit-interpretation')).toBeNull();
+    expect(screen.getByTestId('split-connector-pin')).toBeEnabled();
   });
 
   it('states pin clearance precisely and shows the socket it produces', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
+    fireEvent.click(
+      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
+    );
     fireEvent.click(screen.getByTestId('split-connector-pin'));
     expect(screen.getByLabelText('Clearance, per side, millimetres')).toHaveValue(0.2);
     expect(screen.getByTestId('split-socket-size')).toHaveTextContent(
@@ -217,19 +298,13 @@ describe('connectors', () => {
     expect(screen.getByTestId('split-socket-size')).toHaveTextContent('socket Ø 4.6 mm');
   });
 
-  it('shows the dovetail slot the clearance produces, and its orientation choice', () => {
-    mount((store) => {
-      load(store, 'millimeter');
-    });
-    fireEvent.click(screen.getByTestId('split-connector-dovetail'));
-    expect(screen.getByTestId('split-slot-size')).toHaveTextContent('Slot 8.4 × 12.4 mm');
-    expect(screen.getByRole('group', { name: 'Dovetail orientation' })).toBeInTheDocument();
-  });
-
   it('refuses to preview a dimension the engine would refuse, and names it', () => {
     mount((store) => {
       load(store, 'millimeter');
     });
+    fireEvent.click(
+      within(screen.getByTestId('split-connectors')).getByRole('button', { name: /Connector/ }),
+    );
     fireEvent.click(screen.getByTestId('split-connector-pin'));
     fireEvent.change(screen.getByTestId('split-pin-diameter'), { target: { value: '0' } });
     expect(screen.getByTestId('split-connector-problem')).toHaveTextContent('Pin diameter');
@@ -284,5 +359,62 @@ describe('the footer', () => {
     });
     expect(screen.getByTestId('split-connector-none')).toBeChecked();
     expect(store.getSnapshot().splitPlane?.origin[2]).toBe(52);
+  });
+});
+
+describe('a refusal about what the connector was asked to BE is said as that, not as an unsafe cut (Stage C03-C2)', () => {
+  /** A worker that answers the preview with the refusal the real engine gives, so the page's own wording is what is observed. */
+  function workerRefuses(code: string, message: string): void {
+    vi.spyOn(GeometryClient.prototype, 'createSplit').mockImplementation(
+      () =>
+        ({
+          promise: Promise.reject(invalidState(message, { code })),
+          cancel: (): void => undefined,
+        }) as unknown as ReturnType<GeometryClient['createSplit']>,
+    );
+  }
+  async function previewWithPin(unit: 'millimeter'): Promise<void> {
+    mount((store) => {
+      load(store, unit);
+    });
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    fireEvent.click(screen.getByTestId('split-preview'));
+    await screen.findByTestId('split-connector-input');
+  }
+  it.each([
+    [
+      'UNKNOWN_UNITS',
+      'This model has no physical units. Set the model units before adding a physical connector.',
+    ],
+    ['CONNECTOR_UNSUPPORTED_TRANSFORM', 'Connectors require uniform model scale.'],
+    [
+      'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+      'Pin diameter of 0.001 mm is outside the range Pybrix can place (0.01–1000 mm).',
+    ],
+  ])(
+    "%s: the worker's sentence is shown, with what is still true, and no advice about the cut",
+    async (code, message) => {
+      workerRefuses(code, message);
+      await previewWithPin('millimeter');
+      const shown = screen.getByTestId('split-connector-input');
+      expect(shown).toHaveTextContent(message);
+      expect(shown).toHaveTextContent('Your model is unchanged.');
+      expect(shown).not.toHaveTextContent(/cut|safely|move/i);
+      expect(shown).toHaveAttribute('role', 'status');
+      // and not the generic cut refusal beside it
+      expect(screen.queryByText(/can't be made safely/)).toBeNull();
+      expect(screen.queryByTestId('split-error')).toBeNull();
+    },
+  );
+  it('any other refusal keeps the cut wording it always had', async () => {
+    workerRefuses('CUT_NOT_SAFE', 'This cut cannot be made safely. Try a different plane.');
+    mount((store) => {
+      load(store, 'millimeter');
+    });
+    fireEvent.click(screen.getByTestId('split-connector-pin'));
+    fireEvent.click(screen.getByTestId('split-preview'));
+    await screen.findByTestId('split-error');
+    expect(screen.queryByTestId('split-connector-input')).toBeNull();
+    expect(screen.getByTestId('split-error')).toHaveTextContent("This cut can't be made safely.");
   });
 });

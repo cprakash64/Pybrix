@@ -27,6 +27,7 @@ import {
   type DocumentDigest,
   type HarnessState,
 } from './harness';
+import { openInspector } from '../e2e/inspector';
 
 /**
  * STAGE 6E-A2 — STREAMED 3MF INGESTION THROUGH THE WHOLE PIPELINE.
@@ -342,6 +343,7 @@ test.describe('6E-A2: a streamed import is the same import, through the whole pi
     for (const mode of ['buffered', 'streaming', 'auto'] as const) {
       await setIngestion(page, mode);
       await importSettled(page, file);
+      await openInspector(page);
       await page.getByTestId('open-convert').click();
       await expect(page.getByTestId('convert-workspace')).toBeVisible();
       for (const target of ['stl', 'obj', '3mf'] as const) {
@@ -550,7 +552,7 @@ test.describe('6E-A2: no ingestion mode admits what the per-entry ceiling refuse
         /per-entry expansion limit is 320 MiB/i,
         { timeout: 60_000 },
       );
-      await expect(page.getByTestId('model-empty')).toBeVisible();
+      await expect(page.getByTestId('model-empty')).toBeAttached();
     }
   });
 });

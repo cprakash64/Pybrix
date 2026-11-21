@@ -14,7 +14,10 @@ import {
   distinctMeshes,
   documentTriangleCount,
   documentVertexCount,
+  IDENTITY_PART_TRANSFORM,
   measureImportGeometry,
+  placeMesh,
+  placementReversesOrientation,
   transformBounds,
   triangleCount,
   unionBounds,
@@ -25,6 +28,7 @@ import {
   type GeometryDocument,
   type MeshBounds,
   type PartId,
+  type PartTransform,
 } from '@cadfixer/mesh-core';
 import {
   DEFAULT_IMPORT_BUDGET,
@@ -45,6 +49,7 @@ import { analyseTopology, estimateTopologyWorkspaceBytes } from '@cadfixer/mesh-
 import {
   HoleFillCandidateStore,
   GeometryEditStore,
+  JointEditStore,
   SplitCandidateStore,
   RepairCandidateStore,
   RepairHistoryStore,
@@ -142,6 +147,11 @@ export const splitCandidates = new SplitCandidateStore(
   repairHistory,
   geometryEdits,
 );
+/**
+ * Edits of an existing connector joint (Stage EC-3), on the same authoritative document and the same one-step history. It shares the
+ * document's edit lifecycle with the split store, so a joint edit and a split exclude one another by construction.
+ */
+export const jointEdits = new JointEditStore(residentDocuments, repairHistory, geometryEdits);
 /** Owns the one disposable nested Manifold worker, when a Boolean is active. */
 export const booleanOperations = new BooleanOperationController();
 
@@ -683,6 +693,35 @@ function describeOmittedParts(document: GeometryDocument, exported: PartId): rea
   ];
 }
 
+/** Whether a placement is exactly the identity. `===`, so a stored negative zero is still the identity, as in every document writer. */
+function isIdentityPlacement(transform: PartTransform): boolean {
+  for (let index = 0; index < 12; index += 1) {
+    if (transform[index] !== IDENTITY_PART_TRANSFORM[index]) return false;
+  }
+  return true;
+}
+
+/**
+ * Says that the file's coordinates are the part AS PLACED, not as stored (Stage C03-D).
+ *
+ * STL has no transform and no unit, so a placement survives only by being applied to the coordinates. The active-part export used to
+ * write the part's local coordinates and say nothing, which put a placed, scaled or mirrored part somewhere other than where the
+ * document has it. Only a part that actually has a placement carries this note: an unplaced part's file is the stored geometry.
+ */
+function describePlacementApplied(transform: PartTransform): readonly Diagnostic[] {
+  if (isIdentityPlacement(transform)) return [];
+  const mirrored = placementReversesOrientation(transform);
+  return [
+    diagnostic(
+      'STL_EXPORT_PLACEMENT_APPLIED',
+      mirrored
+        ? "This part's placement, which mirrors it, was applied to the coordinates in the file, with the triangles turned so the surface still faces outward. STL stores no placement and no unit."
+        : "This part's placement was applied to the coordinates in the file. STL stores no placement and no unit.",
+      { mirrored },
+    ),
+  ];
+}
+
 export const modelExportHandler: OperationHandler<'model/export'> = async (payload, context) => {
   // Resolving the handle AND the part is also the staleness check: an export
   // queued against a document that has since been replaced, or naming a part
@@ -698,8 +737,19 @@ export const modelExportHandler: OperationHandler<'model/export'> = async (paylo
   assertMeshStructure(part.mesh, 'STL export');
   context.reportProgress(0.02, 'writing');
 
+  /*
+   * THE FILE DESCRIBES THE PART WHERE THE DOCUMENT HAS IT. `placeMesh` applies the placement once, in Float64, and turns the triangles
+   * when the placement mirrors, so a closed part stays outward-facing. An unplaced part is written as stored, with no copy at all.
+   * The placed copy is judged by the same structural gate as the stored one: producing geometry is not success. Nothing is written
+   * back: the authoritative mesh keeps its local coordinates and the placement stays the part's one transform authority.
+   */
+  const placed = isIdentityPlacement(part.transform)
+    ? part.mesh
+    : placeMesh(part.mesh, part.transform);
+  if (placed !== part.mesh) assertMeshStructure(placed, 'STL export (placed)');
+
   const writer = requireWriter(MeshFormatId.Stl);
-  const written = await writer.write(part.mesh, {
+  const written = await writer.write(placed, {
     cancellation: context.cancellation,
     budget: DEFAULT_IMPORT_BUDGET,
     encoding: payload.encoding,
@@ -717,7 +767,11 @@ export const modelExportHandler: OperationHandler<'model/export'> = async (paylo
     bytes: written.bytes.buffer,
     byteLength: written.bytes.byteLength,
     encoding: payload.encoding,
-    warnings: [...written.warnings, ...describeOmittedParts(document, part.id)],
+    warnings: [
+      ...written.warnings,
+      ...describePlacementApplied(part.transform),
+      ...describeOmittedParts(document, part.id),
+    ],
   };
 
   return { value, transfer: [written.bytes.buffer] };
@@ -737,6 +791,7 @@ export const modelReleaseHandler: OperationHandler<'model/release'> = (payload) 
   holeFillCandidates.releaseDocument(documentId);
   geometryEdits.releaseDocument(documentId);
   splitCandidates.releaseDocument(documentId);
+  jointEdits.releaseDocument(documentId);
   booleanOperations.cancelDocument(documentId);
   topologyReports.release(documentId);
   const value: ModelReleaseResult = { released };

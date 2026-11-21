@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type, @typescript-eslint/require-await, @typescript-eslint/restrict-template-expressions */
-import {
-  createIndexArray,
-  createPositionArray,
-  triangleCount,
-  type CanonicalMesh,
-} from '@cadfixer/mesh-core';
+import { createIndexArray, createPositionArray, triangleCount } from '@cadfixer/mesh-core';
 import { resourceLimitExceeded, throwIfCancelled } from '@cadfixer/shared';
-import type { BooleanBackend } from '@cadfixer/geometry-runtime';
+import {
+  booleanKernelInputBytes,
+  MAX_BOOLEAN_INPUT_BYTES,
+  type BooleanBackend,
+} from '@cadfixer/geometry-runtime';
 import createManifoldCandidate from './third-party/manifold/manifold-candidate.js';
+import { indexExactCoordinates } from './exact-index';
 
 interface Module {
   HEAPF64: Float64Array;
@@ -31,7 +31,6 @@ interface Module {
   _cf_triangles(): number;
   _cf_reset(): void;
 }
-const MAX_INPUT_BYTES = 128 * 1024 * 1024;
 const MAX_OUTPUT_TRIANGLES = 5_000_000;
 /** The checked-in artifact is built from pinned Manifold 11235e6 and its Apache-2.0 license. */
 export async function createManifoldBooleanBackend(
@@ -47,40 +46,17 @@ export async function createManifoldBooleanBackend(
   return {
     async operate(kind, a, b, cancellation) {
       throwIfCancelled(cancellation);
-      const inputBytes =
-        (a.positions.length + b.positions.length) * 8 + a.indices.byteLength + b.indices.byteLength;
-      if (inputBytes > MAX_INPUT_BYTES)
+      // The budget is derived from the shared split ceiling and this very estimator: see boolean-limits.ts.
+      const inputBytes = booleanKernelInputBytes(a, b);
+      if (inputBytes > MAX_BOOLEAN_INPUT_BYTES)
         throw resourceLimitExceeded(
-          `Manifold input bytes are ${inputBytes}; limit is ${MAX_INPUT_BYTES}.`,
-          { metric: 'inputBytes', observed: inputBytes, limit: MAX_INPUT_BYTES },
+          `Manifold input bytes are ${inputBytes}; limit is ${MAX_BOOLEAN_INPUT_BYTES}.`,
+          { metric: 'inputBytes', observed: inputBytes, limit: MAX_BOOLEAN_INPUT_BYTES },
         );
-      // Manifold requires an indexed closed surface. STL soup uses a distinct
-      // storage index per corner, so recover only EXACT stored-coordinate identity.
-      // No epsilon welding or repair is performed here.
-      const indexExact = (
-        mesh: CanonicalMesh,
-      ): { positions: Float64Array; indices: Uint32Array } => {
-        const map = new Map<string, number>(),
-          out: number[] = [],
-          indices = new Uint32Array(mesh.indices.length);
-        for (let at = 0; at < mesh.indices.length; at++) {
-          const from = (mesh.indices[at] ?? 0) * 3,
-            x = mesh.positions[from] ?? NaN,
-            y = mesh.positions[from + 1] ?? NaN,
-            z = mesh.positions[from + 2] ?? NaN;
-          const key = `${x},${y},${z}`;
-          let id = map.get(key);
-          if (id === undefined) {
-            id = out.length / 3;
-            map.set(key, id);
-            out.push(x, y, z);
-          }
-          indices[at] = id;
-        }
-        return { positions: Float64Array.from(out), indices };
-      };
-      const ia = indexExact(a),
-        ib = indexExact(b);
+      // Manifold requires an indexed closed surface. STL soup uses a distinct storage index per
+      // corner, so recover only EXACT stored-coordinate identity. No epsilon welding or repair.
+      const ia = indexExactCoordinates(a),
+        ib = indexExactCoordinates(b);
       const allocated: number[] = [];
       const pos = (values: Float64Array): number => {
         const p = mod._malloc(values.byteLength);

@@ -1,5 +1,5 @@
 import { AppendedFaceIndex } from './appended-face-index';
-import { createCounters, FaceBvh, type BroadphaseBudget } from './bvh';
+import { createCounters, FaceBvh, type BroadphaseBudget } from '@cadfixer/mesh-core/spatial';
 import type { PatchNarrowphase } from './contract';
 import type { RepairWorkMeter } from './repair-work-budget';
 import type { SurgeryAccept, SurgeryMesh } from './surgery-mesh';

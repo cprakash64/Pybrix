@@ -1,4 +1,5 @@
 import type { SplitPlane } from '@cadfixer/geometry-runtime';
+import { isLengthUnit } from '@cadfixer/shared';
 
 /**
  * THE SPLIT & CONNECT WORKSPACE, decided once: its plane arithmetic, its
@@ -12,11 +13,14 @@ import type { SplitPlane } from '@cadfixer/geometry-runtime';
  * WHAT THE ENGINE CAN DO, and therefore all this may offer (Stage 7B): ONE flat
  * plane per split, normal to X, Y or Z and tilted by one bounded angle; a
  * closed, manifold, consistently wound part; automatic connector placement
- * only; round pins (one to four) or one straight dovetail; connectors only for
- * a document that states millimetres. Nothing here offers a second cut, a
+ * only; round pins (one to four); connectors only for a document that
+ * states millimetres. Nothing here offers a second cut, a
  * custom normal, align-to-face, three-point planes, snap-fits, threads,
  * magnets, manual placement, a margin control, bed fitting or orientation.
  */
+
+/** Which piece(s) of a preview are drawn. Presentation only; nothing about the split changes. */
+export type SplitPieceView = 'both' | 'a' | 'b';
 
 /* ------------------------------------------------------------- plane -- */
 
@@ -31,6 +35,22 @@ export interface SplitPlaneSettings {
   readonly offset: number | undefined;
   /** Degrees, within ±`MAX_SPLIT_TILT_DEGREES`. */
   readonly tilt: number;
+  /**
+   * A second rotation, about the remaining axis (PYBRIX-08A), so the plane's
+   * orientation is not limited to leaning in one direction. Degrees, within the
+   * same bound. Zero leaves the plane exactly as the single tilt made it.
+   */
+  readonly roll: number;
+  /**
+   * Reverses the plane's normal, which swaps Piece A and Piece B. The plane in
+   * space is the same; only which side is called A changes.
+   */
+  readonly flipped: boolean;
+}
+
+/** The plane exactly as a fresh cut starts: along the axis, level, unflipped. */
+export function resetPlaneSettings(axis: SplitAxis): SplitPlaneSettings {
+  return { axis, offset: undefined, tilt: 0, roll: 0, flipped: false };
 }
 
 /** The engine's own bound on the rotation control (Stage 7B). */
@@ -60,6 +80,15 @@ export function tiltAxisOf(axis: SplitAxis): SplitAxis {
   return axis === 'X' ? 'Z' : axis === 'Y' ? 'X' : 'Y';
 }
 
+/**
+ * The axis the ROLL turns the normal about: the one axis neither the plane's
+ * own axis nor its tilt axis. X plane: tilt about Z, roll about Y. Y plane: tilt
+ * about X, roll about Z. Z plane: tilt about Y, roll about X.
+ */
+export function rollAxisOf(axis: SplitAxis): SplitAxis {
+  return axis === 'X' ? 'Y' : axis === 'Y' ? 'Z' : 'X';
+}
+
 export interface SplitRange {
   readonly min: number;
   readonly max: number;
@@ -86,6 +115,25 @@ export function clampTilt(value: number, previous: number): number {
   return Math.min(MAX_SPLIT_TILT_DEGREES, Math.max(-MAX_SPLIT_TILT_DEGREES, value));
 }
 
+/** The roll shares the tilt's bound; a plane never becomes parallel to its axis. */
+export const clampRoll = clampTilt;
+
+/** `normal` turned by `radians` about the world axis `about`. */
+function rotateAbout(
+  normal: readonly [number, number, number],
+  about: SplitAxis,
+  radians: number,
+): [number, number, number] {
+  const c = Math.cos(radians),
+    s = Math.sin(radians),
+    [x, y, z] = normal;
+  return about === 'X'
+    ? [x, y * c - z * s, y * s + z * c]
+    : about === 'Y'
+      ? [x * c + z * s, y, -x * s + z * c]
+      : [x * c - y * s, x * s + y * c, z];
+}
+
 /**
  * THE plane. The only function that turns settings into a normal and an
  * origin; the worker request, the viewport overlay and the HUD all read it.
@@ -97,12 +145,21 @@ export function splitPlaneFor(
   bounds: PartBoundsLike | undefined,
 ): SplitPlane {
   const radians = (settings.tilt * Math.PI) / 180;
-  const normal: readonly [number, number, number] =
+  const tilted: readonly [number, number, number] =
     settings.axis === 'X'
       ? [Math.cos(radians), Math.sin(radians), 0]
       : settings.axis === 'Y'
         ? [0, Math.cos(radians), Math.sin(radians)]
         : [Math.sin(radians), 0, Math.cos(radians)];
+  // A roll of zero is skipped, not applied as an identity rotation: the plane a
+  // user never rolled is byte-for-byte the one the engine was qualified on.
+  const rolled: readonly [number, number, number] =
+    settings.roll === 0
+      ? tilted
+      : rotateAbout(tilted, rollAxisOf(settings.axis), (settings.roll * Math.PI) / 180);
+  const normal: readonly [number, number, number] = settings.flipped
+    ? [-rolled[0], -rolled[1], -rolled[2]]
+    : rolled;
   const center = bounds?.center ?? [0, 0, 0];
   const origin: [number, number, number] = [center[0], center[1], center[2]];
   origin[axisIndex(settings.axis)] = settings.offset ?? splitRange(settings.axis, bounds).center;
@@ -182,25 +239,35 @@ function unitSymbol(unit: string | undefined): string | undefined {
 
 /* --------------------------------------------------------- connectors -- */
 
+/** Every connector kind the ENGINE can report back (a result may name any of them). */
 export type ConnectorKind = 'none' | 'pin' | 'dovetail';
 
+/**
+ * The kinds the interface OFFERS. The dovetail is not among them: measured on the
+ * released engine (PYBRIX connector audit, finding N1) its tip is wider than its
+ * socket's mouth and the socket is closed along its length, so the two pieces
+ * cannot be assembled. Re-offering it needs a redesigned sliding joint with an
+ * entrance and a validated insertion path, not this shape.
+ */
+export type OfferedConnectorKind = Exclude<ConnectorKind, 'dovetail'>;
+
 export interface ConnectorOption {
-  readonly kind: ConnectorKind;
+  readonly kind: OfferedConnectorKind;
   readonly name: string;
   readonly detail: string;
 }
 
 /**
- * EXACTLY THE CONNECTORS THE ENGINE BUILDS. The reference shows eleven; CAD
- * Fixer's Stage 7B Boolean pipeline makes round pins with sockets and one
- * straight dovetail, and "None" is a real choice — a plain cut. Snap-fits,
- * threads, magnets, puzzle keys, tapered plugs, screw holes and keyed prisms
- * have no geometry behind them and have no card.
+ * EXACTLY THE CONNECTORS THE PRODUCT OFFERS. The reference shows eleven; the
+ * Stage 7B Boolean pipeline makes round pins with sockets, and "None" is a real
+ * choice — a plain cut. The straight dovetail the engine can still build is NOT
+ * offered, because its pieces cannot be assembled (see `OfferedConnectorKind`).
+ * Snap-fits, threads, magnets, puzzle keys, tapered plugs, screw holes and keyed
+ * prisms have no geometry behind them and have no card.
  */
 export const CONNECTOR_OPTIONS: readonly ConnectorOption[] = Object.freeze([
   { kind: 'none', name: 'None', detail: 'Plain cut' },
   { kind: 'pin', name: 'Round pin', detail: 'Pin + socket' },
-  { kind: 'dovetail', name: 'Dovetail', detail: 'Straight, one' },
 ]);
 
 export const PIN_COUNTS: readonly (1 | 2 | 3 | 4)[] = Object.freeze([1, 2, 3, 4]);
@@ -215,28 +282,43 @@ export function socketDiameter(pinDiameter: number, radialClearance: number): nu
 }
 
 /**
- * CLEARANCE IS PER SIDE FOR A DOVETAIL: the slot's width and length each grow
- * by twice the clearance. Mirrors `dovetailFemaleDimensions`.
+ * The worker's refusals about what a connector was asked to BE, not about the cut: no unit to size it in, a placement that is not a
+ * similarity, a size outside the physical range, a request that is not physical. They are decisions about the request, each with
+ * its own sentence from the engine's mapper, and none of them is a finding about the model's geometry. The worker names them by the
+ * legacy `details.code` the page already knows; a test holds this list to the engine's own codes.
  */
-export function dovetailSlot(
-  width: number,
-  length: number,
-  perSideClearance: number,
-): { readonly width: number; readonly length: number } {
-  return { width: width + 2 * perSideClearance, length: length + 2 * perSideClearance };
-}
+export const CONNECTOR_INPUT_REFUSAL_CODES: readonly string[] = Object.freeze([
+  'UNKNOWN_UNITS',
+  'CONNECTOR_UNSUPPORTED_TRANSFORM',
+  'CONNECTOR_DIMENSION_OUT_OF_POLICY',
+  'CONNECTOR_REQUEST_NOT_PHYSICAL',
+]);
 
 /** The engine's accepted dimension range (Stage 7B `dimension`). */
 export function isValidDimension(value: number, allowZero = false): boolean {
   return Number.isFinite(value) && value >= (allowZero ? 0 : 0.01) && value <= 1000;
 }
 
-/** Connectors need a stated millimetre document; nothing is converted. */
+/**
+ * Connectors need a known physical unit — stated by the file or chosen by the
+ * user (PYBRIX-08A). Their sizes are millimetres; the request converts them
+ * into the model's coordinate units. The mesh itself is never rescaled.
+ */
 export function connectorsAvailable(unit: string | undefined): boolean {
-  return unit === 'millimeter';
+  return unit !== undefined && isLengthUnit(unit);
 }
 
 /* --------------------------------------------------------------- copy -- */
+
+/**
+ * What the Checks row may say. A surface cut has no solid to close, so it must not claim pieces
+ * were closed or capped; only `volumeInterpretable === false` selects the surface wording.
+ */
+export function describeSplitChecks(volumeInterpretable: boolean | undefined): string {
+  return volumeInterpretable === false
+    ? SPLIT_COPY.piecesValidatedSurface
+    : SPLIT_COPY.piecesValidated;
+}
 
 export const SPLIT_COPY = Object.freeze({
   planeSection: 'Cut plane',
@@ -244,14 +326,25 @@ export const SPLIT_COPY = Object.freeze({
   oneCut:
     'One flat cut per split. To cut further, select a piece after applying and split it again.',
   resetPlane: 'Reset plane',
+  viewGroup: 'Show',
+  piecesValidated: 'Both pieces closed; cut faces capped',
+  piecesValidatedSurface: 'Surface cut: the pieces are open surfaces and no cut face was capped.',
+  flipPlane: 'Swap sides',
+  flipHint: 'Swaps Piece A and Piece B. The cut itself does not move.',
   connectorsSection: 'Connectors',
   connectorsMeta: 'Placed automatically',
   connectorsGroup: 'Connector type',
   placementNote:
-    'Placed automatically on the cut face, inside its material and away from its edges. There is no manual placement.',
+    'Placed automatically on the cut face, away from its edges. Pybrix checks that the connector sits within the cut face, that its socket stays inside the receiving piece, and that the material around the socket and the pin base is no thinner than the edge margin it already requires at the cut face. That is a geometric check, not a claim about strength. There is no manual placement.',
   connectorsNeedMillimetres:
-    'Connectors need a model that states millimetres, because their sizes are millimetres and Pybrix converts no units.',
+    'Connectors have physical sizes, so Pybrix needs to know what this model’s numbers mean. Choose its units to continue.',
   fitNote: 'Printers vary: 0.2 mm is a starting point, not a guarantee of fit.',
+  /**
+   * After a refusal about what was ASKED FOR — the model's unit, its placement, a size outside the range. The sentence above it is the
+   * worker's own (one mapper per cause); this says only what is still true, and sends nowhere: the cut was not examined, so
+   * "move the cut" would be wrong advice.
+   */
+  connectorInputUnchanged: 'Your model is unchanged.',
   resultSection: 'Result',
   noPart: 'Open a model to split it.',
   pieceA: 'Piece A',
@@ -259,7 +352,7 @@ export const SPLIT_COPY = Object.freeze({
   previewLabel: 'Preview — not applied',
   previewButton: 'Preview split',
   applyButton: 'Apply split',
-  discardButton: 'Discard preview',
+  discardButton: 'Cancel',
   cancelButton: 'Cancel',
   undoButton: 'Undo split',
   exportMode: 'Export',
@@ -271,9 +364,10 @@ export const SPLIT_COPY = Object.freeze({
    * WORKSPACE-UX-03: one line each for the action region. The full message is
    * an alert in the scrolling content above it.
    */
-  previewReady: 'Preview ready — nothing has changed until you apply it.',
+  previewReady: 'Ready to apply.',
   applying: 'Applying the split…',
   failedLine: 'No split was made — details above',
+  tooDetailedHint: 'This model is too detailed for Manual Split right now.',
   exportFailedLine: 'The export did not finish — details above',
   exportSection: 'Export pieces',
 });
@@ -288,6 +382,11 @@ export function describeTiltLabel(axis: SplitAxis): string {
   return `Tilt about ${tiltAxisOf(axis)}`;
 }
 
+/** "Roll about X". */
+export function describeRollLabel(axis: SplitAxis): string {
+  return `Roll about ${rollAxisOf(axis)}`;
+}
+
 /** "XY · Z = 54.0 mm", plus the tilt when there is one. */
 export function describeCut(
   settings: SplitPlaneSettings,
@@ -295,7 +394,9 @@ export function describeCut(
   unit: string | undefined,
 ): string {
   const tilt = settings.tilt === 0 ? '' : ` · tilted ${formatNumber(settings.tilt)}°`;
-  return `${describePlaneName(settings.axis)} · ${settings.axis} = ${formatLength(offset, unit)}${tilt}`;
+  const roll = settings.roll === 0 ? '' : ` · rolled ${formatNumber(settings.roll)}°`;
+  const flipped = settings.flipped ? ' · sides swapped' : '';
+  return `${describePlaneName(settings.axis)} · ${settings.axis} = ${formatLength(offset, unit)}${tilt}${roll}${flipped}`;
 }
 
 /** "1 outline" / "2 outlines". A loop is an outline, not a separate piece. */

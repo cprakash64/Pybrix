@@ -1,8 +1,10 @@
+import { revealControl } from './progressive-disclosure';
 import { readFileSync } from 'node:fs';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { objMultiPart } from './format-fixtures';
 import { binaryStl } from './stl-fixtures';
 import { enter, gridBox, openDefects, watchErrors } from './ui-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * PR-01: what CAD Fixer writes, CAD Fixer can read back — through the product.
@@ -119,10 +121,14 @@ test('a repaired model exports as 3MF and reads back repaired', async ({ page })
   const errors = watchErrors(page);
   await page.goto('/');
   await openDefects(page);
+  await revealControl(page, page.getByTestId('issue-row-degenerate-faces'));
   await page.getByTestId('issue-row-degenerate-faces').click();
+  await openInspector(page);
+  await revealControl(page, page.getByTestId('issue-preview-repair'));
   await page.getByTestId('issue-preview-repair').click();
   await expect(page.getByTestId('apply-repair')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
   const repaired = await facts(page);
 

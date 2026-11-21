@@ -1,4 +1,9 @@
-import { FaceBvh, createCounters, faceBoxOf, type BroadphaseBudget } from './bvh';
+import {
+  FaceBvh,
+  createCounters,
+  faceBoxOf,
+  type BroadphaseBudget,
+} from '@cadfixer/mesh-core/spatial';
 import { DEFAULT_HOLE_FILL_LIMITS, type HoleFillLimits } from './limits';
 import type { PatchNarrowphase } from './contract';
 import type { LocalPatchProblem } from './local-region';

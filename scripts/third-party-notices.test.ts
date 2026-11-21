@@ -47,6 +47,7 @@ describe('third-party notices', () => {
    * kernels from their pinned upstream commits.
    */
   it.each([
+    'packages/geometry-runtime/src/third-party/LICENSE',
     'node_modules/react/LICENSE',
     'node_modules/react-dom/LICENSE',
     'node_modules/scheduler/LICENSE',

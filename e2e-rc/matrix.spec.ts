@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { revealControl } from '../e2e/progressive-disclosure';
 import { holedCubeStl } from '../scripts/boundary-fill-fixture.mjs';
 import {
   threeMf,
@@ -16,6 +17,7 @@ import {
   exportStlAndReadBack,
   importModel,
   jsHeapMiB,
+  previewRepair,
   liveWorkers,
   readSummary,
   record,
@@ -49,6 +51,7 @@ test.afterEach(() => {
 async function open(page: Page, name: string, buffer: Buffer, mime = 'model/stl'): Promise<void> {
   await importModel(page, { name, mime, buffer });
   await enterRepair(page);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 120_000 });
 }
 
@@ -64,7 +67,7 @@ async function fullFlow(
   const triangles = (await page.getByTestId('status-triangles').textContent()) ?? '';
 
   const t0 = Date.now();
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   const previewMs = Date.now() - t0;
   const summary = await readSummary(page);
@@ -103,7 +106,7 @@ test('B: a conservative-only model: preview, apply, fresh analysis, undo, export
   expect(await settled(page)).toBe('ready');
   const before = await counts(page);
   expect(before['duplicate-faces']).not.toBe('0');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   await applyAndSettle(page);
   expect((await counts(page))['duplicate-faces']).toBe('0');
@@ -117,7 +120,7 @@ test('C: a local pinch model: the whole flow, then export and re-import', async 
   await open(page, 'pinched.stl', pinchedPairsStl(3));
   await fullFlow(page, 'C pinch', { nonManifoldBefore: '3', nonManifoldAfter: '0' });
   // Re-apply, export what Apply produced, bring it back through the real importer.
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   await applyAndSettle(page);
   const triangles = ((await page.getByTestId('status-triangles').textContent()) ?? '').trim();
@@ -138,7 +141,7 @@ test('E: openings and pinches compose: separated, then filled', async ({ page })
   await open(page, 'holed.stl', Buffer.from(cube.bytes));
   expect(await settled(page)).toBe('ready');
   expect((await counts(page))['open-boundaries']).toBe('13');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   const summary = await readSummary(page);
   expect(summary.outcome).toBe('complete');
@@ -157,7 +160,7 @@ test('F: a safe partial result: truthful preview, applied, the remainder persist
 }) => {
   await open(page, 'refused.stl', refusedPinchStl());
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   const summary = await readSummary(page);
   expect(summary.outcome).toBe('partial-unsupported');
@@ -220,7 +223,7 @@ test('OBJ: the defect-and-clean multi-object model repairs the defective object 
 }) => {
   await open(page, 'two.obj', objDefectAndClean().bytes, 'model/obj');
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   await applyAndSettle(page);
   await page.getByTestId('undo-repair').click();
@@ -241,7 +244,7 @@ test('3MF: an indexed pinched object repairs, applies and undoes', async ({ page
 test('3MF: the defective tetrahedron repairs and undoes', async ({ page }) => {
   await open(page, 'defect.3mf', threeMfDefectiveTetrahedron(), 'model/3mf');
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   await applyAndSettle(page);
   await page.getByTestId('undo-repair').click();
@@ -256,13 +259,13 @@ test('RACES: cancel then retry, replace during a preview, and double activation'
   await open(page, 'many.stl', pinchedPairsStl(400));
   expect(await settled(page)).toBe('ready');
   // Cancel then immediately retry.
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   await expect(page.getByTestId('cancel-repair')).toBeVisible();
   await page.getByTestId('cancel-repair').click();
   await expect(page.getByTestId('repair-cancelled')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('preview-repair')).toBeEnabled();
   expect((await counts(page))['non-manifold-vertices']).toBe('400');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   // Replace the model while a preview exists: the old preview must not survive.
   await importModel(page, { name: 'clean.stl', mime: 'model/stl', buffer: tetrahedronStl() });
@@ -271,7 +274,7 @@ test('RACES: cancel then retry, replace during a preview, and double activation'
   // Double activation of Apply and of Undo commits once.
   await importModel(page, { name: 'p.stl', mime: 'model/stl', buffer: pinchedPairsStl(3) });
   expect(await settled(page)).toBe('ready');
-  await page.getByTestId('preview-repair').click();
+  await previewRepair(page);
   expect(await waitForResult(page)).toBe('candidate');
   await page.evaluate(() => {
     const apply = document.querySelector<HTMLButtonElement>('[data-testid="apply-repair"]');
@@ -307,7 +310,7 @@ test('MEMORY: repeated cycles retain no growing state', async ({ page }) => {
   };
   await sample('start');
   for (let i = 1; i <= 5; i += 1) {
-    await page.getByTestId('preview-repair').click();
+    await previewRepair(page);
     expect(await waitForResult(page)).toBe('candidate');
     await page.getByTestId('discard-preview').click();
     await expect(page.getByTestId('repair-candidate')).toHaveCount(0);
@@ -315,7 +318,7 @@ test('MEMORY: repeated cycles retain no growing state', async ({ page }) => {
     await sample(`discard-${String(i)}`);
   }
   for (let i = 1; i <= 5; i += 1) {
-    await page.getByTestId('preview-repair').click();
+    await previewRepair(page);
     expect(await waitForResult(page)).toBe('candidate');
     await applyAndSettle(page);
     await page.getByTestId('undo-repair').click();
@@ -343,7 +346,7 @@ test('MEMORY (long): twenty apply/undo cycles settle to a plateau and keep only 
   const rss: number[] = [];
   const urls: string[][] = [];
   for (let i = 1; i <= 20; i += 1) {
-    await page.getByTestId('preview-repair').click();
+    await previewRepair(page);
     expect(await waitForResult(page)).toBe('candidate');
     await applyAndSettle(page);
     await page.getByTestId('undo-repair').click();

@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { gridForTriangles, holedCubeStl } from '../scripts/boundary-fill-fixture.mjs';
 import { canvas, enter, openBox, pick } from './ui-fixtures';
@@ -67,7 +68,9 @@ async function frame(page: Page, footerId: string): Promise<Frame> {
     const scrollsToEnd = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
     scroller.scrollTop = before;
     const s = scroller.getBoundingClientRect();
-    const f = footer.getBoundingClientRect();
+    const f = footer.hidden
+      ? { top: s.bottom, bottom: s.bottom, height: 0 }
+      : footer.getBoundingClientRect();
     return {
       scroller: { top: s.top, bottom: s.bottom },
       footer: { top: f.top, bottom: f.bottom, height: f.height },
@@ -94,6 +97,7 @@ async function expectClickable(
   footerId: string,
 ): Promise<void> {
   const control = page.getByTestId(id).first();
+  await revealControl(page, control);
   await control.scrollIntoViewIfNeeded();
   const probe = await control.evaluate((element, footer) => {
     // A visually hidden radio is operated through the label that draws it.
@@ -111,7 +115,9 @@ async function expectClickable(
       hit: target?.closest('[data-testid]')?.getAttribute('data-testid') ?? target?.tagName ?? null,
       top: rect.top,
       bottom: rect.bottom,
-      footerTop: region.getBoundingClientRect().top,
+      footerTop: region.hasAttribute('hidden')
+        ? (document.querySelector('.tool-panel__body')?.getBoundingClientRect().bottom ?? 0)
+        : region.getBoundingClientRect().top,
       scrollerTop:
         document.querySelector('.tool-panel__body')?.getBoundingClientRect().top ?? Number.NaN,
       insideFooter: region.contains(element),
@@ -188,9 +194,11 @@ async function expectFocusClear(
         top: rect.top,
         bottom: rect.bottom,
         limitTop: scroller.getBoundingClientRect().top,
-        limitBottom: region.contains(element)
-          ? region.getBoundingClientRect().bottom
-          : region.getBoundingClientRect().top,
+        limitBottom: region.hasAttribute('hidden')
+          ? scroller.getBoundingClientRect().bottom
+          : region.contains(element)
+            ? region.getBoundingClientRect().bottom
+            : region.getBoundingClientRect().top,
       };
     }, footerId);
   expect(rects.top, `${state}: focused ${id} above the scroll area`).toBeGreaterThanOrEqual(
@@ -249,7 +257,8 @@ for (const viewport of VIEWPORTS) {
     ]);
 
     // PREVIEW, then CANCELLED: discarding returns to the same usable state.
-    await page.getByTestId('preview-repair').click();
+    await revealControl(page, page.getByTestId('advanced-preview-repair'));
+    await page.getByTestId('advanced-preview-repair').click();
     await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
     await expectState(page, 'repair/preview', 'repair-footer', [
       'issue-status-open-boundaries',
@@ -269,7 +278,8 @@ for (const viewport of VIEWPORTS) {
     ]);
 
     // APPLIED: the result is content, and everything above it still scrolls.
-    await page.getByTestId('preview-repair').click();
+    await revealControl(page, page.getByTestId('advanced-preview-repair'));
+    await page.getByTestId('advanced-preview-repair').click();
     await expect(page.getByTestId('apply-repair')).toBeEnabled({ timeout: 180_000 });
     await page.getByTestId('apply-repair').click();
     // The fresh analysis of the NEW revision settles the card (a complete repair has no
@@ -294,7 +304,7 @@ for (const viewport of VIEWPORTS) {
       'repair-applied-headline',
       'repair-applied-changes',
       'repair-applied-remaining',
-      'preview-repair',
+      'repair-continue',
     ]);
     await expectFocusClear(page, 'repair/applied', 'undo-repair', 'repair-footer');
 
@@ -328,6 +338,7 @@ for (const viewport of VIEWPORTS) {
 
     // CONFIGURED: a connector with its own parameters.
     await page.getByTestId('split-connector-pin').scrollIntoViewIfNeeded();
+    await revealControl(page, page.getByTestId('split-connector-pin'));
     await page.getByTestId('split-connector-pin').check({ force: true });
     await expectState(page, 'split/configured', 'split-footer', [
       'split-position-slider',

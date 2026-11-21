@@ -62,7 +62,7 @@ async function load(page: Page, triangles = 250_000): Promise<void> {
   await (
     await chooser
   ).setFiles({ name: 'mesh.stl', mimeType: 'model/stl', buffer: binaryStl(triangles).bytes });
-  await expect(page.getByTestId('fact-triangles')).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByTestId('fact-triangles')).toBeAttached({ timeout: 90_000 });
   await page.getByTestId('workflow-convert').click();
   await page.getByTestId('convert-target-obj').check();
 }

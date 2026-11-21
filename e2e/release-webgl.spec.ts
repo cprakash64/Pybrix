@@ -1,5 +1,7 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { binaryStl, combinedRepairStl } from './stl-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * BQ01–BQ08 — WHAT HAPPENS WHEN THE GPU GOES AWAY.
@@ -105,6 +107,7 @@ test('BQ01: losing the context reports a display failure and keeps the document'
   test.setTimeout(120_000);
   await page.goto('/');
   await openFile(page, 'small.stl', binaryStl(600).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
   const before = await health(page);
@@ -137,6 +140,7 @@ test('BQ02: the authoritative revision does not move when the context is lost', 
   test.setTimeout(120_000);
   await page.goto('/');
   await openFile(page, 'small.stl', binaryStl(600).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
   const before = await scene(page);
@@ -156,6 +160,7 @@ test('BQ03: restoring the context leaves the document intact and exportable', as
   test.setTimeout(180_000);
   await page.goto('/');
   await openFile(page, 'small.stl', binaryStl(600).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
   const before = await health(page);
 
@@ -172,6 +177,7 @@ test('BQ03: restoring the context leaves the document intact and exportable', as
    */
   expect(await health(page)).toEqual(before);
   const pending = page.waitForEvent('download', { timeout: 60_000 });
+  await openInspector(page);
   await page.getByTestId('export-binary').click();
   const download = await pending;
   const stream = await download.createReadStream();
@@ -185,9 +191,12 @@ test('BQ04, BQ05: a preview on screen is never the commit source', async ({ page
   test.setTimeout(180_000);
   await page.goto('/');
   await openFile(page, 'combined.stl', combinedRepairStl());
+  await revealControl(page, page.getByTestId('repair-operations'));
   await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 60_000 });
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
 
   // Lose the GPU with a candidate on screen. The candidate is a HANDLE the
@@ -201,6 +210,7 @@ test('BQ04, BQ05: a preview on screen is never the commit source', async ({ page
 
   const beforeApply = await health(page);
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
 
   /*
@@ -223,12 +233,16 @@ test('BQ06, BQ07: context loss around Undo leaves geometry and GPU counters soun
   test.setTimeout(180_000);
   await page.goto('/');
   await openFile(page, 'combined.stl', combinedRepairStl());
+  await revealControl(page, page.getByTestId('repair-operations'));
   await expect(page.getByTestId('repair-operations')).toBeVisible({ timeout: 60_000 });
   const original = await health(page);
 
-  await page.getByTestId('preview-repair').click();
+  await revealControl(page, page.getByTestId('advanced-preview-repair'));
+  await page.getByTestId('advanced-preview-repair').click();
+  await revealControl(page, page.getByTestId('repair-candidate'));
   await expect(page.getByTestId('repair-candidate')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('apply-repair').click();
+  await revealControl(page, page.getByTestId('repair-applied'));
   await expect(page.getByTestId('repair-applied')).toBeVisible({ timeout: 60_000 });
 
   expect(await installContextControl(page)).toBe(true);
@@ -258,6 +272,7 @@ test('BQ08: a replacement import works after a context fault', async ({ page }) 
   test.setTimeout(180_000);
   await page.goto('/');
   await openFile(page, 'first.stl', binaryStl(400).bytes);
+  await revealControl(page, page.getByTestId('issue-list'));
   await expect(page.getByTestId('issue-list')).toBeVisible({ timeout: 60_000 });
 
   expect(await installContextControl(page)).toBe(true);

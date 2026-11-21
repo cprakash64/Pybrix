@@ -40,7 +40,7 @@ Please do not attach models you are not authorised to share.
 > read a full topology report about it, highlight its defects in 3D, **run a
 > combined conservative repair and eligible simple flat opening fills with a
 > before/after preview, apply it, undo it**, run a read-only self-intersection check, **split a
-> closed part with one flat cut** (optionally with pin or dovetail connectors),
+> closed part with one flat cut** (optionally with round pin connectors),
 > **add a Dots, Lines or Diamond texture to one flat region**, and convert or
 > export to any of the three formats — entirely on your own machine.
 >

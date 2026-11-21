@@ -6,6 +6,7 @@ import {
   distinctMeshes,
   IDENTITY_PART_TRANSFORM,
   partId,
+  placementLinearDeterminant,
   triangleCount,
   type CanonicalMesh,
   type GeometryDocument,
@@ -282,13 +283,26 @@ describe('MF-W05/MF-W06/MF-W13: transforms', () => {
     const written = await write3mfDocument(snapshot, testWriteContextWithDeflate());
     const parsed = await read3mf(written.bytes, testExportReadContext());
 
+    /*
+     * A PLACEMENT THAT MIRRORS THE PART DOES NOT COME BACK AS ITSELF (Stage C03-D2), and the difference is the point: a 3MF build item
+     * whose transform has a negative determinant is a defect to a 3MF consumer, so the part is written as its mesh mirrored in x with
+     * the placement's FIRST basis row negated (a zero stays +0). Every other value, and every placement that does not mirror, returns
+     * bit for bit. The corpus is random, so about half of its placements mirror: both halves of this are exercised thousands of times.
+     */
     let mismatches = 0;
+    let mirroredPlacements = 0;
     for (const [index, part] of parts.entries()) {
       const actual = parsed.document.parts[index]?.transform ?? [];
+      const source = part.transform ?? [];
+      const mirrored = placementLinearDeterminant(source) < 0;
+      if (mirrored) mirroredPlacements += 1;
       for (let at = 0; at < 12; at += 1) {
-        if (!Object.is(actual[at], part.transform?.[at])) mismatches += 1;
+        const value = source[at] ?? Number.NaN;
+        const wanted = mirrored && at < 3 ? (value === 0 ? 0 : -value) : value;
+        if (!Object.is(actual[at], wanted)) mismatches += 1;
       }
     }
+    expect(mirroredPlacements, 'the corpus must exercise the mirrored half').toBeGreaterThan(100);
     expect(mismatches, 'every Float64 transform value must return exactly').toBe(0);
   });
 });

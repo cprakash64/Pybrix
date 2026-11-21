@@ -1,5 +1,7 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { modelXml, threeMf } from './format-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * UI-06: one model through all four workspaces in one session.
@@ -129,12 +131,14 @@ test('one model through Repair, Convert, Split and Texture leaves one healthy ap
   await page.getByTestId('workflow-repair').click();
   await expect(page.getByTestId('issue-count-components')).toHaveText('2', { timeout: 60_000 });
   const finding = page.getByTestId('issue-row-components');
+  await revealControl(page, finding);
   await finding.click();
   await expect(page.getByTestId('issue-inspector-name')).toHaveText('Separate components');
   await expect(page.getByTestId('issue-hud')).toHaveCount(0);
 
   // CONVERT: select a format, then return. Nothing is written.
   await page.getByTestId('workflow-convert').click();
+  await openInspector(page);
   await expect(page.getByTestId('export-summary-destination')).toBeVisible();
   await page.getByTestId('convert-target-obj').check();
   await expect(page.getByTestId('convert-export')).toHaveText('Convert to OBJ');
@@ -149,6 +153,7 @@ test('one model through Repair, Convert, Split and Texture leaves one healthy ap
   // SPLIT: configure, preview, discard.
   await page.getByTestId('workflow-split').click();
   await expect(page.getByTestId('issue-inspector-name')).toHaveCount(0);
+  await revealControl(page, page.getByTestId('split-position-value'));
   await page.getByTestId('split-position-value').fill('30');
   await expect(page.getByTestId('split-hud-cut')).toContainText('30');
   await page.getByTestId('split-preview').click();

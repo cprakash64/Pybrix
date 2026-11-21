@@ -73,6 +73,8 @@ export interface ShellLayout {
    * switched to is not left behind a closed drawer.
    */
   readonly showToolPanel: () => void;
+  /** Opens model information without changing the active workflow. */
+  readonly showInspector: () => void;
   readonly closeDrawers: () => void;
   /**
    * The drawer that is open AND is a drawer at this width. A docked panel is
@@ -86,7 +88,10 @@ export interface ShellLayout {
 const ShellLayoutContext = createContext<ShellLayout | undefined>(undefined);
 
 export function ShellLayoutProvider({ children }: { readonly children: ReactNode }): ReactNode {
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  // COLLAPSED BY DEFAULT: a fresh session gives the viewport the width. The flag is
+  // session state only — nothing is persisted, so an old stored preference can
+  // never force the panel open or shut.
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [inspectorDrawerOpen, setInspectorDrawerOpen] = useState(false);
   const [toolDrawerOpen, setToolDrawerOpen] = useState(false);
   const toolIsDrawer = useMediaQuery(TOOL_DRAWER_QUERY);
@@ -114,6 +119,16 @@ export function ShellLayoutProvider({ children }: { readonly children: ReactNode
     setToolDrawerOpen(false);
     setInspectorDrawerOpen((open) => !open);
   }, [rememberOpener]);
+
+  const showInspector = useCallback((): void => {
+    if (inspectorIsDrawer) {
+      rememberOpener();
+      setToolDrawerOpen(false);
+      setInspectorDrawerOpen(true);
+    } else {
+      setInspectorCollapsed(false);
+    }
+  }, [inspectorIsDrawer, rememberOpener]);
 
   const toggleToolDrawer = useCallback((): void => {
     rememberOpener();
@@ -179,6 +194,7 @@ export function ShellLayoutProvider({ children }: { readonly children: ReactNode
       toggleInspectorDrawer,
       toggleToolDrawer,
       showToolPanel,
+      showInspector,
       closeDrawers,
       modalDrawer,
     }),
@@ -186,6 +202,7 @@ export function ShellLayoutProvider({ children }: { readonly children: ReactNode
       modalDrawer,
       closeDrawers,
       showToolPanel,
+      showInspector,
       inspectorCollapsed,
       inspectorDrawerOpen,
       toggleInspectorDrawer,

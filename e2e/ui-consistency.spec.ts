@@ -1,5 +1,7 @@
+import { revealControl } from './progressive-disclosure';
 import { expect, test, type Page } from '@playwright/test';
 import { enter, openBox, openDefects, selectFace } from './ui-fixtures';
+import { openInspector } from './inspector';
 
 /**
  * UI-06: the visual-regression foundation.
@@ -78,6 +80,9 @@ test('shell geometry and drawer tiers hold at every breakpoint', async ({ page }
     { width: 390, tool: undefined, inspector: undefined, toolDrawer: true, inspectorDrawer: true },
   ];
   await page.goto('/');
+  // Collapsed by default (PYBRIX-08A); the docked tiers below measure it open.
+  const rail = page.getByTestId('expand-inspector');
+  if (await rail.isVisible()) await rail.click();
   for (const tier of tiers) {
     await page.setViewportSize({ width: tier.width, height: 844 });
     const top = await rect(page, '.topbar');
@@ -118,6 +123,10 @@ test('the four workspaces share one control family', async ({ page }) => {
   const shape = ['border-top-left-radius', 'border-top-width', 'font-weight', 'font-size'];
   for (const id of WORKSPACES) {
     await enter(page, id);
+    if (id === 'split') {
+      await revealControl(page, page.getByTestId('split-connector-none'));
+      await revealControl(page, page.getByTestId('split-position-value'));
+    }
     titles.push(...(await styles(page, '#tool-panel .panel-section__title', font)));
     primaries.push(
       ...(await styles(page, '#tool-panel .primary-action, #tool-panel .action--primary', shape)),
@@ -166,7 +175,9 @@ test('the four workspaces share one control family', async ({ page }) => {
 
   // Format, connector and pattern cards are one family: radius, border,
   // padding; each at least a comfortable target.
-  expect(cards.length).toBeGreaterThanOrEqual(10);
+  // Nine since v0.7.0: the dovetail connector card was removed because its two
+  // halves cannot be assembled (it was the tenth).
+  expect(cards.length).toBeGreaterThanOrEqual(9);
   for (const property of [
     'border-top-left-radius',
     'border-top-width',
@@ -202,6 +213,7 @@ test('a selected card reads the same in every workspace, and not by colour alone
     // selected cards.
     const scope = `[data-testid="${id}-workspace"] .format-card[data-selected="true"]`;
     const card = page.locator(scope).first();
+    await revealControl(page, card);
     await expect(card).toBeVisible();
     // The check mark is the non-colour cue, and the radio is really checked.
     await expect(card.locator('.format-card__check')).toBeVisible();
@@ -222,6 +234,7 @@ test('a selected card reads the same in every workspace, and not by colour alone
 test('the inspector keeps one order, context first, in every workspace', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
+  await openInspector(page);
   const order = ['Selection', 'Model', 'Export', 'Runtime'];
   // Export appears only once there is a model to export.
   await expect(page.locator('#inspector .panel-section__title:visible')).toHaveText([
@@ -248,6 +261,7 @@ test('HUDs stay in their band, clear of the toolbar and the view cube', async ({
     await openDefects(page);
     // An issue with occurrences: its HUD shows in Repair.
     if (width < 900) await page.getByTestId('toggle-tool-drawer').click();
+    await revealControl(page, page.getByTestId('issue-row-degenerate-faces'));
     await page.getByTestId('issue-row-degenerate-faces').click();
     if (width < 900) await page.keyboard.press('Escape');
     await expect(page.getByTestId('issue-hud')).toBeVisible();
@@ -269,7 +283,7 @@ test('on a phone every workspace’s drawer fits, and its primary action is reac
   await page.goto('/');
   await openBox(page);
   const primaryFor = {
-    repair: 'preview-repair',
+    repair: 'repair-continue',
     convert: 'convert-export',
     split: 'split-preview',
     texture: 'texture-generate',

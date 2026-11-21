@@ -1,3 +1,4 @@
+import { isLengthUnit } from '@cadfixer/shared';
 import type { TextureMode, TexturePattern } from '@cadfixer/geometry-runtime';
 import { formatArea } from './split-presentation';
 
@@ -83,9 +84,13 @@ export function textureSettingsProblem(settings: TextureSettings): string | unde
   return undefined;
 }
 
-/** Dimensions are millimetres; nothing is converted. */
+/**
+ * Texture sizes are physical, so a known unit is needed — stated by the file or
+ * chosen by the user (PYBRIX-08A). The request converts millimetres into the
+ * model's coordinate units; the mesh is not rescaled.
+ */
 export function textureAvailable(unit: string | undefined): boolean {
-  return unit === 'millimeter';
+  return unit !== undefined && isLengthUnit(unit);
 }
 
 export function describeFeatureLabel(pattern: TexturePattern): string {
@@ -140,7 +145,7 @@ export const TEXTURE_COPY = Object.freeze({
   undoButton: 'Undo texture',
   noModel: 'Open a model to texture one of its flat faces.',
   needsMillimetres:
-    'Texture sizes are millimetres, and this model does not state millimetres. Pybrix converts no units, so texturing is unavailable for it.',
+    'Texture sizes are physical, and this model does not state its units. Choose how to read its dimensions to continue.',
   hintSelect: 'Click a flat face of the model to select it',
   hintSelected: 'Click another face to replace the selection',
   previewLabel: 'Preview — not applied',

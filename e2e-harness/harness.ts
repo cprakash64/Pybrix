@@ -248,6 +248,15 @@ export async function loadFixture(page: Page, fixture: Fixture): Promise<Harness
     .poll(async () => (await readScene(page)).modelObjects, { timeout: 60_000 })
     .toBe(loaded.partCount);
 
+  /*
+   * PYBRIX-08A: a new document starts with the Inspector collapsed. These suites
+   * are about geometry — the part selector, the facts, the export panel all live
+   * in the Inspector — so they open it as a user would, once the document is in.
+   * Below 1200 px the Inspector is a drawer and each such spec opens it itself.
+   */
+  const rail = page.getByTestId('expand-inspector');
+  if (await rail.isVisible()) await rail.click();
+
   return loaded;
 }
 

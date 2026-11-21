@@ -1,3 +1,4 @@
+import { revealControl } from './progressive-disclosure';
 import type { Page } from '@playwright/test';
 
 /**
@@ -11,6 +12,7 @@ import type { Page } from '@playwright/test';
  * in the document.
  */
 export async function openAdvancedDiagnostics(page: Page): Promise<void> {
+  await revealControl(page, page.getByTestId('advanced-diagnostics'));
   const toggle = page
     .getByTestId('advanced-diagnostics')
     .getByRole('button', { name: 'Advanced diagnostics', exact: true });
@@ -18,6 +20,7 @@ export async function openAdvancedDiagnostics(page: Page): Promise<void> {
 }
 
 export async function openPreviewDetails(page: Page): Promise<void> {
+  await revealControl(page, page.getByTestId('repair-preview-details-toggle'));
   const toggle = page.getByTestId('repair-preview-details-toggle');
   if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
 }

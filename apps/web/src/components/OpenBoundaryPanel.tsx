@@ -5,6 +5,8 @@ import { InfoButton, InfoPanel, useInfoDisclosure } from './shell/info';
 import { PanelSection } from './shell/primitives';
 import { HOLE_FILL_MAX_PART_FACES } from '@cadfixer/geometry-runtime';
 import { useWorkspaceState } from '../state/store-context';
+import { currentJoints } from '../state/joint-presentation';
+import { disclosureFor } from '../state/connector-edit-presentation';
 import { useHoleFillControls } from '../state/workflow-controllers';
 import {
   HOLE_FILL_APPLIED_QUALIFIER,
@@ -62,7 +64,12 @@ import { describeActivePart } from '../state/part-presentation';
  * never be confused, because the index is never sent anywhere.
  */
 export function OpenBoundaryPanel(): ReactNode {
-  const { model, activePartId, holeFill } = useWorkspaceState();
+  const { model, activePartId, holeFill, joints } = useWorkspaceState();
+  // Said before Apply: what this fill does to the connectors recorded on this piece, when it touches any.
+  const connectorNote =
+    activePartId === undefined
+      ? undefined
+      : disclosureFor(currentJoints(joints, model?.handle), activePartId);
   const controls = useHoleFillControls();
   const statusRef = useRef<HTMLDivElement>(null);
 
@@ -317,6 +324,11 @@ export function OpenBoundaryPanel(): ReactNode {
                   : `${candidate.patchTriangleCount.toLocaleString()} triangles`}
                 . No points were added, and none of yours were moved.
               </p>
+              {connectorNote === undefined ? null : (
+                <p className="panel__note" data-testid="hole-fill-connector-note">
+                  {connectorNote}
+                </p>
+              )}
 
               <div className="panel__actions">
                 <button

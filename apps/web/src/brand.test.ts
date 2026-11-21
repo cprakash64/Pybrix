@@ -29,7 +29,8 @@ describe('index.html metadata', () => {
     const description = /name="description"\s+content="([^"]+)"/.exec(html)?.[1] ?? '';
     expect(description).toMatch(/^Pybrix /);
     expect(description).toMatch(/STL, OBJ and 3MF/);
-    expect(description).toMatch(/locally/);
+    // The one privacy claim the page makes is the one that is true of every workflow.
+    expect(description).toMatch(/original 3D file stays on your device/);
     // Nothing the product cannot back up.
     expect(description).not.toMatch(/any file|every file|printable|guarantee|cloud|unlimited/i);
     expect(description).not.toMatch(/\bAI\b/);
