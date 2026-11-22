@@ -1,13 +1,15 @@
 # Format support matrix and known limitations
 
-Released capability reference for the **Pybrix v0.6.1 Technical Preview**, whose
-capabilities are those of v0.6.0: v0.6.1 changes how a Repair result is
-described, not what Repair does. The 3MF
-per-entry ceiling remains 320 MiB; model entries from 128 MiB up are read by
-streaming. The live product is <https://pybrix.com>. Large 3MF export can be
-refused when serialized XML exceeds the 320 MiB validation/write policy; this
-does not reduce streamed import capability. See the [v0.6.0 release notes](V0_6_0_TECHNICAL_PREVIEW_RELEASE.md)
-for the qualified Repair scope and safety boundaries.
+Released capability reference for the **Pybrix v0.8.0 Technical Preview**.
+Import and 3MF size policy are unchanged since v0.6.0. v0.8.0 changes how a
+single part is exported (placement applied for STL and OBJ) and adds editable,
+physically sized connectors. The 3MF per-entry ceiling remains 320 MiB; model
+entries from 128 MiB up are read by streaming. The live product is
+<https://pybrix.com>. Large 3MF export can be refused when serialized XML
+exceeds the 320 MiB validation/write policy; this does not reduce streamed
+import capability. See the
+[v0.8.0 release notes](V0_8_0_TECHNICAL_PREVIEW_RELEASE.md) for the qualified
+scope and safety boundaries.
 
 Written in Stage 6D-A4 from **measured behaviour** — the production import pipeline run over
 2,130 real and reference files and a deterministic mutation campaign — not from intent. Every "yes" below is
@@ -56,6 +58,20 @@ not state. ASCII STL already worked this way.
 Every export is read back by the production reader and compared with its source
 before it is offered; there is no way to skip that.
 
+## Split and connectors
+
+- Plain split operates on one selected part and one plane at a time. Eligible
+  open surfaces may be plain-cut when the cut itself is safe, but connectors
+  require an eligible closed manifold solid.
+- Connector dimensions are specified in millimetres after the model's unit
+  meaning is explicitly asserted. Round pin/socket connectors can be edited
+  after a split.
+- The relevant part ceiling is **2,000,000 triangles**. This is a ceiling, not
+  a guarantee: the exact cut's bounded work budget can refuse closed models
+  between about 1.5 million and 2.0 million triangles.
+- Editable connectors were qualified on a closed model of about 1.5 million
+  triangles. That measured point is **not** a claimed maximum.
+
 ## Known limitations of the Technical Preview
 
 - **Conservative repair and eligible simple flat opening fills** share Repair
@@ -66,12 +82,14 @@ before it is offered; there is no way to skip that.
 - **Selected-opening tool** retains its separate limits: up to 512 rim points
   on a part of up to 250,000 triangles. Large-mesh Repair model uses its own
   resource policy; this tool limit is not a general Repair model ceiling.
-- **Split** — one selected part and one plane at a time, on an eligible closed
-  manifold solid. Connector choices are None and round Pin/Socket (one to
-  four); the dovetail is not offered since v0.7.0. Split Preview can be shown
-  assembled or exploded; the exploded layout is display-only.
-  Connector dimensions require an explicit-millimetre document. Preview,
-  Apply, Cancel, individual STL piece export, and one-step Undo are supported.
+- **Split** — one selected part and one plane at a time. Eligible open surfaces
+  can be plain-cut; connectors require an eligible closed manifold solid.
+  Connector choices are None and round Pin/Socket (one to four); the dovetail
+  is not offered since v0.7.0. Split Preview can be shown assembled or
+  exploded; the exploded layout is display-only. Connector dimensions are
+  specified in millimetres after the model's unit meaning is explicitly
+  asserted. Connectors can be edited after a split. Preview, Apply, Cancel,
+  individual STL piece export, and one-step Undo are supported.
 - **Surface Texture** — one planar connected region on one part at a time.
   Dots, Lines, and Diamond support Emboss and Engrave, with configurable size,
   centre-to-centre spacing, height/depth, and rotation. Dimensions require an
