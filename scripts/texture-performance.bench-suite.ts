@@ -152,6 +152,9 @@ describe('Stage 7C Texture performance qualification', () => {
         },
         new CancellationSource().token,
       ),
-    ).rejects.toThrow(/Region has more than 100000 triangles/);
+    ).rejects.toMatchObject({
+      code: 'RESOURCE_LIMIT_EXCEEDED',
+      details: { reason: 'EDIT_REGION_TOO_LARGE', limit: 100_000 },
+    });
   });
 });

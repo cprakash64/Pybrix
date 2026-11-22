@@ -126,6 +126,9 @@ export type {
   MeshValidationReport,
 } from './validation';
 
+export { exactVertexKey } from './exact-vertex-key';
+export { EditRefusal, MAX_EDIT_REGION_TRIANGLES, MAX_EDIT_SOURCE_TRIANGLES } from './edit-limits';
+
 export {
   classifyEditPlane,
   createEditFrame,

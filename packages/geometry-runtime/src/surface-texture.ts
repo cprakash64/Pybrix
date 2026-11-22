@@ -2,6 +2,8 @@ import {
   computeBounds,
   createIndexArray,
   createPositionArray,
+  exactVertexKey,
+  MAX_EDIT_REGION_TRIANGLES,
   selectEditSurface,
   type CanonicalMesh,
   type EditFrame,
@@ -61,7 +63,7 @@ export interface SurfaceTextureResult {
 export const MAX_TEXTURE_ELEMENTS = 500;
 export const MAX_TEXTURE_PRIMITIVE_TRIANGLES = 64_000;
 const CIRCLE_SEGMENTS = 24;
-const MAX_REGION_TRIANGLES = 100_000;
+const MAX_REGION_TRIANGLES = MAX_EDIT_REGION_TRIANGLES;
 const NORMAL_ANGLE = (2 * Math.PI) / 180;
 
 type Point2 = readonly [number, number];
@@ -101,8 +103,33 @@ function segmentDistance(p: Point2, a: Point2, b: Point2): number {
   const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / squared));
   return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
 }
+/**
+ * The selected region in the face's own plane: each triangle's corners and the BOUNDARY edges,
+ * those used by exactly one triangle of the region.
+ *
+ * Whether two triangles share an edge is a question about EXACT STORED COORDINATES (ADR 0009),
+ * never about vertex indices. An STL import is triangle soup, so every corner has its own index and
+ * index pairs say no two triangles touch: every edge looked like a boundary, no element could keep
+ * its margin from it, and an STL model could not be textured at all (TEXTURE-FIX-01, D1). Each
+ * distinct vertex is identified once and edges are keyed by the two identities, so the cost
+ * is the region's, not the part's.
+ */
 function projectedRegion(mesh: CanonicalMesh, region: SurfaceRegion): ProjectedRegion {
   const incidence = new Map<string, { count: number; a: Point2; b: Point2 }>();
+  const identityOfVertex = new Map<number, number>();
+  const identityOfPoint = new Map<string, number>();
+  const identify = (vertexId: number): number => {
+    const known = identityOfVertex.get(vertexId);
+    if (known !== undefined) return known;
+    const key = exactVertexKey(mesh.positions, vertexId);
+    let identity = identityOfPoint.get(key);
+    if (identity === undefined) {
+      identity = identityOfPoint.size;
+      identityOfPoint.set(key, identity);
+    }
+    identityOfVertex.set(vertexId, identity);
+    return identity;
+  };
   const triangles: [Point2, Point2, Point2][] = [];
   let minU = Infinity,
     maxU = -Infinity,
@@ -124,8 +151,8 @@ function projectedRegion(mesh: CanonicalMesh, region: SurfaceRegion): ProjectedR
       maxV = Math.max(maxV, point[1]);
     }
     for (let edge = 0; edge < 3; edge++) {
-      const ai = ids[edge] ?? -1,
-        bi = ids[(edge + 1) % 3] ?? -1;
+      const ai = identify(ids[edge] ?? -1),
+        bi = identify(ids[(edge + 1) % 3] ?? -1);
       const key = ai < bi ? `${String(ai)}:${String(bi)}` : `${String(bi)}:${String(ai)}`;
       const previous = incidence.get(key);
       if (previous) previous.count++;

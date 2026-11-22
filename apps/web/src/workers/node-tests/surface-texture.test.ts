@@ -266,3 +266,144 @@ describe('Stage 7C surface texture', () => {
     expect(meshSurfaceArea(mesh, face.region.triangleIds)).toBeCloseTo(400, 9);
   });
 });
+
+/**
+ * TEXTURE-FIX-01, D1. An STL import is triangle soup: no two triangles share a vertex index.
+ * The layout found the selected region's boundary by index pairs, so on soup every edge looked
+ * like a boundary and no element could keep its margin from it. The same solid indexed worked.
+ * Connectivity here is exact stored coordinates (ADR 0009), and nothing is welded.
+ */
+function toSoup(mesh: CanonicalMesh, negateZeros = false): CanonicalMesh {
+  const corners = mesh.indices.length;
+  const positions = createPositionArray(corners * 3);
+  const indices = createIndexArray(corners);
+  for (let corner = 0; corner < corners; corner += 1) {
+    const from = (mesh.indices[corner] ?? 0) * 3;
+    positions.set(mesh.positions.subarray(from, from + 3), corner * 3);
+    indices[corner] = corner;
+    // Half the zero coordinates become -0: the same point, written the other way.
+    if (negateZeros && corner % 2 === 0)
+      for (let axis = 0; axis < 3; axis += 1)
+        if (positions[corner * 3 + axis] === 0) positions[corner * 3 + axis] = -0;
+  }
+  return { positions, indices, metadata: {} };
+}
+/**
+ * A closed prism over a flat surface: the surface itself (top faces first, so triangle 0 is on
+ * the textured face), its mirror image below, and a wall under every boundary edge. Outward-wound.
+ */
+function prism(surface: CanonicalMesh, thickness: number): CanonicalMesh {
+  const vertexCount = surface.positions.length / 3;
+  const triangleCount = surface.indices.length / 3;
+  const uses = new Map<string, { from: number; to: number; count: number }>();
+  for (let triangle = 0; triangle < triangleCount; triangle += 1)
+    for (let edge = 0; edge < 3; edge += 1) {
+      const from = surface.indices[triangle * 3 + edge] ?? 0;
+      const to = surface.indices[triangle * 3 + ((edge + 1) % 3)] ?? 0;
+      const key = from < to ? `${String(from)}:${String(to)}` : `${String(to)}:${String(from)}`;
+      const seen = uses.get(key);
+      if (seen) seen.count += 1;
+      else uses.set(key, { from, to, count: 1 });
+    }
+  const corners: number[] = [];
+  for (const corner of surface.indices) corners.push(corner + vertexCount);
+  for (let triangle = 0; triangle < triangleCount; triangle += 1)
+    corners.push(
+      surface.indices[triangle * 3] ?? 0,
+      surface.indices[triangle * 3 + 2] ?? 0,
+      surface.indices[triangle * 3 + 1] ?? 0,
+    );
+  for (const { from, to, count } of uses.values())
+    if (count === 1)
+      corners.push(from, to, to + vertexCount, from, to + vertexCount, from + vertexCount);
+  const positions = createPositionArray(vertexCount * 6);
+  positions.set(surface.positions, 0);
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    positions[(vertexCount + vertex) * 3] = surface.positions[vertex * 3] ?? 0;
+    positions[(vertexCount + vertex) * 3 + 1] = surface.positions[vertex * 3 + 1] ?? 0;
+    positions[(vertexCount + vertex) * 3 + 2] =
+      (surface.positions[vertex * 3 + 2] ?? 0) + thickness;
+  }
+  const indices = createIndexArray(corners.length);
+  indices.set(corners);
+  return { positions, indices, metadata: {} };
+}
+const soupFixtures: readonly (readonly [
+  string,
+  () => CanonicalMesh,
+  Partial<SurfaceTextureRequest>,
+])[] = [
+  ['cube face', (): CanonicalMesh => cube(), {}],
+  [
+    'plate with a square hole',
+    (): CanonicalMesh => prism(planarRing(), 4),
+    { seedTriangle: 0, featureSize: 1, spacing: 2 },
+  ],
+  [
+    'concave L',
+    (): CanonicalMesh => prism(concaveL(), 4),
+    { seedTriangle: 0, featureSize: 1, spacing: 2 },
+  ],
+];
+describe('TEXTURE-FIX-01 D1: a model with no shared vertices textures like its indexed twin', () => {
+  it.each(soupFixtures)('lays out the %s identically on soup and indexed', (_name, make, over) => {
+    const token = new CancellationSource().token;
+    const indexed = buildSurfaceTextureLayout(make(), request(over), token);
+    const soup = buildSurfaceTextureLayout(toSoup(make()), request(over), token);
+    expect(indexed.instances.length).toBeGreaterThan(0);
+    expect(soup.region.triangleIds).toEqual(indexed.region.triangleIds);
+    expect(soup.edgeMargin).toBe(indexed.edgeMargin);
+    expect(soup.instances).toEqual(indexed.instances);
+  });
+
+  it.each(soupFixtures)('describes the %s layout identically on soup', (_name, make, over) => {
+    const token = new CancellationSource().token;
+    expect(describeTextureLayout(toSoup(make()), request(over), token)).toEqual(
+      describeTextureLayout(make(), request(over), token),
+    );
+  });
+
+  it('reads -0 and +0 as one coordinate, as topology does', () => {
+    const token = new CancellationSource().token;
+    const over = { seedTriangle: 0, featureSize: 1, spacing: 2 };
+    expect(
+      buildSurfaceTextureLayout(toSoup(prism(planarRing(), 4), true), request(over), token)
+        .instances,
+    ).toEqual(buildSurfaceTextureLayout(prism(planarRing(), 4), request(over), token).instances);
+  });
+
+  it.each([
+    ['dots', 'emboss'],
+    ['dots', 'engrave'],
+    ['lines', 'emboss'],
+    ['diamond', 'engrave'],
+  ] as const)(
+    'textures a soup cube like the indexed cube: %s %s (operand, Boolean, validation)',
+    async (pattern, mode) => {
+      const backend = await createManifoldBooleanBackend(binary);
+      const settings = request({
+        pattern,
+        mode,
+        featureSize: 2,
+        spacing: 7,
+        rotationDegrees: pattern === 'diamond' ? 45 : 0,
+      });
+      const indexed = await textureSurface(
+        backend,
+        cube(),
+        settings,
+        new CancellationSource().token,
+      );
+      const soup = await textureSurface(
+        backend,
+        toSoup(cube()),
+        settings,
+        new CancellationSource().token,
+      );
+      expect(soup.elementCount).toBe(indexed.elementCount);
+      expect(soup.candidateTriangleCount).toBe(indexed.candidateTriangleCount);
+      expect(meshVolume(soup.mesh)).toBeCloseTo(meshVolume(indexed.mesh), 3);
+      expect(meshSurfaceArea(soup.mesh)).toBeCloseTo(meshSurfaceArea(indexed.mesh), 3);
+    },
+  );
+});

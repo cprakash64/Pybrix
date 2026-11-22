@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isAppError, type AppError } from '@cadfixer/shared';
 import { createIndexArray, createPositionArray, type CanonicalMesh } from './mesh';
 import {
   classifyEditPlane,
@@ -27,9 +28,11 @@ describe('bounded surface selection', () => {
     expect(growEditRegion(square, 1, { maxNormalAngleRadians: 0.01, maxTriangles: 2 })).toEqual([
       0, 1,
     ]);
-    expect(() =>
-      growEditRegion(square, 0, { maxNormalAngleRadians: 0.01, maxTriangles: 1 }),
-    ).toThrow(/limit is 1/);
+    // Over its budget the region is refused with a typed reason, not a sentence to match.
+    expect(
+      refusal(() => growEditRegion(square, 0, { maxNormalAngleRadians: 0.01, maxTriangles: 1 }))
+        .details,
+    ).toMatchObject({ reason: 'EDIT_REGION_TOO_LARGE', limit: 1 });
     const cancel = { isCancelled: true, onCancelled: (): (() => void) => () => undefined };
     expect(() =>
       growEditRegion(square, 0, {
@@ -64,5 +67,61 @@ describe('bounded surface selection', () => {
     const t: PartTransform = [0, 1, 0, -1, 0, 0, 0, 0, 1, 10, 20, 30];
     expect(transformEditPoint([1, 0, 0], t)).toEqual([10, 21, 30]);
     expect(transformEditNormal([1, 0, 0], t)).toEqual([0, 1, 0]);
+  });
+});
+
+/** What a caller sees when a selection is refused: the typed error, or a failed assertion. */
+function refusal(run: () => unknown): AppError {
+  try {
+    run();
+  } catch (error) {
+    if (isAppError(error)) return error;
+    throw new Error(`Expected a typed refusal, got: ${String(error)}`, { cause: error });
+  }
+  throw new Error('Expected a refusal, but the selection succeeded.');
+}
+describe('TEXTURE-FIX-01 D3: selection limits are typed refusals', () => {
+  it('refuses a region over its budget, naming the metric and the limit', () => {
+    const error = refusal(() =>
+      growEditRegion(square, 0, { maxNormalAngleRadians: 0.01, maxTriangles: 1 }),
+    );
+    expect(error.code).toBe('RESOURCE_LIMIT_EXCEEDED');
+    expect(error.details).toEqual({
+      reason: 'EDIT_REGION_TOO_LARGE',
+      metric: 'regionTriangles',
+      limit: 1,
+    });
+  });
+
+  it('refuses a source above the scan limit before reading it, naming the count and the limit', () => {
+    const faces = 1_000_001;
+    const huge: CanonicalMesh = {
+      positions: createPositionArray(9),
+      indices: createIndexArray(faces * 3),
+      metadata: {},
+    };
+    const error = refusal(() =>
+      growEditRegion(huge, 0, { maxNormalAngleRadians: 0.01, maxTriangles: 2 }),
+    );
+    expect(error.code).toBe('RESOURCE_LIMIT_EXCEEDED');
+    expect(error.details).toEqual({
+      reason: 'EDIT_SOURCE_TOO_LARGE',
+      metric: 'sourceTriangles',
+      observed: faces,
+      limit: 1_000_000,
+    });
+  });
+
+  it('accepts a source at the scan limit (the limit itself is not moved)', () => {
+    const atLimit: CanonicalMesh = {
+      positions: createPositionArray(9),
+      indices: createIndexArray(1_000_000 * 3),
+      metadata: {},
+    };
+    // Every corner is vertex 0, so no region can be told from the seed: the point is only that
+    // the size gate lets exactly 1,000,000 faces through to the scan.
+    expect(() =>
+      growEditRegion(atLimit, 0, { maxNormalAngleRadians: 0.01, maxTriangles: 2 }),
+    ).not.toThrow(/triangles; limit/);
   });
 });
