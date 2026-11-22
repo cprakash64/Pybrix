@@ -1433,6 +1433,28 @@ lost`, `printable`, `watertight`, and the rest. **"The numbers are unchanged"
   only Apply commits.
 - **NO REDUNDANT FRAMES.** Texture overlays use the scheduled frame, and a clear
   of something not drawn draws nothing (the UI-04 dense-model lesson).
+- **TEXTURE BOUNDARY IDENTITY IS EXACT STORED COORDINATES, NEVER VERTEX INDICES
+  (TEXTURE-FIX-01, D1).** Whether two triangles share an edge is ADR 0009's
+  question, asked with `exactVertexKey` (mesh-core) in `projectedRegion`, the same
+  identity `growEditRegion` uses for adjacency. The layout found the region's
+  boundary by index pairs, and an STL import is soup (no two triangles share an
+  index), so EVERY edge looked like a boundary: a plate was refused ("No texture
+  elements fit") and a two-triangle face silently lost the elements beside its
+  diagonal. Nothing is welded and no tolerance is added. Soup and indexed twins of
+  one solid must give identical layouts and identical textured results; the
+  differential in `surface-texture.test.ts` holds it, and the e2e imports an STL.
+  Every texture and e2e fixture before this stage was indexed, which is why none
+  caught it: a new fixture for this path needs its soup twin.
+- **A SELECTION REFUSAL IS TYPED AND SHOWN (TEXTURE-FIX-01, D2 and D3).** The
+  limits are `MAX_EDIT_SOURCE_TRIANGLES` (1,000,000, a cost bound on the scan) and
+  `MAX_EDIT_REGION_TRIANGLES` (100,000), both in `mesh-core/edit-limits.ts`; a
+  selection over either is a `RESOURCE_LIMIT_EXCEEDED` `AppError` carrying
+  `reason` (`EditRefusal`), `metric`, `limit` and, for the source, `observed`.
+  The page words it in `describeTextureFailure` from those numbers; tests assert
+  the CODE. The limits did not move. `textureSessionKey` is the ONE key of a
+  session, used by the session and by `pick`: they were built separately and the
+  one in `pick` lacked the unit, so the selecting indicator and every refusal were
+  stored under a key nothing read.
 
 ## Shared UI invariants (UI-06)
 

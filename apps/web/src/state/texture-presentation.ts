@@ -1,4 +1,5 @@
-import { isLengthUnit } from '@cadfixer/shared';
+import { isAppError, isLengthUnit } from '@cadfixer/shared';
+import { EditRefusal } from '@cadfixer/mesh-core';
 import type { TextureMode, TexturePattern } from '@cadfixer/geometry-runtime';
 import { formatArea } from './split-presentation';
 
@@ -118,6 +119,28 @@ export function describeSelectionArea(area: number, unit: string | undefined): s
 
 export function describeTriangles(count: number): string {
   return `${count.toLocaleString()} ${count === 1 ? 'triangle' : 'triangles'}`;
+}
+
+/**
+ * WHAT A FAILED TEXTURE STEP SAYS. A refusal the engine typed (a selection too large for one
+ * selection to hold) is worded here, from its reason and its numbers, so the screen states a
+ * metric and a limit instead of printing the engine's sentence; any other failure keeps the
+ * message it came with, and a failure that came with none says `fallback`. Nothing here is a
+ * claim about the model: a refusal changes nothing, and the alert says so beside it.
+ */
+export function describeTextureFailure(cause: unknown, fallback: string): string {
+  if (isAppError(cause)) {
+    const { reason, limit, observed } = cause.details;
+    if (reason === EditRefusal.RegionTooLarge && typeof limit === 'number')
+      return `That flat surface has more than ${limit.toLocaleString()} triangles, the most one selection can hold, so it was not selected.`;
+    if (
+      reason === EditRefusal.SourceTooLarge &&
+      typeof limit === 'number' &&
+      typeof observed === 'number'
+    )
+      return `This part has ${observed.toLocaleString()} triangles. Surface Texture can select a face on a part of up to ${limit.toLocaleString()}.`;
+  }
+  return cause instanceof Error && cause.message !== '' ? cause.message : fallback;
 }
 
 export const TEXTURE_COPY = Object.freeze({

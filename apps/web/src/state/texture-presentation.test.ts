@@ -1,4 +1,4 @@
-import { LengthUnit } from '@cadfixer/shared';
+import { LengthUnit, internalError, resourceLimitExceeded } from '@cadfixer/shared';
 import { describe, expect, it } from 'vitest';
 import { MAX_TEXTURE_ELEMENTS, MAX_TEXTURE_PRIMITIVE_TRIANGLES } from '@cadfixer/geometry-runtime';
 import type { DocumentHandle } from '@cadfixer/geometry-runtime';
@@ -12,6 +12,7 @@ import {
   describeDepthLabel,
   describeFeatureLabel,
   describeSelectionArea,
+  describeTextureFailure,
   textureAvailable,
   textureSettingsProblem,
 } from './texture-presentation';
@@ -186,5 +187,68 @@ describe('selection metrics and labels', () => {
     expect(describeFeatureLabel('diamond')).toBe('Line width');
     expect(describeDepthLabel('emboss')).toBe('Height');
     expect(describeDepthLabel('engrave')).toBe('Depth');
+  });
+});
+
+describe('TEXTURE-FIX-01 D3: a refused selection is worded from its typed reason', () => {
+  const fallback = 'That surface could not be selected.';
+  const regionRefusal = resourceLimitExceeded('engine sentence', {
+    reason: 'EDIT_REGION_TOO_LARGE',
+    metric: 'regionTriangles',
+    limit: 100_000,
+  });
+  const sourceRefusal = resourceLimitExceeded('engine sentence', {
+    reason: 'EDIT_SOURCE_TOO_LARGE',
+    metric: 'sourceTriangles',
+    observed: 1_200_000,
+    limit: 1_000_000,
+  });
+
+  it('states the region limit as a fact, not as a contradiction', () => {
+    const text = describeTextureFailure(regionRefusal, fallback);
+    expect(text).toContain((100_000).toLocaleString());
+    expect(text).not.toContain('engine sentence');
+    // "has more than N triangles; limit is N" is the sentence this replaces.
+    expect(text).not.toMatch(/limit is/);
+  });
+
+  it('states the part size and the scan limit, both written out', () => {
+    const text = describeTextureFailure(sourceRefusal, fallback);
+    expect(text).toContain((1_200_000).toLocaleString());
+    expect(text).toContain((1_000_000).toLocaleString());
+    expect(text).not.toContain('engine sentence');
+  });
+
+  it('carries no code, no engine word and no claim about the model', () => {
+    for (const text of [
+      describeTextureFailure(regionRefusal, fallback),
+      describeTextureFailure(sourceRefusal, fallback),
+    ])
+      expect(text).not.toMatch(
+        /EDIT_|RESOURCE_LIMIT|region|printable|watertight|repaired|Boolean|Manifold/i,
+      );
+  });
+
+  it('passes any other message through, and falls back when there is none', () => {
+    expect(describeTextureFailure(new Error('No texture elements fit.'), fallback)).toBe(
+      'No texture elements fit.',
+    );
+    expect(describeTextureFailure(new Error(''), fallback)).toBe(fallback);
+    expect(describeTextureFailure('not an error', fallback)).toBe(fallback);
+    expect(describeTextureFailure(undefined, fallback)).toBe(fallback);
+  });
+
+  it('keeps the engine sentence for a typed refusal it does not recognise', () => {
+    const other = resourceLimitExceeded('Some other limit.', { reason: 'SOMETHING_ELSE' });
+    expect(describeTextureFailure(other, fallback)).toBe('Some other limit.');
+    expect(describeTextureFailure(internalError('Broken.'), fallback)).toBe('Broken.');
+  });
+
+  it('does not trust a limit that is not a number', () => {
+    const odd = resourceLimitExceeded('engine sentence', {
+      reason: 'EDIT_REGION_TOO_LARGE',
+      limit: 'many',
+    });
+    expect(describeTextureFailure(odd, fallback)).toBe('engine sentence');
   });
 });

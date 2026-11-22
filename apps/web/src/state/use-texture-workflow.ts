@@ -11,6 +11,7 @@ import type { PartPick } from '../viewport/pick-part';
 import {
   DEFAULT_TEXTURE_SETTINGS,
   textureAvailable,
+  describeTextureFailure,
   textureSettingsProblem,
   type TextureSettings,
 } from './texture-presentation';
@@ -85,8 +86,21 @@ export interface TextureControls {
 
 const LAYOUT_DEBOUNCE_MS = 200;
 
-const messageOf = (cause: unknown, fallback: string): string =>
-  cause instanceof Error && cause.message !== '' ? cause.message : fallback;
+/**
+ * THE ONE KEY OF A TEXTURE SESSION: the loaded revision, the part and the unit it is read in.
+ * Everything keyed by a session (the selecting indicator, the refusal, the preview, the layout)
+ * compares against this, and `pick` states it for the selection it starts. They were once built
+ * separately, and the one in `pick` lacked the unit, so a refused selection and the selecting
+ * indicator were stored under a key nothing read (TEXTURE-FIX-01, D2).
+ */
+export function textureSessionKey(
+  documentId: string,
+  revision: number,
+  partId: string,
+  unit: string | undefined,
+): string {
+  return `${documentId}@${String(revision)}/${partId}|${unit ?? ''}`;
+}
 
 export function textureRequest(
   selection: TextureSelection,
@@ -120,7 +134,7 @@ export function useTextureWorkflow(): TextureControls {
   const available = textureAvailable(unit);
   const session =
     active && model !== undefined && part !== undefined
-      ? `${model.handle.documentId}@${String(model.handle.revision)}/${part.partId}|${unitValue ?? ''}`
+      ? textureSessionKey(model.handle.documentId, model.handle.revision, part.partId, unitValue)
       : '';
 
   const [settings, setSettingsState] = useState<TextureSettings>(DEFAULT_TEXTURE_SETTINGS);
@@ -213,7 +227,7 @@ export function useTextureWorkflow(): TextureControls {
       client.discardGeometryEdit(candidate).promise.catch((cause: unknown) => {
         store.pushStatus(
           StatusSeverity.Warning,
-          messageOf(cause, 'A discarded texture preview could not be released.'),
+          describeTextureFailure(cause, 'A discarded texture preview could not be released.'),
         );
       });
     }
@@ -264,7 +278,7 @@ export function useTextureWorkflow(): TextureControls {
           if (layoutOp.current === operation)
             setLayoutState({
               key: layoutKey,
-              error: messageOf(cause, 'The texture layout could not be computed.'),
+              error: describeTextureFailure(cause, 'The texture layout could not be computed.'),
             });
         },
       );
@@ -285,7 +299,12 @@ export function useTextureWorkflow(): TextureControls {
       invalidate();
       setError(undefined);
       selectingOp.current?.cancel();
-      const key = `${current.handle.documentId}@${String(current.handle.revision)}/${hit.partId}`;
+      const key = textureSessionKey(
+        current.handle.documentId,
+        current.handle.revision,
+        hit.partId,
+        unitValue,
+      );
       setSelectingKey(key);
       const operation = client.selectTextureSurface(current.handle, hit.partId, hit.triangleIndex);
       selectingOp.current = operation;
@@ -308,12 +327,12 @@ export function useTextureWorkflow(): TextureControls {
           if (selectingOp.current !== operation) return;
           selectingOp.current = undefined;
           setSelectingKey(undefined);
-          const message = messageOf(cause, 'That surface could not be selected.');
+          const message = describeTextureFailure(cause, 'That surface could not be selected.');
           setErrorState({ key, message });
         },
       );
     },
-    [client, invalidate, setError, store],
+    [client, invalidate, setError, store, unitValue],
   );
 
   const clearSelection = useCallback((): void => {
@@ -365,7 +384,7 @@ export function useTextureWorkflow(): TextureControls {
       (cause: unknown) => {
         if (running.current !== operation) return;
         running.current = undefined;
-        const message = messageOf(cause, 'The texture could not be built.');
+        const message = describeTextureFailure(cause, 'The texture could not be built.');
         setPhase(TexturePhase.Idle);
         setError(message);
         store.pushStatus(StatusSeverity.Error, message);
@@ -406,7 +425,7 @@ export function useTextureWorkflow(): TextureControls {
         store.pushStatus(StatusSeverity.Success, 'Surface texture applied and validated.');
       },
       (cause: unknown) => {
-        const message = messageOf(cause, 'The texture could not be applied.');
+        const message = describeTextureFailure(cause, 'The texture could not be applied.');
         setPhase(TexturePhase.Preview);
         setError(message);
         store.pushStatus(StatusSeverity.Error, message);
@@ -435,7 +454,7 @@ export function useTextureWorkflow(): TextureControls {
           store.pushStatus(StatusSeverity.Success, 'Surface texture undone.');
         },
         (cause: unknown) => {
-          const message = messageOf(cause, 'The texture could not be undone.');
+          const message = describeTextureFailure(cause, 'The texture could not be undone.');
           setError(message);
           store.pushStatus(StatusSeverity.Error, message);
         },

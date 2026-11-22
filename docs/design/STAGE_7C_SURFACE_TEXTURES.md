@@ -75,3 +75,15 @@ After Apply, the edited canonical geometry flows through the existing whole-docu
 ## Qualification evidence
 
 Permanent `7C-*` tests cover planar growth, deterministic spacing and rotation, concave and hole containment, non-planar refusal, density admission, closed operand construction, all six pattern/mode Boolean combinations, and emboss/engrave volume direction. Browser, export/readback, cancellation-tail, performance, retention, privacy, and full regression evidence is recorded by the Stage 7C qualification run before the feature is declared release-ready.
+
+## TEXTURE-FIX-01: two defects found by the Stage T0 baseline
+
+Stage T0 measured the shipped texture and reproduced two defects. This stage fixes them and changes no ceiling, budget, validator or Boolean behaviour.
+
+- **D1, STL models could not be textured.** `projectedRegion` found the selected region's boundary edges by vertex-index pairs. An STL import is triangle soup, so no two triangles share an index and every edge looked like a boundary. A plate was refused ("No texture elements fit inside this surface and its edge margin"), and on a bare six-face box the elements beside each face's diagonal were silently left out: the same cube gave two elements as soup and four indexed. Boundary edges are now keyed by exact stored coordinates (`exactVertexKey`, ADR 0009), the identity region growth already used. Nothing is welded.
+- **D2, a refused selection and the selecting indicator never appeared.** The session key carried the unit and the key `pick` stored under did not. One function (`textureSessionKey`) now builds it.
+- **D3, the selection limits were plain errors.** A part over 1,000,000 triangles and a region over 100,000 are now typed resource refusals (reason, metric, limit, and the part's size for the first) and are worded on the page from those numbers, instead of printing "has more than 100000 triangles; limit is 100000".
+
+Evidence: `surface-texture.test.ts` (soup and indexed twins give identical layouts and identical textured results, including a `-0` case), `exact-vertex-key.test.ts`, `edit-geometry.test.ts` (typed refusals, both limits and the unmoved boundary), `use-texture-workflow.test.tsx` (indicator and refusal reach the screen state), `texture-presentation.test.ts`, and `e2e/texture-stl-and-refusals.spec.ts` (an STL box is laid out like its indexed twin and is applied and undone; a 100,352-triangle plate is refused on screen). Each was shown failing on the unfixed code first.
+
+Not changed, and still true: the selection scan refuses parts above 1,000,000 triangles (the part, Boolean and split ceiling is 2,000,000), every settings change re-scans the part, and a textured candidate is validated by topology only (no wall-thickness or self-intersection check).

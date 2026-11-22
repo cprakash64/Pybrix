@@ -1,4 +1,9 @@
-import { computeBounds, partId, selectEditSurface } from '@cadfixer/mesh-core';
+import {
+  computeBounds,
+  MAX_EDIT_REGION_TRIANGLES,
+  partId,
+  selectEditSurface,
+} from '@cadfixer/mesh-core';
 import {
   describeTextureLayout,
   isPart,
@@ -107,7 +112,7 @@ export const textureSelectHandler: OperationHandler<'texture/select'> = (payload
     payload.seedTriangle,
     {
       maxNormalAngleRadians: (2 * Math.PI) / 180,
-      maxTriangles: 100_000,
+      maxTriangles: MAX_EDIT_REGION_TRIANGLES,
       cancellation: context.cancellation,
     },
     Math.max(diagonal * 1e-7, 1e-9),

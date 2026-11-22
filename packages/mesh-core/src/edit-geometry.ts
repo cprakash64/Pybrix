@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-non-null-assertion, @typescript-eslint/prefer-for-of, @typescript-eslint/restrict-template-expressions */
 import type { CanonicalMesh } from './mesh';
 import type { PartTransform } from './document';
-import { throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
+import { resourceLimitExceeded, throwIfCancelled, type CancellationToken } from '@cadfixer/shared';
+import { EditRefusal, MAX_EDIT_REGION_TRIANGLES, MAX_EDIT_SOURCE_TRIANGLES } from './edit-limits';
 
 /** Local geometric predicates never change topology's exact coordinate identity. */
 export type EditVector = readonly [number, number, number];
@@ -135,7 +136,7 @@ export function growEditRegion(
   if (
     !Number.isSafeInteger(options.maxTriangles) ||
     options.maxTriangles < 1 ||
-    options.maxTriangles > 100_000
+    options.maxTriangles > MAX_EDIT_REGION_TRIANGLES
   )
     throw new Error('Region triangle budget must be 1..100000.');
   if (
@@ -145,7 +146,16 @@ export function growEditRegion(
   )
     throw new Error('Invalid normal-angle threshold.');
   // Refuse scanning an unbounded source even if the requested output is small.
-  if (faces > 1_000_000) throw new Error(`Region source has ${faces} triangles; limit is 1000000.`);
+  if (faces > MAX_EDIT_SOURCE_TRIANGLES)
+    throw resourceLimitExceeded(
+      `This part has ${String(faces)} triangles; a surface can be selected on a part of at most ${String(MAX_EDIT_SOURCE_TRIANGLES)}.`,
+      {
+        reason: EditRefusal.SourceTooLarge,
+        metric: 'sourceTriangles',
+        observed: faces,
+        limit: MAX_EDIT_SOURCE_TRIANGLES,
+      },
+    );
   const edgeMap = new Map<string, number[]>();
   const key = (v: EditVector) => `${v[0]},${v[1]},${v[2]}`;
   for (let t = 0; t < faces; t++) {
@@ -177,8 +187,13 @@ export function growEditRegion(
         );
         if (angle > options.maxNormalAngleRadians) continue;
         if (included.size >= options.maxTriangles)
-          throw new Error(
-            `Region has more than ${options.maxTriangles} triangles; limit is ${options.maxTriangles}.`,
+          throw resourceLimitExceeded(
+            `The selected surface has more than ${String(options.maxTriangles)} triangles, the most one selection can hold.`,
+            {
+              reason: EditRefusal.RegionTooLarge,
+              metric: 'regionTriangles',
+              limit: options.maxTriangles,
+            },
           );
         included.add(next);
         queue.push(next);
